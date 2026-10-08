@@ -32,17 +32,20 @@ impl PaceModel {
     /// Build the table from the athlete snapshot the plan is generated from.
     #[must_use]
     pub fn for_athlete(athlete: &AthleteSnapshot) -> Self {
-        let threshold_secs = match athlete.vo2max {
+        // A reported VO2max of zero or less is a provider sentinel, not data,
+        // so it falls through to the experience-based estimate.
+        let reported = athlete
+            .vo2max
+            .filter(|v| *v > 0.0)
             // vVO2max = VO2max / 0.2 ml/kg/m; threshold velocity ~90 % of it.
             // pace = 60000 / (0.9 * vVO2max) = 13333 / VO2max, seconds per km.
-            Some(vo2max) if vo2max > 0.0 => (13_333.0 / vo2max).clamp(200.0, 420.0),
-            None => match athlete.experience {
-                ExperienceLevel::Beginner => 330.0,
-                ExperienceLevel::Developing => 285.0,
-                ExperienceLevel::Established => 255.0,
-                ExperienceLevel::Advanced => 225.0,
-            },
-        };
+            .map(|vo2max| (13_333.0 / vo2max).clamp(200.0, 420.0));
+        let threshold_secs = reported.unwrap_or(match athlete.experience {
+            ExperienceLevel::Beginner => 330.0,
+            ExperienceLevel::Developing => 285.0,
+            ExperienceLevel::Established => 255.0,
+            ExperienceLevel::Advanced => 225.0,
+        });
         let t = Pace::new(threshold_secs);
         Self {
             threshold: t,

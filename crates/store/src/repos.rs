@@ -84,12 +84,12 @@ impl ProviderAccountRepo {
                  WHERE id = ?1",
                 params![id, region, write_bool(provider.supports_write())],
             )?;
-            return Ok(id
+            return id
                 .parse()
                 .map_err(|e: uuid::Error| StoreError::InvalidValue {
                     field: "account_id",
                     value: format!("{id} ({e})"),
-                })?);
+                });
         }
 
         let id = ProviderAccountId::new();
@@ -303,7 +303,10 @@ impl ActivityRepo {
                     write_date(activity.local_date),
                     activity.summary.distance.as_f64(),
                     i64::from(activity.summary.duration.as_u32()),
-                    activity.summary.avg_pace.map(|p| p.as_secs_per_km()),
+                    activity
+                        .summary
+                        .avg_pace
+                        .map(runalytics_core::Pace::as_secs_per_km),
                     write_optional_u16(activity.summary.avg_hr.map(HeartRate::as_u16)),
                     write_optional_u16(activity.summary.max_hr.map(HeartRate::as_u16)),
                     activity.summary.elevation_gain,
@@ -333,7 +336,7 @@ impl ActivityRepo {
                         write_timestamp(lap.start),
                         i64::from(lap.duration.as_u32()),
                         lap.distance.as_f64(),
-                        lap.avg_pace.map(|p| p.as_secs_per_km()),
+                        lap.avg_pace.map(runalytics_core::Pace::as_secs_per_km),
                         write_optional_u16(lap.avg_hr.map(HeartRate::as_u16)),
                         write_optional_u16(lap.max_hr.map(HeartRate::as_u16)),
                         lap.elevation_gain,
@@ -485,7 +488,7 @@ fn row_to_activity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Activity> {
         provider_activity_id: row.get("provider_activity_id")?,
         name: row.get("name")?,
         started_at: parse_timestamp_loose(&started),
-        local_date: parse_date(&local_date).unwrap_or_else(|_| Date::MIN),
+        local_date: parse_date(&local_date).unwrap_or(Date::MIN),
         summary: ActivitySummary {
             distance: VolumeKm(row.get("distance_km")?),
             duration: runalytics_core::DurationSecs(row.get::<_, i64>("duration_s")? as u32),
@@ -700,7 +703,9 @@ impl PlanRepo {
                             write_json(&session.workout)?,
                             session.target_volume.as_f64(),
                             i64::from(session.target_duration.as_u32()),
-                            session.target_pace.map(|p| p.as_secs_per_km()),
+                            session
+                                .target_pace
+                                .map(runalytics_core::Pace::as_secs_per_km),
                             session.rpe_target.map(i64::from),
                             write_bool(session.quality),
                             session.external_id
@@ -729,9 +734,9 @@ impl PlanRepo {
                  WHERE p.id = ?1
                  ORDER BY w.idx",
             )?;
-            let mut rows = stmt.query_map(params![id.to_string()], row_to_plan_week)?;
+            let rows = stmt.query_map(params![id.to_string()], row_to_plan_week)?;
             let mut plan: Option<Plan> = None;
-            while let Some(row) = rows.next() {
+            for row in rows {
                 let (row_plan, week) = row?;
                 // The header is identical on every row of the join; take it once.
                 let plan = plan.get_or_insert(row_plan);
@@ -900,7 +905,9 @@ impl PlanRepo {
                 write_json(&session.workout)?,
                 session.target_volume.as_f64(),
                 i64::from(session.target_duration.as_u32()),
-                session.target_pace.map(|p| p.as_secs_per_km()),
+                session
+                    .target_pace
+                    .map(runalytics_core::Pace::as_secs_per_km),
                 session.rpe_target.map(i64::from),
                 write_bool(session.quality),
                 session.external_id
@@ -1304,7 +1311,9 @@ impl ScoreRepo {
                 monotony: row.get(6)?,
                 weekly_spike: row.get(7)?,
                 vo2max_estimate: row.get(8)?,
-                threshold_pace: threshold.map(Pace::new).map(|p| p.as_secs_per_km()),
+                threshold_pace: threshold
+                    .map(Pace::new)
+                    .map(runalytics_core::Pace::as_secs_per_km),
                 performance_index: row.get(10)?,
                 components: serde_json::from_str(&components).unwrap_or(serde_json::Value::Null),
             })
@@ -1618,7 +1627,8 @@ impl SyncRunRepo {
              -- order without an extra column.
              ORDER BY started_at DESC, id DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![limit], |row| {
             let id: String = row.get(0)?;
             let account: String = row.get(1)?;
             let started: String = row.get(3)?;
@@ -1684,6 +1694,7 @@ mod tests {
     }
 
     /// A six-week plan with two sessions per week, used by every plan test.
+    #[allow(clippy::too_many_lines)] // one Plan literal, kept flat for readability
     fn sample_plan(start: Date) -> Plan {
         let weeks = (0..6)
             .map(|idx| {
@@ -1944,10 +1955,11 @@ mod tests {
 
         let session = PlannedSessionId::new();
         ActivityRepo::match_session(&db, activity_id, Some(session)).expect("match");
-        assert!(
+        assert_eq!(
             ActivityRepo::unmatched_on(&db, date(2026, 10, 6))
                 .expect("unmatched")
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             ActivityRepo::get(&db, activity_id)
@@ -2036,7 +2048,10 @@ mod tests {
         let tempo = loaded.session_by_id(tempo_id).expect("tempo found");
         assert_eq!(tempo.kind, SessionKind::Tempo);
         assert_eq!(tempo.workout.blocks.len(), 3, "warmup, steady, cooldown");
-        assert_eq!(tempo.target_pace.map(|p| p.as_secs_per_km()), Some(270.0));
+        assert_eq!(
+            tempo.target_pace.map(runalytics_core::Pace::as_secs_per_km),
+            Some(270.0)
+        );
         assert_eq!(tempo.rpe_target, Some(7));
         assert!(tempo.quality);
     }
@@ -2192,10 +2207,11 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
+        assert_eq!(
             ScoreRepo::stale_session_scores(&db, 1)
                 .expect("not stale")
-                .is_empty()
+                .len(),
+            0
         );
         let _ = plan_id;
     }

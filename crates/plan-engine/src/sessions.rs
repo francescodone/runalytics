@@ -76,7 +76,12 @@ pub fn weekly_quality_count(
 /// one threshold-flavoured and one shorter/faster session, which is what
 /// actually develops both ends of the curve.
 #[must_use]
-pub fn quality_kind(phase: Phase, slot: usize, goal: GoalKind, weeks_to_race: usize) -> SessionKind {
+pub fn quality_kind(
+    phase: Phase,
+    slot: usize,
+    goal: GoalKind,
+    weeks_to_race: usize,
+) -> SessionKind {
     if phase == Phase::Race {
         return SessionKind::Race;
     }
@@ -108,22 +113,37 @@ pub fn quality_kind(phase: Phase, slot: usize, goal: GoalKind, weeks_to_race: us
 
 /// Pick the weekdays the week's sessions land on, Monday = 0.
 ///
-/// Returns one slot per session in the week, ordered by weekday. The long run
-/// is placed first because it is the least movable: if the athlete has named a
-/// long-run day, that day is reserved before anything else is allocated.
+/// Returns one slot per session in the week, ordered by weekday. The normal
+/// shape puts quality midweek and the long run at the weekend. Race week fills
+/// from the *end* of the week backwards, because the race has to be as late as
+/// the athlete's constraints allow with the shakeout immediately before it.
+///
+/// `week_end` clamps the selection: the final week of a race-anchored plan is
+/// truncated to race day, and scheduling a session after it would put training
+/// after the start line.
 #[must_use]
 pub fn pick_weekdays(
     count: usize,
+    phase: Phase,
     long_run_weekday: Option<u32>,
     constraints: &PlanConstraints,
     week_start: Date,
+    week_end: Date,
 ) -> Vec<u32> {
     // Preferred shape: long run Sunday, quality Tuesday/Thursday, easy elsewhere.
-    let preference: [u32; 7] = [0, 2, 4, 6, 1, 3, 5];
+    let preference: [u32; 7] = match phase {
+        Phase::Race => [6, 5, 4, 3, 2, 1, 0],
+        _ => [0, 2, 4, 6, 1, 3, 5],
+    };
+    let trainable = |day: u32| {
+        let date = week_start + chrono::Duration::days(i64::from(day));
+        date <= week_end && constraints.allows_training(date)
+    };
     let mut chosen: Vec<u32> = Vec::with_capacity(count);
 
     if let Some(day) = long_run_weekday
-        && constraints.allows_training(week_start + chrono::Duration::days(i64::from(day)))
+        && phase != Phase::Race
+        && trainable(day)
         && count > 0
     {
         chosen.push(day);
@@ -133,12 +153,10 @@ pub fn pick_weekdays(
         if chosen.len() >= count {
             break;
         }
-        if chosen.contains(&day) {
+        if chosen.contains(&day) || !trainable(day) {
             continue;
         }
-        if constraints.allows_training(week_start + chrono::Duration::days(i64::from(day))) {
-            chosen.push(day);
-        }
+        chosen.push(day);
     }
 
     // Fewer trainable days than slots: shrink the week rather than schedule on
@@ -153,10 +171,13 @@ pub fn pick_weekdays(
 /// days, then whatever is left split across the easy slots — so the emitted
 /// sessions sum back to the week's target instead of drifting from it.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn build_week(
     plan_seed: &Uuid,
+    week_index: u8,
     week: &WeekVolume,
     week_start: Date,
+    week_end: Date,
     goal: GoalKind,
     weeks_to_race: usize,
     athlete: &AthleteSnapshot,
@@ -164,7 +185,14 @@ pub fn build_week(
     paces: &PaceModel,
 ) -> Vec<PlannedSession> {
     let slots = weekly_frequency(week.target, week.phase);
-    let days = pick_weekdays(slots, constraints.long_run_weekday, constraints, week_start);
+    let days = pick_weekdays(
+        slots,
+        week.phase,
+        constraints.long_run_weekday,
+        constraints,
+        week_start,
+        week_end,
+    );
     if days.is_empty() {
         return Vec::new();
     }
@@ -188,8 +216,7 @@ pub fn build_week(
         pick_quality_slots(&days, quality_target, long_run_idx, constraints, week_start);
     let long_run_volume = if week.phase == Phase::Race {
         goal.race_distance_km()
-            .map(VolumeKm)
-            .unwrap_or_else(|| VolumeKm(week.target.as_f64() * 0.6))
+            .map_or_else(|| VolumeKm(week.target.as_f64() * 0.6), VolumeKm)
     } else {
         let share = athlete.experience.max_long_run_share().min(0.4);
         VolumeKm(week.target.as_f64() * share)
@@ -206,24 +233,30 @@ pub fn build_week(
         .filter(|i| *i != long_run_idx && !quality_slots.contains(i))
         .collect();
     let used = long_run_volume
-        + VolumeKm(quality_volume.as_f64() * f64::from(u32::try_from(quality_slots.len()).unwrap_or(0)));
+        + VolumeKm(
+            quality_volume.as_f64() * f64::from(u32::try_from(quality_slots.len()).unwrap_or(0)),
+        );
     let easy_volume = if easy_indices.is_empty() {
         VolumeKm::ZERO
     } else {
         let rest = (week.target - used).as_f64();
-        if rest <= 0.0 {
+        let per_slot = if rest <= 0.0 {
             // The anchors already consumed the week; keep the easy days as
             // genuine short runs rather than emitting zero-volume sessions.
-            VolumeKm(2.0)
+            2.0
         } else {
-            VolumeKm(rest / f64::from(u32::try_from(easy_indices.len()).unwrap_or(1))).rounded_to(0.5)
-        }
+            rest / f64::from(u32::try_from(easy_indices.len()).unwrap_or(1))
+        };
+        // An easy day must never be the longest session of the week. When the
+        // leftover volume is large because the week is short on slots, the
+        // answer is more easy days at a sane length, not one long easy day —
+        // and the long run has already been sized against the week.
+        VolumeKm(per_slot.min(long_run_volume.as_f64().max(2.0))).rounded_to(0.5)
     };
 
     let mut sessions = Vec::with_capacity(days.len());
     let mut quality_given = 0usize;
-    for idx in 0..days.len() {
-        let weekday = days[idx];
+    for (idx, &weekday) in days.iter().enumerate() {
         let date = week_start + chrono::Duration::days(i64::from(weekday));
         let is_long = idx == long_run_idx;
         let is_quality = !is_long && quality_slots.contains(&idx);
@@ -256,7 +289,7 @@ pub fn build_week(
 
         sessions.push(make_session(
             plan_seed,
-            u32::from(week.index),
+            u32::from(week_index),
             date,
             kind,
             slot_volume,
@@ -282,6 +315,11 @@ pub fn build_week(
 /// Slots are ranked by proximity to midweek — the conventional home for hard
 /// sessions, and the furthest possible point from a weekend long run, so hard
 /// days never stack against each other.
+///
+/// When no slot satisfies the athlete's quality constraints, the week degrades
+/// to zero quality sessions rather than borrowing a day the athlete ruled out.
+/// Silently scheduling a tempo run on a day someone has said they cannot do
+/// intervals is the fastest way to lose their trust in the plan.
 fn pick_quality_slots(
     days: &[u32],
     count: usize,
@@ -299,7 +337,7 @@ fn pick_quality_slots(
             let date = week_start + chrono::Duration::days(i64::from(**d));
             *i != long_run_idx && constraints.allows_quality(date)
         })
-        .map(|(i, d)| (-(i32::from(*d) - 2).abs(), i))
+        .map(|(i, d)| (-(i32::try_from(*d).unwrap_or(0) - 2).abs(), i))
         .collect();
     ranked.sort_by_key(|(score, i)| (*score, *i));
     ranked.iter().take(count).map(|(_, i)| *i).collect()
@@ -358,23 +396,46 @@ pub fn make_session(
     }
 }
 
+/// A standard interval session: warm-up, `reps` hard efforts separated by
+/// floats, cool-down. Every quality session except the fartlek is this shape.
+fn repeats(
+    reps: u32,
+    rep: DurationSecs,
+    float: DurationSecs,
+    pace: Pace,
+    zone: HrZone,
+    athlete: &AthleteSnapshot,
+    float_target: BlockTarget,
+) -> StructuredWorkout {
+    let ceiling = athlete.hr_zone_ceiling(zone);
+    let mut middle = Vec::new();
+    for i in 0..reps {
+        middle.push(
+            WorkoutBlock::new(BlockTarget::Hard, rep)
+                .with_pace(pace)
+                .with_hr_ceiling(ceiling, zone),
+        );
+        if i + 1 < reps {
+            middle.push(WorkoutBlock::new(float_target, float));
+        }
+    }
+    StructuredWorkout::with_warmup_cooldown(
+        DurationSecs::from_minutes(15),
+        middle,
+        DurationSecs::from_minutes(10),
+    )
+}
+
 /// The prescribed blocks for a session kind.
-fn build_workout(
+/// Steady-state sessions: everything that is not a repeat of hard efforts.
+fn aerobic_workout(
     kind: SessionKind,
+    total: DurationSecs,
     volume: VolumeKm,
     athlete: &AthleteSnapshot,
     paces: &PaceModel,
     goal: GoalKind,
 ) -> StructuredWorkout {
-    let easy = paces.easy;
-    // Time on feet implied by the prescribed distance at the session's own pace.
-    let reference = match kind {
-        SessionKind::Recovery => paces.recovery,
-        SessionKind::Race => paces.for_goal(goal),
-        _ => easy,
-    };
-    let total = DurationSecs::new((volume.as_f64() * reference.as_secs_per_km()) as u32);
-
     match kind {
         SessionKind::Rest | SessionKind::CrossTraining => {
             StructuredWorkout::continuous(BlockTarget::Other, total)
@@ -393,8 +454,10 @@ fn build_workout(
                 DurationSecs::ZERO
             };
             let easy_part = total - steady;
-            let mut blocks = vec![WorkoutBlock::new(BlockTarget::Easy, easy_part)
-                .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z2), HrZone::Z2)];
+            let mut blocks = vec![
+                WorkoutBlock::new(BlockTarget::Easy, easy_part)
+                    .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z2), HrZone::Z2),
+            ];
             if steady.as_u32() > 0 {
                 blocks.push(
                     WorkoutBlock::new(BlockTarget::Steady, steady)
@@ -407,12 +470,13 @@ fn build_workout(
             let strides = 6;
             let stride = DurationSecs::from_minutes(1);
             let float = DurationSecs::from_minutes(2);
-            let mut blocks = vec![WorkoutBlock::new(BlockTarget::Easy, total).with_hr_ceiling(
-                athlete.hr_zone_ceiling(HrZone::Z2),
-                HrZone::Z2,
-            )];
+            let mut blocks = vec![
+                WorkoutBlock::new(BlockTarget::Easy, total)
+                    .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z2), HrZone::Z2),
+            ];
             for _ in 0..strides {
-                blocks.push(WorkoutBlock::new(BlockTarget::Strides, stride).with_pace(paces.five_k));
+                blocks
+                    .push(WorkoutBlock::new(BlockTarget::Strides, stride).with_pace(paces.five_k));
                 blocks.push(WorkoutBlock::new(BlockTarget::Easy, float));
             }
             StructuredWorkout { blocks }
@@ -420,87 +484,72 @@ fn build_workout(
         SessionKind::Race => StructuredWorkout {
             blocks: vec![
                 WorkoutBlock::new(BlockTarget::Warmup, DurationSecs::from_minutes(15)),
-                WorkoutBlock::new(BlockTarget::Hard, total)
-                    .with_pace(paces.for_goal(goal)),
+                WorkoutBlock::new(BlockTarget::Hard, total).with_pace(paces.for_goal(goal)),
                 WorkoutBlock::new(BlockTarget::Cooldown, DurationSecs::from_minutes(10)),
             ],
         },
+        _ => unreachable!("quality repeats are built elsewhere"),
+    }
+}
+
+fn build_workout(
+    kind: SessionKind,
+    volume: VolumeKm,
+    athlete: &AthleteSnapshot,
+    paces: &PaceModel,
+    goal: GoalKind,
+) -> StructuredWorkout {
+    // Time on feet implied by the prescribed distance at the session's own pace.
+    let reference = match kind {
+        SessionKind::Recovery => paces.recovery,
+        SessionKind::Race => paces.for_goal(goal),
+        _ => paces.easy,
+    };
+    let total = DurationSecs::new((volume.as_f64() * reference.as_secs_per_km()) as u32);
+
+    match kind {
         SessionKind::Tempo => {
-            let steady = DurationSecs::new((f64::from(total.as_u32()) * 0.55).min(
-                f64::from(DurationSecs::from_minutes(45).as_u32()),
-            ) as u32);
+            let steady = DurationSecs::new(
+                (f64::from(total.as_u32()) * 0.55)
+                    .min(f64::from(DurationSecs::from_minutes(45).as_u32())) as u32,
+            );
             StructuredWorkout::with_warmup_cooldown(
                 DurationSecs::from_minutes(15),
-                vec![WorkoutBlock::new(BlockTarget::Steady, steady)
-                    .with_pace(paces.tempo)
-                    .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z3), HrZone::Z3)],
-                DurationSecs::from_minutes(10),
-            )
-        }
-        SessionKind::CruiseIntervals => {
-            let reps = 4;
-            let rep = DurationSecs::from_minutes(8);
-            let float = DurationSecs::from_minutes(2);
-            let mut middle = Vec::new();
-            for i in 0..reps {
-                middle.push(
-                    WorkoutBlock::new(BlockTarget::Hard, rep)
-                        .with_pace(paces.threshold)
-                        .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z4), HrZone::Z4),
-                );
-                if i + 1 < reps {
-                    middle.push(WorkoutBlock::new(BlockTarget::Recovery, float));
-                }
-            }
-            StructuredWorkout::with_warmup_cooldown(
-                DurationSecs::from_minutes(15),
-                middle,
-                DurationSecs::from_minutes(10),
-            )
-        }
-        SessionKind::Intervals => {
-            let reps = 6;
-            let rep = DurationSecs::from_minutes(3);
-            let float = DurationSecs::from_minutes(2);
-            let mut middle = Vec::new();
-            for i in 0..reps {
-                middle.push(
-                    WorkoutBlock::new(BlockTarget::Hard, rep)
-                        .with_pace(paces.interval)
-                        .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z5), HrZone::Z5),
-                );
-                if i + 1 < reps {
-                    middle.push(WorkoutBlock::new(BlockTarget::Recovery, float));
-                }
-            }
-            StructuredWorkout::with_warmup_cooldown(
-                DurationSecs::from_minutes(15),
-                middle,
-                DurationSecs::from_minutes(10),
-            )
-        }
-        SessionKind::ExtensiveIntervals => {
-            let reps = 3;
-            let rep = DurationSecs::from_minutes(12);
-            let float = DurationSecs::from_minutes(3);
-            let hard = paces.hard_pace(SessionKind::ExtensiveIntervals, goal);
-            let mut middle = Vec::new();
-            for i in 0..reps {
-                middle.push(
-                    WorkoutBlock::new(BlockTarget::Hard, rep)
-                        .with_pace(hard)
+                vec![
+                    WorkoutBlock::new(BlockTarget::Steady, steady)
+                        .with_pace(paces.tempo)
                         .with_hr_ceiling(athlete.hr_zone_ceiling(HrZone::Z3), HrZone::Z3),
-                );
-                if i + 1 < reps {
-                    middle.push(WorkoutBlock::new(BlockTarget::Easy, float));
-                }
-            }
-            StructuredWorkout::with_warmup_cooldown(
-                DurationSecs::from_minutes(15),
-                middle,
+                ],
                 DurationSecs::from_minutes(10),
             )
         }
+        SessionKind::CruiseIntervals => repeats(
+            4,
+            DurationSecs::from_minutes(8),
+            DurationSecs::from_minutes(2),
+            paces.threshold,
+            HrZone::Z4,
+            athlete,
+            BlockTarget::Recovery,
+        ),
+        SessionKind::Intervals => repeats(
+            6,
+            DurationSecs::from_minutes(3),
+            DurationSecs::from_minutes(2),
+            paces.interval,
+            HrZone::Z5,
+            athlete,
+            BlockTarget::Recovery,
+        ),
+        SessionKind::ExtensiveIntervals => repeats(
+            3,
+            DurationSecs::from_minutes(12),
+            DurationSecs::from_minutes(3),
+            paces.hard_pace(SessionKind::ExtensiveIntervals, goal),
+            HrZone::Z3,
+            athlete,
+            BlockTarget::Easy,
+        ),
         SessionKind::Fartlek => {
             // Unstructured by design: reps vary so the athlete learns to run by
             // feel rather than by the watch.
@@ -524,6 +573,7 @@ fn build_workout(
                 DurationSecs::from_minutes(10),
             )
         }
+        _ => aerobic_workout(kind, total, volume, athlete, paces, goal),
     }
 }
 
@@ -543,7 +593,12 @@ impl HrCeiling for StructuredWorkout {
     }
 }
 
-fn title_for(kind: SessionKind, workout: &StructuredWorkout, paces: &PaceModel, goal: GoalKind) -> String {
+fn title_for(
+    kind: SessionKind,
+    workout: &StructuredWorkout,
+    paces: &PaceModel,
+    goal: GoalKind,
+) -> String {
     let reps = workout
         .blocks
         .iter()

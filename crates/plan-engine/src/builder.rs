@@ -7,13 +7,14 @@
 //! rather than a smoke test.
 
 use runalytics_core::{
-    Anchor, AnchorResolution, Date, DomainError, GoalKind, Phase, PhaseSpan, Plan, PlanId,
-    PlanRequest, PlanStatus, PlanWeek, Timestamp, Uuid, VolumeKm, next_monday,
+    Anchor, AnchorResolution, AthleteSnapshot, Date, DomainError, GoalKind, Phase, PhaseSpan, Plan,
+    PlanConstraints, PlanId, PlanRequest, PlanStatus, PlanWeek, Timestamp, Uuid, VolumeKm,
+    next_monday,
 };
 
 use crate::pace::PaceModel;
 use crate::sessions::build_week;
-use crate::volume::{ACWR_TARGET_HIGH, ACWR_TARGET_LOW, phase_spans, volume_curve};
+use crate::volume::{ACWR_TARGET_HIGH, ACWR_TARGET_LOW, WeekVolume, phase_spans, volume_curve};
 
 /// Why the engine softened or reshaped a plan, for the UI to surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +36,11 @@ pub struct GeneratedPlan {
 ///
 /// `today` is injected rather than read from the clock so the function stays
 /// deterministic and testable; callers pass the athlete's local today.
-pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<GeneratedPlan, DomainError> {
+pub fn generate(
+    request: &PlanRequest,
+    today: Date,
+    now: Timestamp,
+) -> Result<GeneratedPlan, DomainError> {
     let resolution = request.resolve(today)?;
     let goal = request.goal;
     let athlete = request.athlete.clone();
@@ -59,22 +64,34 @@ pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<Ge
     }
 
     let curve = volume_curve(&athlete, goal, &constraints, &phases);
-    let race_index = spans.iter().find(|(p, _, _)| *p == Phase::Race).map(|(_, f, _)| usize::from(*f));
+    let race_index = spans
+        .iter()
+        .find(|(p, _, _)| *p == Phase::Race)
+        .map(|(_, f, _)| usize::from(*f));
 
-    // A stable seed derived from the request, so regenerating the same request
-    // yields the same session ids. Uses the v5 namespace machinery via the
-    // plan id itself.
+    // The plan id is fresh, but the *seed* for session ids is derived from the
+    // request content. That split is deliberate: two generations of the same
+    // request are two distinct plans (different ids, so both can be kept in
+    // history), yet their sessions line up id-for-id — which is what lets a
+    // re-plan update existing calendar events and COROS workouts instead of
+    // duplicating them.
     let plan_id = PlanId::new();
-    let seed = plan_id.as_uuid();
+    let seed = request_seed(request, &resolution);
 
     let mut weeks: Vec<PlanWeek> = Vec::with_capacity(curve.len());
     for (idx, week) in curve.iter().enumerate() {
-        let week_start = resolution.start + chrono::Duration::days(i64::from(idx) * 7);
+        let week_start =
+            resolution.start + chrono::Duration::days(i64::try_from(idx).unwrap_or(0) * 7);
+        // The final week of a race-anchored plan is truncated to race day, so
+        // the session picker is told where the week really ends.
+        let week_end = (week_start + chrono::Duration::days(6)).min(resolution.end);
         let weeks_to_race = race_index.map_or(usize::MAX, |r| r.saturating_sub(idx));
         let sessions = build_week(
             &seed,
+            u8::try_from(idx).unwrap_or(u8::MAX),
             week,
             week_start,
+            week_end,
             goal,
             weeks_to_race,
             &athlete,
@@ -85,7 +102,7 @@ pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<Ge
             index: u8::try_from(idx).unwrap_or(u8::MAX),
             phase: week.phase,
             start: week_start,
-            end: (week_start + chrono::Duration::days(6)).min(resolution.end),
+            end: week_end,
             target_volume: week.target,
             previous_volume: week.previous,
             step_pct: week.step_pct,
@@ -95,6 +112,49 @@ pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<Ge
         });
     }
 
+    let notes = build_notes(&resolution, goal, &curve, &athlete, &constraints);
+
+    let plan = Plan {
+        id: plan_id,
+        name: plan_name(goal, &resolution),
+        goal,
+        status: PlanStatus::Draft,
+        anchor: request.anchor,
+        resolution: resolution.clone(),
+        phases: spans
+            .iter()
+            .map(|(phase, from, to)| PhaseSpan {
+                phase: *phase,
+                from_week: *from,
+                to_week: *to,
+                note: phase_note(*phase, goal).into(),
+            })
+            .collect(),
+        weeks,
+        athlete,
+        ceiling_volume: crate::volume::ceiling_volume(&request.athlete, goal, &request.constraints),
+        emittable_as_coros_plan: PlanRequest::coros_plan_eligible(&resolution, today),
+        external_ids: Vec::new(),
+        created_at: now,
+    };
+
+    plan.validate()?;
+    Ok(GeneratedPlan { plan, notes })
+}
+
+/// Everything the engine wants the athlete to know about the plan it produced.
+///
+/// Notes are the engine's side of an honest conversation: when it had to clip,
+/// throttle, or work around a constraint, it says so rather than presenting a
+/// silently-compromised plan as an ideal one.
+#[allow(clippy::too_many_lines)] // one readable block per note, by design
+fn build_notes(
+    resolution: &AnchorResolution,
+    goal: GoalKind,
+    curve: &[WeekVolume],
+    athlete: &AthleteSnapshot,
+    constraints: &PlanConstraints,
+) -> Vec<PlanNote> {
     let mut notes = Vec::new();
     if let Some(note) = resolution.note.clone() {
         notes.push(PlanNote {
@@ -119,6 +179,15 @@ pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<Ge
             message: "Your weekly volume cap held the plan below the goal's ideal peak.".into(),
         });
     }
+    if let Some(w) = curve.iter().find(|w| w.acwr_throttled) {
+        notes.push(PlanNote {
+            code: "acwr_throttled".into(),
+            message: format!(
+                "Your recent volume sits well below your past peak, so week 1 opens at {} instead of the volume your history would otherwise justify. Coming back too fast is how a detrained athlete gets injured in week two.",
+                w.target
+            ),
+        });
+    }
     if let Some(w) = curve.iter().find(|w| w.projected_acwr > ACWR_TARGET_HIGH) {
         notes.push(PlanNote {
             code: "acwr_band".into(),
@@ -138,43 +207,32 @@ pub fn generate(request: &PlanRequest, today: Date, now: Timestamp) -> Result<Ge
             ),
         });
     }
-    if constraints.blackout_weekdays.len() + constraints.blackout_dates.len() > 0 {
+    if !constraints.blackout_weekdays.is_empty() || !constraints.blackout_dates.is_empty() {
         notes.push(PlanNote {
             code: "blackouts_applied".into(),
             message: "Blackout days were respected; some weeks carry fewer sessions than the volume implies.".into(),
         });
     }
+    notes
+}
 
-    let plan = Plan {
-        id: plan_id,
-        name: plan_name(goal, &resolution),
-        goal,
-        status: PlanStatus::Draft,
-        anchor: request.anchor,
-        resolution: resolution.clone(),
-        phases: spans
-            .iter()
-            .map(|(phase, from, to)| PhaseSpan {
-                phase: *phase,
-                from_week: *from,
-                to_week: *to,
-                note: phase_note(*phase, goal).into(),
-            })
-            .collect(),
-        weeks,
-        athlete,
-        ceiling_volume: crate::volume::ceiling_volume(
-            &request.athlete,
-            goal,
-            &request.constraints,
-        ),
-        emittable_as_coros_plan: PlanRequest::coros_plan_eligible(&resolution, today),
-        external_ids: Vec::new(),
-        created_at: now,
-    };
-
-    plan.validate()?;
-    Ok(GeneratedPlan { plan, notes })
+/// A deterministic seed for session ids, derived from what the athlete asked
+/// for. Two requests differing in goal, anchor, athlete base or constraints
+/// produce different seeds, and therefore different session ids.
+#[must_use]
+fn request_seed(request: &PlanRequest, resolution: &AnchorResolution) -> Uuid {
+    let key = format!(
+        "{}|{}|{}|{}|{:.1}|{:.1}|{:?}|{:?}",
+        request.goal.as_str(),
+        resolution.start.format("%Y-%m-%d"),
+        resolution.end.format("%Y-%m-%d"),
+        resolution.weeks,
+        request.athlete.current_weekly_volume.as_f64(),
+        request.athlete.peak_weekly_volume.as_f64(),
+        request.constraints.blackout_weekdays,
+        request.constraints.long_run_weekday,
+    );
+    Uuid::new_v5(&runalytics_core::SESSION_NAMESPACE, key.as_bytes())
 }
 
 /// A short descriptive name for the plan.
@@ -219,7 +277,9 @@ pub fn shift_start(
     // Shifting a race-anchored plan backwards is not allowed: the race date is
     // fixed, and moving the start would silently lengthen the block.
     if let Anchor::RaceDate { date } = request.anchor
-        && new_start.max(today) + chrono::Duration::days(i64::from(request.resolve(today)?.weeks) * 7 - 1) > date
+        && new_start.max(today)
+            + chrono::Duration::days(i64::from(request.resolve(today)?.weeks) * 7 - 1)
+            > date
     {
         return Err(DomainError::RaceDateUnusable(format!(
             "starting {new_start} would run past the race on {date}"
@@ -243,6 +303,7 @@ pub fn planned_volume(plan: &Plan) -> VolumeKm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
     use runalytics_core::{AthleteSnapshot, PlanConstraints, Tz};
 
     fn today() -> Date {
@@ -270,7 +331,8 @@ mod tests {
 
     #[test]
     fn a_ten_week_marathon_lays_out_and_validates() {
-        let out = generate(&request(GoalKind::Marathon, horizon(10)), today(), now()).expect("plan");
+        let out =
+            generate(&request(GoalKind::Marathon, horizon(10)), today(), now()).expect("plan");
         let plan = &out.plan;
         plan.validate().expect("valid");
         assert_eq!(plan.weeks.len(), 10);
@@ -285,36 +347,40 @@ mod tests {
         let a = generate(&request(GoalKind::TenK, horizon(6)), today(), now()).expect("a");
         let b = generate(&request(GoalKind::TenK, horizon(6)), today(), now()).expect("b");
         assert_ne!(a.plan.id, b.plan.id, "each plan gets a fresh id");
-        let dates: Vec<_> = |p: &Plan| {
+        fn dates(p: &Plan) -> Vec<(Date, runalytics_core::SessionKind, VolumeKm, String)> {
             p.all_sessions()
                 .map(|s| (s.date, s.kind, s.target_volume, s.title.clone()))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(dates(&a.plan), dates(&b.plan), "same request, same sessions");
+                .collect()
+        }
+        assert_eq!(
+            dates(&a.plan),
+            dates(&b.plan),
+            "same request, same sessions"
+        );
+        assert_eq!(a.notes, b.notes);
     }
 
     #[test]
-    fn session_ids_derive_from_the_plan_seed_so_a_rerender_is_stable() {
-        // The seed is the plan id, so two generations differ; re-emitting the
-        // *same* plan must reproduce the same session ids, which is what keeps a
-        // calendar UID and a pushed COROS workout id valid across a re-render.
-        let out = generate(&request(GoalKind::HalfMarathon, horizon(8)), today(), now()).expect("plan");
-        let seed = out.plan.id.as_uuid();
-        let week_start = out.plan.resolution.start;
-        let again = build_week(
-            &seed,
-            &out.plan.weeks[0],
-            week_start,
-            GoalKind::HalfMarathon,
-            7,
-            &out.plan.athlete,
-            &PlanConstraints::default(),
-            &PaceModel::for_athlete(&out.plan.athlete),
-        );
-        assert_eq!(
-            again.first().map(|s| s.id),
-            out.plan.weeks[0].sessions.first().map(|s| s.id),
-            "same seed + week + date must yield the same id"
+    fn session_ids_survive_a_regeneration_of_the_same_request() {
+        // Two generations of the same request are distinct plans (fresh plan
+        // ids, so both can live in history) but their sessions line up id-for-id.
+        // This is what lets a re-plan update calendar events and COROS workouts
+        // instead of duplicating them.
+        let req = request(GoalKind::HalfMarathon, horizon(8));
+        let a = generate(&req, today(), now()).expect("a");
+        let b = generate(&req, today(), now()).expect("b");
+        assert_ne!(a.plan.id, b.plan.id, "each plan gets a fresh id");
+        let ids = |p: &Plan| p.all_sessions().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(ids(&a.plan), ids(&b.plan), "same request, same session ids");
+
+        // A different request must not collide with it.
+        let mut other = req.clone();
+        other.constraints.long_run_weekday = Some(3);
+        let c = generate(&other, today(), now()).expect("c");
+        assert_ne!(
+            ids(&a.plan),
+            ids(&c.plan),
+            "different request, different ids"
         );
     }
 
@@ -345,7 +411,10 @@ mod tests {
                     }
                 }
                 let last = plan.weeks.last().expect("week");
-                assert!(last.end <= plan.resolution.end, "{goal} {weeks} overruns the window");
+                assert!(
+                    last.end <= plan.resolution.end,
+                    "{goal} {weeks} overruns the window"
+                );
             }
         }
     }
@@ -374,8 +443,12 @@ mod tests {
     #[test]
     fn a_race_date_in_the_past_is_rejected() {
         let past = Date::from_ymd_opt(2026, 9, 1).expect("test date");
-        let err = generate(&request(GoalKind::TenK, Anchor::RaceDate { date: past }), today(), now())
-            .expect_err("should fail");
+        let err = generate(
+            &request(GoalKind::TenK, Anchor::RaceDate { date: past }),
+            today(),
+            now(),
+        )
+        .expect_err("should fail");
         assert!(matches!(err, DomainError::RaceDateUnusable(_)));
     }
 
@@ -405,7 +478,8 @@ mod tests {
     #[test]
     fn the_long_run_never_outgrows_its_week() {
         for weeks in [4u8, 6, 8, 10] {
-            let out = generate(&request(GoalKind::Marathon, horizon(weeks)), today(), now()).expect("plan");
+            let out = generate(&request(GoalKind::Marathon, horizon(weeks)), today(), now())
+                .expect("plan");
             for week in &out.plan.weeks {
                 if week.sessions.is_empty() || week.phase == Phase::Race {
                     continue;
@@ -415,7 +489,10 @@ mod tests {
                     "week {} long-run share {:.2} exceeds the cap: {:?}",
                     week.index,
                     week.long_run_share(),
-                    week.sessions.iter().map(|s| (s.kind, s.target_volume.as_f64())).collect::<Vec<_>>()
+                    week.sessions
+                        .iter()
+                        .map(|s| (s.kind, s.target_volume.as_f64()))
+                        .collect::<Vec<_>>()
                 );
             }
         }
@@ -428,9 +505,12 @@ mod tests {
         let out = generate(&req, today(), now()).expect("plan");
         for week in &out.plan.weeks {
             // Phase multipliers and deloads only ever reduce, so the ceiling is
-            // what matters; a deload is allowed to drop hard.
+            // what matters. Two weeks are legitimately exempt: a deload drops
+            // hard by design, and a race week contains the race distance, which
+            // is fixed no matter how little the athlete ran the week before.
+            let exempt = week.is_deload || week.phase == Phase::Race;
             assert!(
-                week.step_pct <= step + 0.01 || week.is_deload,
+                week.step_pct <= step + 0.01 || exempt,
                 "week {} stepped {:.3} past {step}",
                 week.index,
                 week.step_pct
@@ -440,28 +520,34 @@ mod tests {
 
     #[test]
     fn quality_sessions_respect_experience() {
+        // The race day itself is a quality session, so the comparison counts the
+        // training weeks only — otherwise every goal that ends in a race would
+        // look like it gave a beginner one hard day.
+        let training_quality = |p: &Plan| {
+            p.weeks
+                .iter()
+                .filter(|w| w.phase != Phase::Race)
+                .map(runalytics_core::PlanWeek::quality_count)
+                .max()
+                .unwrap_or(0)
+        };
+
         let mut req = request(GoalKind::HalfMarathon, horizon(8));
         req.athlete.experience = runalytics_core::ExperienceLevel::Beginner;
         let beginner = generate(&req, today(), now()).expect("beginner");
-        let max_beginner = beginner
-            .plan
-            .weeks
-            .iter()
-            .map(|w| w.quality_count())
-            .max()
-            .expect("week");
-        assert_eq!(max_beginner, 0, "a beginner gets no quality sessions");
+        assert_eq!(
+            training_quality(&beginner.plan),
+            0,
+            "a beginner gets no quality sessions"
+        );
 
         req.athlete.experience = runalytics_core::ExperienceLevel::Advanced;
         let advanced = generate(&req, today(), now()).expect("advanced");
-        let max_advanced = advanced
-            .plan
-            .weeks
-            .iter()
-            .map(|w| w.quality_count())
-            .max()
-            .expect("week");
-        assert!(max_advanced >= 2, "an advanced athlete gets several, got {max_advanced}");
+        let max_advanced = training_quality(&advanced.plan);
+        assert!(
+            max_advanced >= 2,
+            "an advanced athlete gets several, got {max_advanced}"
+        );
         assert!(
             advanced.plan.total_volume() >= beginner.plan.total_volume(),
             "same volume base, more intensity — the peak should not be lower"
@@ -490,7 +576,11 @@ mod tests {
         let start = req.resolve(today()).expect("resolve").start;
         req.constraints.blackout_dates = vec![start + chrono::Duration::days(2)];
         let out = generate(&req, today(), now()).expect("plan");
-        assert!(out.plan.session_on(start + chrono::Duration::days(2)).is_none());
+        assert!(
+            out.plan
+                .session_on(start + chrono::Duration::days(2))
+                .is_none()
+        );
         assert!(out.notes.iter().any(|n| n.code == "blackouts_applied"));
     }
 
@@ -504,7 +594,7 @@ mod tests {
             if session.quality {
                 let weekday = session.date.weekday().num_days_from_monday();
                 assert!(
-                    !matches!(weekday, 1 | 2 | 3 | 4),
+                    !matches!(weekday, 1..=4),
                     "quality session on a blocked weekday: {}",
                     session.date
                 );
@@ -529,23 +619,31 @@ mod tests {
     #[test]
     fn an_injury_flag_suppresses_intensity_and_says_so() {
         let mut req = request(GoalKind::Marathon, horizon(10));
-        req.athlete.injury_flags = vec!("achilles".into());
+        req.athlete.injury_flags = vec!["achilles".into()];
         let out = generate(&req, today(), now()).expect("plan");
         assert!(out.notes.iter().any(|n| n.code == "injury_constrained"));
         let max_quality = out
             .plan
             .weeks
             .iter()
-            .map(|w| w.quality_count())
+            .map(runalytics_core::PlanWeek::quality_count)
             .max()
             .expect("week");
-        assert!(max_quality <= 1, "injury caps quality at one, got {max_quality}");
+        assert!(
+            max_quality <= 1,
+            "injury caps quality at one, got {max_quality}"
+        );
     }
 
     #[test]
     fn a_recovery_block_dips_before_it_recovers() {
         let out = generate(&request(GoalKind::Recovery, horizon(6)), today(), now()).expect("plan");
-        let volumes: Vec<f64> = out.plan.weeks.iter().map(|w| w.target_volume.as_f64()).collect();
+        let volumes: Vec<f64> = out
+            .plan
+            .weeks
+            .iter()
+            .map(|w| w.target_volume.as_f64())
+            .collect();
         let base = out.plan.athlete.current_weekly_volume.as_f64();
         assert!(
             volumes[0] < base,
@@ -566,7 +664,12 @@ mod tests {
     #[test]
     fn a_maintain_block_holds_volume_flat() {
         let out = generate(&request(GoalKind::Maintain, horizon(6)), today(), now()).expect("plan");
-        let volumes: Vec<f64> = out.plan.weeks.iter().map(|w| w.target_volume.as_f64()).collect();
+        let volumes: Vec<f64> = out
+            .plan
+            .weeks
+            .iter()
+            .map(|w| w.target_volume.as_f64())
+            .collect();
         let spread = volumes
             .iter()
             .fold((f64::MAX, 0.0_f64), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
@@ -581,7 +684,8 @@ mod tests {
     #[test]
     fn coros_emittability_follows_the_provider_rules() {
         // 10 weeks starting next Monday is inside 4-16 weeks and within 14 days.
-        let out = generate(&request(GoalKind::Marathon, horizon(10)), today(), now()).expect("plan");
+        let out =
+            generate(&request(GoalKind::Marathon, horizon(10)), today(), now()).expect("plan");
         assert!(out.plan.emittable_as_coros_plan);
 
         // A 3-week block is too short for COROS's plan object.
@@ -608,8 +712,16 @@ mod tests {
                 "{} has no intent",
                 session.kind
             );
-            assert!(!session.title.trim().is_empty(), "{} has no title", session.kind);
-            assert!(session.rpe_target.is_some(), "{} has no RPE target", session.kind);
+            assert!(
+                !session.title.trim().is_empty(),
+                "{} has no title",
+                session.kind
+            );
+            assert!(
+                session.rpe_target.is_some(),
+                "{} has no RPE target",
+                session.kind
+            );
             assert_eq!(
                 session.quality,
                 session.kind.is_quality(),
@@ -620,7 +732,12 @@ mod tests {
 
     #[test]
     fn quality_days_are_never_back_to_back() {
-        for goal in [GoalKind::Marathon, GoalKind::HalfMarathon, GoalKind::TenK, GoalKind::FiveK] {
+        for goal in [
+            GoalKind::Marathon,
+            GoalKind::HalfMarathon,
+            GoalKind::TenK,
+            GoalKind::FiveK,
+        ] {
             let out = generate(&request(goal, horizon(8)), today(), now()).expect("plan");
             let mut previous: Option<Date> = None;
             for session in out.plan.all_sessions().filter(|s| s.quality) {
@@ -638,7 +755,8 @@ mod tests {
 
     #[test]
     fn a_hard_day_is_always_wrapped_in_warmup_and_cooldown() {
-        let out = generate(&request(GoalKind::HalfMarathon, horizon(8)), today(), now()).expect("plan");
+        let out =
+            generate(&request(GoalKind::HalfMarathon, horizon(8)), today(), now()).expect("plan");
         for session in out.plan.all_sessions().filter(|s| s.kind.is_quality()) {
             let first = session.workout.blocks.first().expect("block");
             let last = session.workout.blocks.last().expect("block");
@@ -683,7 +801,8 @@ mod tests {
 
     #[test]
     fn the_plan_name_carries_the_goal_and_the_anchor() {
-        let horizon_plan = generate(&request(GoalKind::TenK, horizon(5)), today(), now()).expect("p");
+        let horizon_plan =
+            generate(&request(GoalKind::TenK, horizon(5)), today(), now()).expect("p");
         assert_eq!(horizon_plan.plan.name, "10K — 5 weeks");
         let race = Date::from_ymd_opt(2026, 12, 13).expect("test date");
         let race_plan = generate(
@@ -701,7 +820,8 @@ mod tests {
 
     #[test]
     fn projected_acwr_stays_inside_the_band_for_a_normal_athlete() {
-        let out = generate(&request(GoalKind::HalfMarathon, horizon(8)), today(), now()).expect("plan");
+        let out =
+            generate(&request(GoalKind::HalfMarathon, horizon(8)), today(), now()).expect("plan");
         for week in &out.plan.weeks {
             assert!(
                 week.projected_acwr <= ACWR_TARGET_HIGH + 0.05,
@@ -713,18 +833,45 @@ mod tests {
     }
 
     #[test]
-    fn an_aggressive_base_trips_the_acwr_warning_instead_of_shipping_silently() {
+    fn an_aggressive_base_is_throttled_rather_than_shipped_silently() {
         let mut req = request(GoalKind::Marathon, horizon(10));
         // An athlete claiming a huge recent peak: the ceiling is derived from it,
-        // so the ramp is too steep and the engine must say so.
+        // so the naive ramp would spike their acute load. The engine must
+        // throttle week 1 and say that it did.
         req.athlete.current_weekly_volume = VolumeKm(60.0);
         req.athlete.peak_weekly_volume = VolumeKm(120.0);
         req.athlete.consistency = 0.5;
         let out = generate(&req, today(), now()).expect("plan");
         assert!(
-            out.notes.iter().any(|n| n.code == "acwr_band"),
-            "expected an ACWR warning, got {:?}",
+            out.notes.iter().any(|n| n.code == "acwr_throttled"),
+            "expected a throttle note, got {:?}",
             out.notes.iter().map(|n| &n.code).collect::<Vec<_>>()
         );
+        let week_one = out.plan.weeks[0].target_volume.as_f64();
+        let recent = out.plan.athlete.current_weekly_volume.as_f64();
+        assert!(
+            week_one <= recent * crate::volume::REBUILD_ALLOWANCE + 0.5,
+            "week 1 must not open more than the rebuild allowance above recent \
+             volume: {week_one} vs recent {recent}"
+        );
+        // The throttle protects the opening week specifically. Later weeks grow
+        // toward a ceiling derived from the athlete's past peak, so the band
+        // warning still has work to do and must fire if they overshoot.
+        assert!(
+            out.plan.weeks[0].projected_acwr <= ACWR_TARGET_HIGH + 0.05,
+            "week 1 projects {:.2}",
+            out.plan.weeks[0].projected_acwr
+        );
+        if out
+            .plan
+            .weeks
+            .iter()
+            .any(|w| w.projected_acwr > ACWR_TARGET_HIGH + 0.05)
+        {
+            assert!(
+                out.notes.iter().any(|n| n.code == "acwr_band"),
+                "a later week overshoots the band without a note"
+            );
+        }
     }
 }

@@ -32,6 +32,9 @@ pub struct WeekVolume {
     /// True when a ceiling (constraint, step, or long-run share) clipped the
     /// week below what the curve wanted. Surfaced in the UI as a warning.
     pub clipped: bool,
+    /// True on week 0 when the acute:chronic guard lowered the starting volume
+    /// below what the athlete's past peak would otherwise have justified.
+    pub acwr_throttled: bool,
 }
 
 /// Assign a phase to every week index of the plan.
@@ -133,6 +136,61 @@ pub fn starting_volume(athlete: &AthleteSnapshot, goal: GoalKind) -> VolumeKm {
     }
 }
 
+/// How far above recent volume week one of a rebuild may open.
+///
+/// A detrained athlete genuinely returns faster than 10 % a week — that is the
+/// well-documented detraining effect, and pretending otherwise wastes their
+/// residual fitness. But it is a *return* to previous capacity, not new load:
+/// one week may not jump further than this past what they are running now.
+pub const REBUILD_ALLOWANCE: f64 = 1.20;
+
+/// The base volume after the rebuild guards.
+///
+/// Two independent guards, because they catch different mistakes:
+///
+/// * an **absolute** cap — week one may not open more than
+///   [`REBUILD_ALLOWANCE`] above the athlete's recent volume. ACWR cannot catch
+///   this: it is a lagging ratio, and a single heavy week barely moves it.
+/// * an **ACWR** cap — the opening week must not project outside the safe band,
+///   which catches shapes the absolute cap would miss.
+///
+/// When either binds, the guard reports it, so the UI can say "we throttled your
+/// rebuild" rather than shipping a plan that spikes and staying silent.
+#[must_use]
+pub fn throttled_start(
+    athlete: &AthleteSnapshot,
+    goal: GoalKind,
+    first_factor: f64,
+) -> (VolumeKm, bool) {
+    let wanted = starting_volume(athlete, goal);
+    let recent = athlete.current_weekly_volume.as_f64();
+    if recent <= 0.0 {
+        return (wanted, false);
+    }
+    let absolute_cap = recent * REBUILD_ALLOWANCE;
+    // Never throttle below what the athlete is already running: that would turn
+    // a rebuild into an unplanned deload.
+    let floor = VolumeKm(recent);
+    let mut candidate = wanted;
+    for _ in 0..32 {
+        let week_one = candidate.as_f64() * first_factor;
+        let mut series = vec![recent; 4];
+        series.push(week_one);
+        let within_band = projected_acwr(&series) <= ACWR_TARGET_HIGH;
+        let within_cap = week_one <= absolute_cap;
+        if (within_band && within_cap) || candidate <= floor {
+            return (at_least(candidate, floor), candidate < wanted);
+        }
+        candidate = VolumeKm(candidate.as_f64() * 0.95);
+    }
+    (at_least(candidate, floor), candidate < wanted)
+}
+
+/// `VolumeKm` is only `PartialOrd`, so there is no `max` method.
+fn at_least(value: VolumeKm, minimum: VolumeKm) -> VolumeKm {
+    if value < minimum { minimum } else { value }
+}
+
 /// The volume the peak week is allowed to reach.
 #[must_use]
 pub fn ceiling_volume(
@@ -149,6 +207,54 @@ pub fn ceiling_volume(
         ceiling = ceiling.min(max.as_f64());
     }
     VolumeKm(ceiling)
+}
+
+/// Where the curve wants to be at each week, before phase multipliers.
+///
+/// The ceiling is deliberately *not* applied here: clipping happens in the
+/// emission pass, which is what records that a constraint bound the plan.
+/// Clipping twice would hide that from the UI.
+fn desired_volumes(
+    athlete: &AthleteSnapshot,
+    goal: GoalKind,
+    start: VolumeKm,
+    step: f64,
+    phases: &[Phase],
+) -> Vec<f64> {
+    let mut desired: Vec<f64> = Vec::with_capacity(phases.len());
+    let mut prev = start.as_f64();
+    for phase in phases {
+        prev = match phase {
+            // Base consolidates rather than grows: tissue adapts before load.
+            Phase::Base => prev * (1.0 + step * 0.4),
+            Phase::Build | Phase::Peak => prev * (1.0 + step),
+            Phase::Hold => prev,
+            // Taper, race and rebuild weeks follow the curve; the phase factor
+            // does the reducing.
+            Phase::Taper | Phase::Race | Phase::Rebuild => prev,
+        };
+        desired.push(prev);
+    }
+
+    // A recovery block's shape is "down, then back toward the base" and is
+    // expressed directly. Multiplying a deloaded start by the Taper and Rebuild
+    // factors would reduce it twice and produce a block that never recovers,
+    // which is the opposite of the goal.
+    if goal == GoalKind::Recovery {
+        let base = athlete.current_weekly_volume.as_f64().max(10.0);
+        let floor = base * 0.6;
+        let last = phases.len() - 1;
+        for (idx, slot) in desired.iter_mut().enumerate() {
+            let progress = if last == 0 {
+                1.0
+            } else {
+                idx as f64 / last as f64
+            };
+            *slot = floor + (base * 0.95 - floor) * progress;
+        }
+    }
+
+    desired
 }
 
 /// Build the weekly volume curve.
@@ -168,28 +274,56 @@ pub fn volume_curve(
     if phases.is_empty() {
         return Vec::new();
     }
-    let start = starting_volume(athlete, goal);
     let ceiling = ceiling_volume(athlete, goal, constraints);
     let step = athlete.effective_weekly_step();
 
-    // Where the curve wants to be at each week, before phase multipliers.
-    let mut desired: Vec<f64> = Vec::with_capacity(phases.len());
-    let mut prev = start.as_f64();
-    for phase in phases {
-        prev = match phase {
-            // Base consolidates rather than grows: tissue adapts before load.
-            Phase::Base => prev * (1.0 + step * 0.4),
-            Phase::Build | Phase::Peak => (prev * (1.0 + step)).min(ceiling.as_f64()),
-            Phase::Hold => prev,
-            // Taper, race and rebuild weeks follow the curve; the phase factor
-            // does the reducing.
-            Phase::Taper | Phase::Race | Phase::Rebuild => prev,
-        };
-        desired.push(prev);
-    }
+    // The first week's growth factor, needed to evaluate the acute:chronic guard
+    // before the curve exists.
+    let first_factor = match phases[0] {
+        Phase::Base => 1.0 + step * 0.4,
+        Phase::Build | Phase::Peak => 1.0 + step,
+        _ => 1.0,
+    };
+    let (start, acwr_throttled) = if goal == GoalKind::Recovery {
+        // A recovery block deliberately starts below the base, so the guard
+        // cannot bind and must not raise it.
+        (starting_volume(athlete, goal), false)
+    } else {
+        throttled_start(athlete, goal, first_factor)
+    };
+
+    let desired = desired_volumes(athlete, goal, start, step, phases);
+
+    // A taper has to keep falling. A flat 65 % for three weeks leaves the
+    // athlete fresh but not sharp, and the final week before a race should be
+    // the lightest training week of the block. So the taper factor is graded by
+    // how far the week sits from the race rather than taken from `Phase` alone.
+    let race_index = phases.iter().position(|p| *p == Phase::Race);
+    let taper_factor = |idx: usize, phase: Phase| -> f64 {
+        if phase != Phase::Taper {
+            return phase.volume_factor();
+        }
+        // Weeks remaining before race week; 1 means "the week of the race is next".
+        let weeks_out = race_index.map_or(1, |r| r.saturating_sub(idx).saturating_sub(1));
+        match weeks_out {
+            0 => 0.50,
+            1 => 0.65,
+            _ => 0.80,
+        }
+    };
+
+    // The race week's target is not a training target: the race distance is
+    // fixed, so the week is the race plus a shakeout. Deriving it from the
+    // volume curve would produce a week whose single session is longer than the
+    // week it belongs to.
+    let race_week_target = goal.race_distance_km().map(|km| km + 6.0);
 
     let mut out: Vec<WeekVolume> = Vec::with_capacity(phases.len());
-    let mut chronic: Vec<f64> = Vec::with_capacity(phases.len());
+    // The athlete's trailing four weeks anchor the chronic load. Without them a
+    // detrained athlete prescribed 48 km in week 1 would project an ACWR near 1
+    // — the plan would look safe because the projection had no memory of the 20
+    // km they were actually running last month.
+    let mut chronic: Vec<f64> = vec![athlete.current_weekly_volume.as_f64(); 4];
 
     for (idx, phase) in phases.iter().enumerate() {
         // Every fourth build week is a deload, unless the plan is too short for
@@ -200,22 +334,41 @@ pub fn volume_curve(
             && idx % 4 == 3;
 
         let previous = out.last().map_or(start, |w: &WeekVolume| w.target);
-        let wanted = desired[idx] * phase.volume_factor();
+        let is_recovery = goal == GoalKind::Recovery;
+        let factor = if is_recovery {
+            1.0
+        } else {
+            taper_factor(idx, *phase)
+        };
+        let wanted = match (*phase, race_week_target) {
+            (Phase::Race, Some(km)) if !is_recovery => km,
+            _ => desired[idx] * factor,
+        };
         let clipped = wanted > ceiling.as_f64();
 
         let target = if is_deload {
-            VolumeKm(wanted.min(ceiling.as_f64()) * 0.7).rounded_to(1.0)
+            VolumeKm(wanted.min(ceiling.as_f64()) * 0.7)
         } else {
-            let capped = wanted.min(ceiling.as_f64());
             // Clamp against the volume actually emitted last week, not the
             // model's intent, so the athlete never sees a step above the
-            // permitted one. Floor so rounding cannot undo the clamp.
-            let stepped = if previous.as_f64() > 0.0 {
-                capped.min(previous.as_f64() * (1.0 + step))
+            // permitted one. The race week is exempt: a marathon is 42.2 km
+            // whatever the athlete ran the week before.
+            let stepped = if previous.as_f64() > 0.0 && *phase != Phase::Race {
+                wanted
+                    .min(ceiling.as_f64())
+                    .min(previous.as_f64() * (1.0 + step))
             } else {
-                capped
+                wanted.min(ceiling.as_f64())
             };
-            VolumeKm(stepped.floor().max(0.0))
+            // A taper or race week legitimately steps *down* hard, so only the
+            // upward step is clamped.
+            VolumeKm(stepped.max(previous.as_f64() * 0.5))
+        };
+        // Round down on a growing week so rounding cannot undo the step clamp.
+        let target = if target.as_f64() >= previous.as_f64() {
+            VolumeKm(target.as_f64().floor().max(0.0))
+        } else {
+            target.rounded_to(1.0)
         };
 
         let step_pct = if previous.as_f64() > 0.0 {
@@ -235,6 +388,7 @@ pub fn volume_curve(
             projected_acwr,
             is_deload,
             clipped,
+            acwr_throttled: acwr_throttled && idx == 0,
         });
     }
     out
@@ -256,11 +410,7 @@ pub fn projected_acwr(weekly_volumes: &[f64]) -> f64 {
         .collect();
     let acute = ema(&daily, ACUTE_DAYS);
     let chronic = ema(&daily, CHRONIC_DAYS);
-    if chronic <= 0.0 {
-        1.0
-    } else {
-        acute / chronic
-    }
+    if chronic <= 0.0 { 1.0 } else { acute / chronic }
 }
 
 /// Exponential moving average over a window in days.
@@ -296,7 +446,13 @@ mod tests {
         let phases: Vec<Phase> = spans.iter().map(|s| s.0).collect();
         assert_eq!(
             phases,
-            vec![Phase::Base, Phase::Build, Phase::Peak, Phase::Taper, Phase::Race]
+            vec![
+                Phase::Base,
+                Phase::Build,
+                Phase::Peak,
+                Phase::Taper,
+                Phase::Race
+            ]
         );
         // Marathon tapers for 21 days: three weeks including nothing else.
         let taper = spans.iter().find(|s| s.0 == Phase::Taper).expect("taper");
@@ -387,12 +543,7 @@ mod tests {
     #[test]
     fn deload_weeks_dip_without_breaking_the_curve() {
         let a = athlete();
-        let curve = volume_curve(
-            &a,
-            GoalKind::Marathon,
-            &constraints(),
-            &[Phase::Build; 8],
-        );
+        let curve = volume_curve(&a, GoalKind::Marathon, &constraints(), &[Phase::Build; 8]);
         let deloads: Vec<usize> = curve
             .iter()
             .enumerate()
@@ -424,7 +575,10 @@ mod tests {
         a.peak_weekly_volume = VolumeKm(60.0);
         a.consistency = 0.33;
         let base = starting_volume(&a, GoalKind::HalfMarathon);
-        assert!(base > a.current_weekly_volume, "rebuild starts above the floor");
+        assert!(
+            base > a.current_weekly_volume,
+            "rebuild starts above the floor"
+        );
         assert!(base < a.peak_weekly_volume, "but not at the peak");
     }
 

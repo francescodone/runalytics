@@ -306,9 +306,10 @@ impl WorkoutBlock {
 
     #[must_use]
     pub fn volume_at(&self, pace: Pace) -> VolumeKm {
-        Pace::from_parts(VolumeKm(1.0), self.duration)
-            .map(|_| VolumeKm(f64::from(self.duration.as_u32()) / pace.as_secs_per_km()))
-            .unwrap_or(VolumeKm::ZERO)
+        if self.duration.0 == 0 {
+            return VolumeKm::ZERO;
+        }
+        VolumeKm(f64::from(self.duration.as_u32()) / pace.as_secs_per_km())
     }
 }
 

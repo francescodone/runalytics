@@ -111,3 +111,9 @@ cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"
 items_after_statements = "allow"
+# This domain is written in running-and-physiology language: VO2max, ACWR, ICS,
+# GPX, TSS. Backticking every acronym reads worse than it documents.
+doc_markdown = "allow"
+# Phase and experience factors are lookup tables where neighbouring levels
+# legitimately share a value; merging the arms would hide that intent.
+match_same_arms = "allow"

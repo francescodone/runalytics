@@ -151,7 +151,7 @@ impl Pace {
 
     #[must_use]
     pub fn new(secs_per_km: f64) -> Self {
-        Self(secs_per_km.clamp(120.0, f64::from(Self::WALK.0)))
+        Self(secs_per_km.clamp(120.0, Self::WALK.0))
     }
 
     /// Derive pace from a distance and elapsed time.

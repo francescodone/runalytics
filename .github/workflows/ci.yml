@@ -61,12 +61,12 @@ jobs:
       # macOS host so the desktop shell (Tauri + security-framework) is linted
       # too; on Linux those crates cannot be built.
       #
-      # Advisory for now: the workspace has ~29 outstanding pedantic lints
-      # (match_same_arms in the plan-phase load tables, redundant closures in
-      # store, doc_markdown, too_many_lines). Clear them, then drop
-      # continue-on-error to make this a hard gate.
+      # Hard gate: the pedantic lints the workspace used to carry are cleared.
+      # Two are allowed at the workspace level in Cargo.toml rather than fixed —
+      # doc_markdown (this domain is written in physiology language: VO2max,
+      # ACWR, TSS) and match_same_arms (the phase/experience tables legitimately
+      # share values between neighbouring levels).
       - name: Clippy
-        continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:

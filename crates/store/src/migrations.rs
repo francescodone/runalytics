@@ -22,7 +22,7 @@ use crate::error::{Result, StoreError};
 ///   keyed on that column, and the UI can say "recomputed with v3 scoring".
 /// * `calendar_event` keeps the sink's own id alongside our `UID`, which is
 ///   what makes an update-in-place possible instead of delete-and-recreate.
-const V1_SCHEMA: &str = r#"
+const V1_SCHEMA: &str = r"
 CREATE TABLE athlete (
     id            TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL DEFAULT '',
@@ -274,7 +274,7 @@ CREATE TABLE sync_run (
     error             TEXT
 );
 CREATE INDEX idx_sync_run_account ON sync_run (account_id, started_at);
-"#;
+";
 
 /// Ordered list of `(version, sql)`. Append only — never edit an earlier entry.
 const MIGRATIONS: &[(i64, &str)] = &[(1, V1_SCHEMA)];
