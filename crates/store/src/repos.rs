@@ -1561,6 +1561,89 @@ impl FeedbackRepo {
     }
 }
 
+// ---------------------------------------------------------------------------
+// fitness assessments
+// ---------------------------------------------------------------------------
+
+/// Provider-reported fitness estimates over time.
+pub struct FitnessRepo;
+
+impl FitnessRepo {
+    /// Insert-or-replace one day's assessment for an account.
+    ///
+    /// Providers revise a day's VO2max for hours after it ends, so this is an
+    /// upsert keyed on `(account, date)` like every other provider table.
+    pub fn upsert(
+        db: &Db,
+        account_id: ProviderAccountId,
+        assessment: &runalytics_core::FitnessAssessment,
+    ) -> Result<()> {
+        db.conn().execute(
+            "INSERT INTO fitness_assessment
+                (account_id, date, vo2max, running_level, threshold_pace, predicted_json, fetched_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(account_id, date) DO UPDATE SET
+                vo2max = excluded.vo2max,
+                running_level = excluded.running_level,
+                threshold_pace = excluded.threshold_pace,
+                predicted_json = excluded.predicted_json,
+                fetched_at = excluded.fetched_at",
+            params![
+                account_id.to_string(),
+                write_date(assessment.date),
+                assessment.vo2max,
+                assessment.running_level,
+                assessment.threshold_pace.map(Pace::as_secs_per_km),
+                write_json(&assessment.predicted_paces)?,
+                write_timestamp(now())
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Assessments in `[from, to]`, oldest first.
+    pub fn range(db: &Db, from: Date, to: Date) -> Result<Vec<runalytics_core::FitnessAssessment>> {
+        let conn = db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT date, vo2max, running_level, threshold_pace, predicted_json
+             FROM fitness_assessment WHERE date BETWEEN ?1 AND ?2
+             ORDER BY date",
+        )?;
+        let rows = stmt.query_map(params![write_date(from), write_date(to)], row_to_fitness)?;
+        rows.map(|r| r.map_err(StoreError::from)).collect()
+    }
+
+    /// The most recent assessment, the one the athlete snapshot should carry.
+    ///
+    /// A direct `ORDER BY date DESC LIMIT 1` rather than `range(MIN, MAX)`:
+    /// chrono renders years beyond 9999 with a leading `+`, which sorts
+    /// *before* digits as text, so a `BETWEEN` bounded by `Date::MAX` would
+    /// exclude every real date.
+    pub fn latest(db: &Db) -> Result<Option<runalytics_core::FitnessAssessment>> {
+        let conn = db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT date, vo2max, running_level, threshold_pace, predicted_json
+             FROM fitness_assessment ORDER BY date DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([], row_to_fitness)?;
+        Ok(rows.next().transpose()?)
+    }
+}
+
+fn row_to_fitness(row: &rusqlite::Row<'_>) -> rusqlite::Result<runalytics_core::FitnessAssessment> {
+    let date_text: String = row.get(0)?;
+    let predicted: String = row.get(4)?;
+    Ok(runalytics_core::FitnessAssessment {
+        // A malformed date in a provider table is unreadable history, not a
+        // reason to blank the list; display paths tolerate it.
+        date: parse_date(&date_text).unwrap_or(Date::MIN),
+        vo2max: row.get(1)?,
+        running_level: row.get(2)?,
+        threshold_pace: row.get::<_, Option<f64>>(3)?.map(Pace::new),
+        predicted_paces: serde_json::from_str(&predicted).unwrap_or_default(),
+    })
+}
+
 /// One provider pull, for the sync log in Settings.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2383,5 +2466,54 @@ mod tests {
         assert_eq!(loaded.athlete.injury_flags, vec!["achilles".to_string()]);
         assert!(loaded.athlete.injury_constrained());
         let _ = PlanConstraints::default();
+    }
+
+    #[test]
+    fn fitness_assessments_upsert_and_read_latest() {
+        let db = Db::in_memory().expect("db");
+        let account =
+            ProviderAccountRepo::upsert(&db, Provider::Coros, "me@example.com", Some("eu"))
+                .expect("account");
+
+        let assessment = runalytics_core::FitnessAssessment {
+            date: date(2026, 10, 6),
+            vo2max: Some(53.5),
+            running_level: Some(87.0),
+            threshold_pace: Some(Pace::new(282.0)),
+            predicted_paces: vec![("half".into(), 268.0), ("full".into(), 285.0)],
+        };
+        FitnessRepo::upsert(&db, account, &assessment).expect("upsert");
+
+        // Providers revise the same day: the second write must replace, not add.
+        let revised = runalytics_core::FitnessAssessment {
+            vo2max: Some(54.0),
+            ..assessment.clone()
+        };
+        FitnessRepo::upsert(&db, account, &revised).expect("re-upsert");
+        let all = FitnessRepo::range(&db, date(2026, 1, 1), date(2026, 12, 31)).expect("range");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].vo2max, Some(54.0));
+        assert_eq!(all[0].predicted_paces.len(), 2);
+        assert!((all[0].threshold_pace.expect("pace").as_secs_per_km() - 282.0).abs() < 0.01);
+
+        FitnessRepo::upsert(
+            &db,
+            account,
+            &runalytics_core::FitnessAssessment {
+                date: date(2026, 10, 7),
+                vo2max: Some(54.2),
+                running_level: None,
+                threshold_pace: None,
+                predicted_paces: Vec::new(),
+            },
+        )
+        .expect("later day");
+        assert_eq!(
+            FitnessRepo::latest(&db)
+                .expect("latest")
+                .expect("present")
+                .date,
+            date(2026, 10, 7)
+        );
     }
 }

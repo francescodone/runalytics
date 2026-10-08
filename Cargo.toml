@@ -35,6 +35,7 @@ runalytics-provider-garmin = { path = "crates/provider-garmin" }
 # --- foundation ---
 anyhow = "1"
 async-trait = "0.1"
+bitflags = "2"
 futures = "0.3"
 indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
@@ -68,9 +69,13 @@ rmcp = { version = "3.5", default-features = false, features = [
 
 # --- http / net ---
 axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
+    "form",
     "json",
-    "rustls-tls",
+    # 0.13 renamed `rustls-tls` to `rustls`; this must also match what rmcp's
+    # `transport-streamable-http-client-reqwest` feature enables, or the two
+    # copies of the dependency resolve with mismatched TLS stacks.
+    "rustls",
 ] }
 url = { version = "2", features = ["serde"] }
 

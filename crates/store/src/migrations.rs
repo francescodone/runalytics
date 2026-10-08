@@ -277,7 +277,25 @@ CREATE INDEX idx_sync_run_account ON sync_run (account_id, started_at);
 ";
 
 /// Ordered list of `(version, sql)`. Append only — never edit an earlier entry.
-const MIGRATIONS: &[(i64, &str)] = &[(1, V1_SCHEMA)];
+/// Provider fitness estimates, one row per reported day per account.
+///
+/// Kept as history rather than a field on `athlete`: providers revise these
+/// constantly, and the *trend* of provider VO2max is a training signal while a
+/// single value is just the latest guess.
+const V2_SCHEMA: &str = r"
+CREATE TABLE fitness_assessment (
+    account_id       TEXT NOT NULL REFERENCES provider_account(id) ON DELETE CASCADE,
+    date             TEXT NOT NULL,
+    vo2max           REAL,
+    running_level    REAL,
+    threshold_pace   REAL,
+    predicted_json   TEXT NOT NULL DEFAULT '[]',
+    fetched_at       TEXT NOT NULL,
+    PRIMARY KEY (account_id, date)
+);
+";
+
+const MIGRATIONS: &[(i64, &str)] = &[(1, V1_SCHEMA), (2, V2_SCHEMA)];
 
 /// Current version recorded in the database, `0` for a fresh file.
 ///
@@ -384,6 +402,7 @@ mod tests {
             "athlete",
             "calendar_event",
             "feedback",
+            "fitness_assessment",
             "health_day",
             "injury_risk_day",
             "metric_snapshot",

@@ -29,9 +29,9 @@ pub use db::Db;
 pub use error::{Result, StoreError};
 pub use models::*;
 pub use repos::{
-    ActivityRepo, FeedbackRepo, HealthRepo, PlanRepo, ProviderAccountRepo, ReadinessRepo,
-    ScoreRepo, SyncRunRepo,
+    ActivityRepo, FeedbackRepo, FitnessRepo, HealthRepo, PlanRepo, ProviderAccountRepo,
+    ReadinessRepo, ScoreRepo, SyncRunRepo,
 };
 
 /// Schema version owned by this crate. Bumped together with `migrations.rs`.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;

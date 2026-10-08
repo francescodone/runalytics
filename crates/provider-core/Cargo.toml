@@ -14,10 +14,11 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bitflags.workspace = true
 chrono.workspace = true
 futures.workspace = true
-rmcp.workspace = true
 runalytics-core.workspace = true
+runalytics-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
