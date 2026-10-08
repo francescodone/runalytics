@@ -14,6 +14,10 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 runalytics-core.workspace = true
+# Reused rather than reimplemented: the same EMA and the same pace model must
+# produce both the plan's projected load and the realised load, or the
+# dashboard's ACWR would disagree with the plan's ACWR for the same week.
+runalytics-plan-engine.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
