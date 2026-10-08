@@ -3583,6 +3583,7 @@ dependencies = [
  "process-wrap",
  "rand 0.10.3",
  "reqwest",
+ "rmcp-macros",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -3594,6 +3595,19 @@ dependencies = [
  "tower-service",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rmcp-macros"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1da498700030856ba63114bceefa30ba21f5e278cb975e5b9de3529fe842b40"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3667,17 +3681,19 @@ name = "runalytics-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "rmcp",
  "runalytics-calendar",
  "runalytics-core",
  "runalytics-plan-engine",
- "runalytics-provider-core",
  "runalytics-scoring",
  "runalytics-store",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",

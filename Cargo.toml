@@ -50,6 +50,9 @@ uuid = { version = "1", features = ["v4", "v5", "v7", "rng", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "3"
+# Must stay the major rmcp 3.5 pulls (1.x): the MCP server's tool input schemas
+# are derived here and embedded by rmcp, so both sides must share one schemars.
+schemars = "1"
 
 # --- persistence ---
 rusqlite = { version = "0.37", features = ["bundled", "chrono", "serde_json"] }
@@ -60,6 +63,7 @@ icalendar = "0.17"
 # --- mcp ---
 rmcp = { version = "3.5", default-features = false, features = [
     "client",
+    "macros",
     "server",
     "transport-io",
     "transport-child-process",

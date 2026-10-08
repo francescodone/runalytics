@@ -17,20 +17,28 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 chrono.workspace = true
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 rmcp.workspace = true
 runalytics-calendar.workspace = true
 runalytics-core.workspace = true
 runalytics-plan-engine.workspace = true
-runalytics-provider-core.workspace = true
 runalytics-scoring.workspace = true
 runalytics-store.workspace = true
+# Same major rmcp resolves (1.x): tool input schemas derived here are embedded
+# by rmcp, so both sides must share one schemars.
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+# Integration tests build athlete snapshots directly on the wire.
+runalytics-core.workspace = true
 
 [lints]
 workspace = true
