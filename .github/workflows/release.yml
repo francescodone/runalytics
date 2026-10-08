@@ -15,8 +15,9 @@ name: Release
 # Apple Developer ID signing, so first launch still needs the
 # Privacy & Security -> Open Anyway flow.
 #
-# Requires apps/desktop/src-tauri/tauri.conf.json to exist; the desktop crate
-# is currently Rust-only and the bundle step is skipped until it is scaffolded.
+# NOTE: this fails until apps/desktop/src-tauri/tauri.conf.json exists. The
+# desktop crate is Rust-only so far (build.rs is an empty main), so there is
+# nothing for `tauri build` to bundle. Scaffold the config first.
 
 on:
   push:

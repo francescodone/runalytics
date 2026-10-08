@@ -5,9 +5,10 @@ name: CI
 # `cargo fmt --check && cargo clippy -- -D warnings && cargo test` locally is
 # green here too.
 #
-# Runs on macOS hosts only: the desktop shell is a Tauri app that pulls in
+# Runs on macOS hosts: the desktop shell is a Tauri app that pulls in
 # security-framework and keyring's apple-native backend, so the workspace does
-# not build on Linux. Same host the release pipeline uses.
+# not build on Linux. Same host the release pipeline uses. Only the fmt job runs
+# on Linux, since rustfmt does not need to link anything.
 
 on:
   push:
