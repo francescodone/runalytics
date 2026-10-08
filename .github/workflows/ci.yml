@@ -1,0 +1,86 @@
+name: CI
+
+# Quality gate for the Cargo workspace: formatting, lints, and tests on every
+# push and pull request. Mirrors the local workflow so a branch that passes
+# `cargo fmt --check && cargo clippy -- -D warnings && cargo test` locally is
+# green here too.
+#
+# Runs on macOS hosts only: the desktop shell is a Tauri app that pulls in
+# security-framework and keyring's apple-native backend, so the workspace does
+# not build on Linux. Same host the release pipeline uses.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep build metadata out of cache keys and shrink artifacts.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      # Cheap and host-independent, so it stays on the fast Linux runner.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Lints
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      # macOS host so the desktop shell (Tauri + security-framework) is linted
+      # too; on Linux those crates cannot be built.
+      #
+      # Advisory for now: the workspace has ~29 outstanding pedantic lints
+      # (match_same_arms in the plan-phase load tables, redundant closures in
+      # store, doc_markdown, too_many_lines). Clear them, then drop
+      # continue-on-error to make this a hard gate.
+      - name: Clippy
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      # --all-targets also compiles benches/examples, so this covers the build
+      # step as well.
+      - name: Run tests
+        run: cargo test --workspace --all-targets --locked
