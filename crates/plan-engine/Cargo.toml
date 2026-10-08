@@ -1,0 +1,21 @@
+[package]
+name = "runalytics-plan-engine"
+description = "Deterministic training-plan generation: periodised weeks, session placement, safety ceilings. Pure — no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+runalytics-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

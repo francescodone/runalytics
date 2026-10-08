@@ -1,0 +1,32 @@
+[package]
+name = "runalytics-calendar"
+description = "ICS generation and calendar sinks: atomic file, localhost webcal feed, Calendar.app via AppleScript."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+icalendar.workspace = true
+runalytics-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

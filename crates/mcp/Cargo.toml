@@ -1,0 +1,36 @@
+[package]
+name = "runalytics-mcp"
+description = "Runalytics MCP server: exposes plan generation, scoring and calendar sync as tools for external agents. stdio and localhost HTTP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "runalytics-mcp"
+path = "src/main.rs"
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap = { version = "4", features = ["derive"] }
+rmcp.workspace = true
+runalytics-calendar.workspace = true
+runalytics-core.workspace = true
+runalytics-plan-engine.workspace = true
+runalytics-provider-core.workspace = true
+runalytics-scoring.workspace = true
+runalytics-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

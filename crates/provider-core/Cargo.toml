@@ -1,0 +1,29 @@
+[package]
+name = "runalytics-provider-core"
+description = "The WearableProvider contract, capability negotiation, OAuth token storage and sync cursors shared by every provider adapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+rmcp.workspace = true
+runalytics-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+# --- rust ---
+/target
+**/target
+# Cargo.lock is committed on purpose: this workspace ships a binary
+# (apps/desktop/src-tauri), so a locked build is what CI and releases use.
+# CI passes --locked, which fails if the lockfile drifts from the manifests.
+
+# --- node ---
+node_modules
+dist
+dist-ssr
+.vite
+*.tsbuildinfo
+
+# --- tauri ---
+apps/desktop/src-tauri/gen/schemas
+apps/desktop/src-tauri/binaries/*
+!apps/desktop/src-tauri/binaries/.gitkeep
+
+# --- secrets / local state ---
+.env
+.env.*
+!.env.example
+*.local
+.runalytics/
+
+# --- editors / os ---
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# --- test / coverage ---
+coverage
+*.gcda
+*.gcno

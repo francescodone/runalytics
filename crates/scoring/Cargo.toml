@@ -1,0 +1,24 @@
+[package]
+name = "runalytics-scoring"
+description = "Load, readiness, injury-risk and performance scoring. Versioned formulas with golden fixtures. Pure — no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+runalytics-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
