@@ -1,9 +1,8 @@
 name: CI
 
 # Quality gate for the Cargo workspace: formatting, lints, and tests on every
-# push and pull request. Mirrors the local workflow so a branch that passes
-# `cargo fmt --check && cargo clippy -- -D warnings && cargo test` locally is
-# green here too.
+# push and pull request. Each job runs a Makefile target, so a branch that
+# passes `make check` locally is green here too.
 #
 # Runs on macOS hosts: the desktop shell is a Tauri app that pulls in
 # security-framework and keyring's apple-native backend, so the workspace does
@@ -42,7 +41,7 @@ jobs:
 
       # Cheap and host-independent, so it stays on the fast Linux runner.
       - name: Check formatting
-        run: cargo fmt --all --check
+        run: make fmt
 
   clippy:
     name: Lints
@@ -67,7 +66,7 @@ jobs:
       # ACWR, TSS) and match_same_arms (the phase/experience tables legitimately
       # share values between neighbouring levels).
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: make clippy
 
   test:
     name: Test
@@ -84,4 +83,4 @@ jobs:
       # --all-targets also compiles benches/examples, so this covers the build
       # step as well.
       - name: Run tests
-        run: cargo test --workspace --all-targets --locked
+        run: make test

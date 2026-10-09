@@ -5,19 +5,15 @@ name: Release
 #
 #   # the version lives in exactly one place: [workspace.package] version in
 #   # the root Cargo.toml, inherited by every crate including the desktop shell.
+#   # tauri.conf.json omits `version`, so the bundle version follows Cargo too.
 #   sed -i '' 's/^version = "0.1.0"/version = "0.2.0"/' Cargo.toml && cargo update -w
 #   git commit -am "chore: release v0.2.0" && git push
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# The app bundle is signed with the updater key (minisign), which is what the
-# in-app updater verifies — store the private key as the repository secret
-# TAURI_SIGNING_PRIVATE_KEY (contents of ~/.tauri/runalytics.key). It is NOT
-# Apple Developer ID signing, so first launch still needs the
-# Privacy & Security -> Open Anyway flow.
-#
-# NOTE: this fails until apps/desktop/src-tauri/tauri.conf.json exists. The
-# desktop crate is Rust-only so far (build.rs is an empty main), so there is
-# nothing for `tauri build` to bundle. Scaffold the config first.
+# The .app is built but NOT signed with an Apple Developer ID here (that needs
+# paid Apple credentials), so first launch still goes through the
+# Privacy & Security -> Open Anyway flow. There is no in-app updater configured,
+# so no minisign/updater key is required to cut a release.
 
 on:
   push:
@@ -55,16 +51,10 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
 
-      - name: Create GitHub release and build app (first target only)
+      - name: Create GitHub release and build app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # minisign private key (contents of ~/.tauri/runalytics.key).
-          # Required because tauri.conf.json sets an updater pubkey +
-          # createUpdaterArtifacts; without it the build fails when signing
-          # the updater tarball.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop/src-tauri
           tagName: v__VERSION__

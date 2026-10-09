@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Keys merged into the generated Info.plist (Tauri picks up any Info.plist next
+  to tauri.conf.json). These are the strings macOS shows in the consent dialog
+  the first time the app drives another application.
+
+  Runalytics publishes the training plan into Calendar.app via AppleScript
+  (osascript), which the system treats as Apple-event automation, not EventKit.
+  So the governing key is NSAppleEventsUsageDescription — without it, the
+  automation prompt is suppressed and the scripted calendar write fails with
+  errAEEventNotPermitted (-1743) instead of asking the user.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Runalytics publishes your training plan into Calendar.app.</string>
+  </dict>
+</plist>

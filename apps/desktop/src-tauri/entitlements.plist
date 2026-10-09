@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hardened-runtime entitlements for the signed/notarized bundle (bundle.macOS.
+  hardenedRuntime defaults to true). The app is NOT sandboxed: it drives
+  Calendar.app with AppleScript and keeps data in the app-data directory, both
+  of which the App Sandbox would block.
+
+  com.apple.security.automation.apple-events grants the app the right to send
+  Apple events to other applications (System Events, Calendar). Under hardened
+  runtime this entitlement is required in addition to the
+  NSAppleEventsUsageDescription string in Info.plist; the string drives the
+  user prompt, the entitlement is what lets the event leave the process at all.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+  </dict>
+</plist>
