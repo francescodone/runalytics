@@ -156,39 +156,7 @@ impl CorosProvider {
             return Ok(cached);
         }
         let region = self.config.known_region.unwrap_or(Region::Global);
-        let mcp = url::Url::parse(region.mcp_url())
-            .map_err(|e| ProviderError::OAuth(format!("unparseable MCP url: {e}")))?;
-        let host = mcp
-            .host_str()
-            .ok_or_else(|| ProviderError::OAuth("MCP url has no host".into()))?;
-        let well_known = format!("https://{host}/.well-known/oauth-authorization-server");
-        let discovered: Value = match self.http.get(&well_known).send().await {
-            Ok(resp) if resp.status().is_success() => resp.json().await.unwrap_or(Value::Null),
-            _ => Value::Null,
-        };
-        let endpoint = |key: &str| {
-            discovered
-                .get(key)
-                .and_then(Value::as_str)
-                .and_then(|s| url::Url::parse(s).ok())
-        };
-        let endpoints = match (
-            endpoint("authorization_endpoint"),
-            endpoint("token_endpoint"),
-        ) {
-            (Some(authorize), Some(token)) => AuthEndpoints {
-                authorize,
-                token,
-                registration: endpoint("registration_endpoint"),
-            },
-            _ => AuthEndpoints {
-                authorize: url::Url::parse(&format!("https://{host}/oauth/authorize"))
-                    .map_err(|e| ProviderError::OAuth(e.to_string()))?,
-                token: url::Url::parse(&format!("https://{host}/oauth/token"))
-                    .map_err(|e| ProviderError::OAuth(e.to_string()))?,
-                registration: None,
-            },
-        };
+        let endpoints = crate::oauth::discover_endpoints(&self.http, region).await?;
         *self.auth.lock().unwrap_or_else(PoisonError::into_inner) = Some(endpoints.clone());
         Ok(endpoints)
     }

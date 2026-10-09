@@ -1754,6 +1754,48 @@ pub fn new_health_day_id() -> HealthDayId {
     HealthDayId::new()
 }
 
+// ---------------------------------------------------------------------------
+// settings
+// ---------------------------------------------------------------------------
+
+/// App settings: opaque string values (JSON by convention) keyed by name.
+///
+/// Values are stored as text rather than typed columns because the settings
+/// are the *shell's* shape, not the domain's — the store only persists them.
+pub struct SettingsRepo;
+
+impl SettingsRepo {
+    /// Read one setting; `None` when never written.
+    pub fn get(db: &Db, key: &str) -> Result<Option<String>> {
+        let value = db
+            .conn()
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(value)
+    }
+
+    /// Write one setting (insert or replace).
+    pub fn set(db: &Db, key: &str, value: &str) -> Result<()> {
+        db.conn().execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![key, value, write_timestamp(now())],
+        )?;
+        Ok(())
+    }
+
+    /// Forget one setting.
+    pub fn remove(db: &Db, key: &str) -> Result<()> {
+        db.conn()
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2515,5 +2557,21 @@ mod tests {
                 .date,
             date(2026, 10, 7)
         );
+    }
+
+    #[test]
+    fn settings_roundtrip_and_remove() {
+        let db = Db::in_memory().expect("db");
+        assert_eq!(SettingsRepo::get(&db, "app.config").expect("get"), None);
+        SettingsRepo::set(&db, "app.config", r#"{"timezone":"Europe/Berlin"}"#).expect("set");
+        SettingsRepo::set(&db, "app.config", r#"{"timezone":"Asia/Tokyo"}"#).expect("replace");
+        assert_eq!(
+            SettingsRepo::get(&db, "app.config")
+                .expect("get")
+                .as_deref(),
+            Some(r#"{"timezone":"Asia/Tokyo"}"#)
+        );
+        SettingsRepo::remove(&db, "app.config").expect("remove");
+        assert_eq!(SettingsRepo::get(&db, "app.config").expect("get"), None);
     }
 }

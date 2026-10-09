@@ -31,6 +31,7 @@ runalytics-calendar = { path = "crates/calendar" }
 runalytics-provider-core = { path = "crates/provider-core" }
 runalytics-provider-coros = { path = "crates/provider-coros" }
 runalytics-provider-garmin = { path = "crates/provider-garmin" }
+runalytics-mcp = { path = "crates/mcp" }
 
 # --- foundation ---
 anyhow = "1"
@@ -87,7 +88,7 @@ url = { version = "2", features = ["serde"] }
 security-framework = "3"
 
 # --- tauri ---
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"

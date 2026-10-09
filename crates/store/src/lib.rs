@@ -30,8 +30,8 @@ pub use error::{Result, StoreError};
 pub use models::*;
 pub use repos::{
     ActivityRepo, FeedbackRepo, FitnessRepo, HealthRepo, PlanRepo, ProviderAccountRepo,
-    ReadinessRepo, ScoreRepo, SyncRunRepo,
+    ReadinessRepo, ScoreRepo, SettingsRepo, SyncRunRepo,
 };
 
 /// Schema version owned by this crate. Bumped together with `migrations.rs`.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;

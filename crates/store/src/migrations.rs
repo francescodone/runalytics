@@ -295,7 +295,18 @@ CREATE TABLE fitness_assessment (
 );
 ";
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, V1_SCHEMA), (2, V2_SCHEMA)];
+/// App settings: one JSON value per key, written by the desktop shell and
+/// read by anything that opens the same database (the MCP server included),
+/// so GUI and agent never diverge on timezone or calendar name.
+const V3_SCHEMA: &str = r"
+CREATE TABLE settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+";
+
+const MIGRATIONS: &[(i64, &str)] = &[(1, V1_SCHEMA), (2, V2_SCHEMA), (3, V3_SCHEMA)];
 
 /// Current version recorded in the database, `0` for a fresh file.
 ///

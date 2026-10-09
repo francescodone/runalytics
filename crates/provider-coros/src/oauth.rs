@@ -12,7 +12,10 @@
 use base64::Engine as _;
 use rand::Rng as _;
 use runalytics_provider_core::{OAuthToken, ProviderError, Result};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+
+use crate::endpoints::Region;
 
 /// The PKCE pair for one consent round.
 ///
@@ -108,6 +111,107 @@ pub fn authorization_url(
         }
     }
     Ok(url)
+}
+
+/// Discover the authorization-server endpoints for one region via the MCP
+/// authorization spec's discovery document, falling back to the conventional
+/// paths on the MCP host.
+///
+/// The desktop shell calls this before starting a consent flow; the provider
+/// caches its own copy for refreshes.
+///
+/// # Errors
+///
+/// [`ProviderError::OAuth`] if the regional host is unusable (it never should
+/// be — the URLs are static constants).
+pub async fn discover_endpoints(http: &reqwest::Client, region: Region) -> Result<AuthEndpoints> {
+    let mcp = url::Url::parse(region.mcp_url())
+        .map_err(|e| ProviderError::OAuth(format!("unparseable MCP url: {e}")))?;
+    let host = mcp
+        .host_str()
+        .ok_or_else(|| ProviderError::OAuth("MCP url has no host".into()))?;
+    let well_known = format!("https://{host}/.well-known/oauth-authorization-server");
+    let discovered: Value = match http.get(&well_known).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json().await.unwrap_or(Value::Null),
+        _ => Value::Null,
+    };
+    let endpoint = |key: &str| {
+        discovered
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|s| url::Url::parse(s).ok())
+    };
+    match (
+        endpoint("authorization_endpoint"),
+        endpoint("token_endpoint"),
+    ) {
+        (Some(authorize), Some(token)) => Ok(AuthEndpoints {
+            authorize,
+            token,
+            registration: endpoint("registration_endpoint"),
+        }),
+        _ => Ok(AuthEndpoints {
+            authorize: url::Url::parse(&format!("https://{host}/oauth/authorize"))
+                .map_err(|e| ProviderError::OAuth(e.to_string()))?,
+            token: url::Url::parse(&format!("https://{host}/oauth/token"))
+                .map_err(|e| ProviderError::OAuth(e.to_string()))?,
+            registration: None,
+        }),
+    }
+}
+
+/// Register this app as an OAuth client (RFC 7591 dynamic registration),
+/// returning the issued `client_id`.
+///
+/// COROS issues public clients (no secret) bound to the exact loopback
+/// `redirect_uri` announced here — the same string must appear byte-identical
+/// in the consent URL and the code exchange.
+///
+/// # Errors
+///
+/// [`ProviderError::OAuth`] on a non-2xx or unreadable registration response;
+/// [`ProviderError::Transport`] if the network call fails.
+pub async fn register_client(
+    http: &reqwest::Client,
+    registration_endpoint: &url::Url,
+    redirect_uri: &url::Url,
+) -> Result<String> {
+    let body = serde_json::json!({
+        "client_name": "Runalytics",
+        "redirect_uris": [redirect_uri.as_str()],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    });
+    let response = http
+        .post(registration_endpoint.as_str())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ProviderError::Transport {
+            provider: "coros".into(),
+            source: anyhow::Error::new(e).context("registration endpoint"),
+        })?;
+    let status = response.status();
+    let issued: Value = response.json().await.map_err(|e| {
+        ProviderError::OAuth(format!(
+            "registration endpoint returned unreadable body (HTTP {status}): {e}"
+        ))
+    })?;
+    if !status.is_success() {
+        return Err(ProviderError::OAuth(format!(
+            "registration endpoint rejected the client with HTTP {status}: {issued}"
+        )));
+    }
+    issued
+        .get("client_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ProviderError::OAuth(format!(
+                "registration response carries no client_id: {issued}"
+            ))
+        })
 }
 
 /// Exchange an authorization code for tokens.
