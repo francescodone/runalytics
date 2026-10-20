@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Settings</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link active">Settings</a>
+    </nav>
+    <main id="app" class="settings-page">
+      <div class="settings-shell">
+        <!-- macOS-style category list: one pane visible at a time. -->
+        <aside class="settings-nav" aria-label="Settings categories">
+          <div class="settings-nav-list" id="settings-nav" role="tablist" aria-orientation="vertical">
+            <button role="tab" data-pane="setup" class="active" aria-selected="true">
+              <span class="sn-icon" data-icon="rocket"></span>Setup
+            </button>
+            <button role="tab" data-pane="appearance" aria-selected="false">
+              <span class="sn-icon" data-icon="palette"></span>Appearance
+            </button>
+            <button role="tab" data-pane="zones" aria-selected="false">
+              <span class="sn-icon" data-icon="sliders"></span>Training zones
+            </button>
+            <button role="tab" data-pane="tiles" aria-selected="false">
+              <span class="sn-icon" data-icon="map"></span>Map tiles
+            </button>
+            <button role="tab" data-pane="assistant" aria-selected="false">
+              <span class="sn-icon" data-icon="sparkles"></span>Assistant
+            </button>
+            <button role="tab" data-pane="about" aria-selected="false">
+              <span class="sn-icon" data-icon="info"></span>About
+            </button>
+          </div>
+        </aside>
+
+        <div class="settings-content">
+          <section id="pane-setup" role="tabpanel" aria-label="Setup">
+            <h2>Setup</h2>
+            <p class="section-intro">
+              Three steps, in order: connect your watch, pull your history, then create a plan on
+              the Plan page. Runalytics has something to show from the second step onward, and
+              something to train with after the third.
+            </p>
+            <ol class="setup-steps" id="setup-steps"></ol>
+            <div id="setup-wizard"></div>
+
+            <h3 class="setup-advanced-head">Connection details</h3>
+            <p class="muted setup-advanced-note">
+              Everything above acts on your COROS connection. This is the same connection, with the
+              diagnostics — and the way to undo it.
+            </p>
+            <div id="provider-coros" class="provider surface">
+              <div class="provider-head">
+                <strong>COROS</strong>
+                <span id="coros-status" class="chip status">disconnected</span>
+              </div>
+              <p>Connects over the official COROS MCP endpoint using OAuth.</p>
+              <div class="actions">
+                <button id="coros-disconnect" class="danger" disabled>Disconnect</button>
+                <button id="coros-check" class="secondary">Check API</button>
+              </div>
+              <p id="coros-detail" class="muted"></p>
+              <div id="api-tools" class="api-tools" aria-live="polite"></div>
+            </div>
+            <div id="provider-garmin" class="provider surface">
+              <div class="provider-head">
+                <strong>Garmin</strong>
+                <span id="garmin-status" class="chip status">not built</span>
+              </div>
+              <p class="muted">
+                Garmin Connect has no official public API. Support is feature-gated and not
+                enabled in this build.
+              </p>
+            </div>
+          </section>
+
+          <section id="pane-appearance" role="tabpanel" aria-label="Appearance" hidden>
+            <h2>Appearance</h2>
+            <p class="section-intro">
+              Pick a colour scheme, or let Runalytics follow macOS and change with it.
+            </p>
+            <div class="setting-row">
+              <div class="setting-label">
+                <strong>Colour scheme</strong>
+                <span class="muted">System follows the macOS appearance automatically.</span>
+              </div>
+              <div class="segmented sm" id="theme-toggle" role="radiogroup" aria-label="Colour scheme">
+                <button type="button" data-theme="system" role="radio" aria-checked="false">System</button>
+                <button type="button" data-theme="light" role="radio" aria-checked="false">Light</button>
+                <button type="button" data-theme="dark" role="radio" aria-checked="false">Dark</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="pane-zones" role="tabpanel" aria-label="Training zones" hidden>
+            <h2>Training zones</h2>
+            <p class="section-intro">
+              The boundaries behind the dashboard's training-status chart, recovery bands and
+              weekly load target. Runalytics ships COROS's published numbers — move them only if
+              you know why, because every zone in the app follows these values.
+            </p>
+
+            <div class="zone-group">
+              <h3>Training load ratio</h3>
+              <p class="muted">
+                Acute load (7 days) divided by chronic load (42 days) — COROS calls this the
+                Intensity Trend. The four boundaries below cut it into the six published status
+                bands: Decreasing, Resuming/Performance, Maintaining, Optimized, Excessive.
+              </p>
+              <div class="zone-preview" id="ratio-preview"></div>
+              <div class="field-grid">
+                <label>
+                  Decreasing up to
+                  <input id="th-ratio-decreasing-hi" type="number" min="0.2" max="0.7" step="0.05" />
+                </label>
+                <label>
+                  Resuming / Performance up to
+                  <input id="th-ratio-resuming-hi" type="number" min="0.3" max="0.95" step="0.05" />
+                </label>
+                <label>
+                  Maintaining up to
+                  <input id="th-ratio-maintaining-hi" type="number" min="0.5" max="1.2" step="0.05" />
+                </label>
+                <label>
+                  Optimized up to
+                  <input id="th-ratio-optimized-hi" type="number" min="0.9" max="3" step="0.05" />
+                </label>
+              </div>
+              <p class="hint">
+                Above the Optimized limit reads as <em>Excessive</em>, and it is also the point
+                where injury risk starts to climb. COROS shares one range between
+                <em>Resuming</em> and <em>Performance</em>: coming down into it from a higher load
+                reads as Performance, anything else as Resuming.
+              </p>
+            </div>
+
+            <div class="zone-group">
+              <h3>Recovery bands</h3>
+              <p class="muted">
+                Your recovery score (sleep, resting heart rate, HRV) split into four bands. Each
+                band starts one point above the limit you set.
+              </p>
+              <div class="zone-preview" id="recovery-preview"></div>
+              <div class="field-grid">
+                <label>
+                  Exhausted up to
+                  <input id="th-recovery-exhausted" type="number" min="0" max="95" step="1" />
+                </label>
+                <label>
+                  Fatigued up to
+                  <input id="th-recovery-fatigued" type="number" min="1" max="97" step="1" />
+                </label>
+                <label>
+                  Normal up to
+                  <input id="th-recovery-normal" type="number" min="2" max="99" step="1" />
+                </label>
+              </div>
+              <p class="hint">Above Normal reads as <em>Fresh</em>, up to 100.</p>
+            </div>
+
+            <div class="zone-group">
+              <h3>Weekly load recommendation</h3>
+              <p class="muted">
+                The 7-day load target on the dashboard, built on a build/recovery cycle: a run of
+                increasing weeks, then one deliberately easier week.
+              </p>
+              <div class="field-grid">
+                <label>
+                  Building weeks
+                  <input id="th-build-weeks" type="number" min="1" max="8" step="1" />
+                </label>
+                <label>
+                  <span>Down week at <span class="muted">% of chronic load</span></span>
+                  <input id="th-down-week-factor" type="number" min="40" max="100" step="5" />
+                </label>
+              </div>
+              <p class="hint" id="cycle-hint"></p>
+            </div>
+
+            <div class="zone-group">
+              <h3>Quality pacing</h3>
+              <p class="muted">
+                Tempo and interval sessions carry a pace range. A session counts as out of range
+                only when the reps miss it by more than the tolerance below — a near miss is GPS
+                noise, not a wrong plan. If that many quality sessions in a row all miss the same
+                way, the Plan page proposes moving the ranges slightly.
+              </p>
+              <div class="field-grid">
+                <label>
+                  <span>Tolerance <span class="muted">s/km off the range</span></span>
+                  <input id="th-pace-tolerance-sec-km" type="number" min="0" max="20" step="1" />
+                </label>
+                <label>
+                  <span>Sessions in a row <span class="muted">before an offer</span></span>
+                  <input id="th-pace-streak" type="number" min="2" max="6" step="1" />
+                </label>
+              </div>
+              <p class="hint">
+                One session out of range is never a trend — a hill, a group run, a bad night's
+                sleep. Nothing is changed without you accepting it.
+              </p>
+            </div>
+
+            <div class="actions">
+              <button id="zones-save">Save</button>
+              <button id="zones-reset" class="secondary">Restore COROS defaults</button>
+            </div>
+          </section>
+
+          <section id="pane-tiles" role="tabpanel" aria-label="Map tiles" hidden>
+            <h2>Map tiles</h2>
+            <p class="section-intro">
+              The heatmap renders offline from an <code>.pmtiles</code> file. Drop one on disk and
+              point at it here.
+            </p>
+            <label>
+              PMTiles path
+              <input id="pmtiles-path" type="text" placeholder="~/maps/planet.pmtiles" />
+            </label>
+            <div class="actions">
+              <button id="tiles-save">Save</button>
+            </div>
+          </section>
+
+          <section id="pane-assistant" role="tabpanel" aria-label="Assistant" hidden>
+            <h2>Injury assistant</h2>
+            <p class="section-intro">
+              Optional. Point at any OpenAI-compatible chat endpoint and the Injuries page becomes
+              a chat about your pain, grounded in your training data. Without it, the journal
+              still works and replies come from the built-in logger. The key is stored in the
+              macOS keychain, never in a file.
+            </p>
+            <label class="assistant-toggle">
+              <input id="llm-enabled" type="checkbox" />
+              Enable the assistant
+            </label>
+            <label>
+              Endpoint
+              <input id="llm-endpoint" type="text" placeholder="https://api.openai.com/v1" />
+            </label>
+            <label>
+              Model
+              <input id="llm-model" type="text" placeholder="gpt-4o-mini" />
+            </label>
+            <label>
+              API key
+              <input id="llm-key" type="password" placeholder="sk-…" autocomplete="off" />
+            </label>
+            <p id="llm-key-status" class="muted"></p>
+            <div class="actions">
+              <button id="llm-save">Save</button>
+              <button id="llm-clear-key" class="secondary">Remove key</button>
+            </div>
+          </section>
+
+          <section id="pane-about" role="tabpanel" aria-label="About" hidden>
+            <h2>About</h2>
+            <p class="muted">Runalytics 0.1.0 — training analytics for runners.</p>
+            <div class="actions">
+              <button id="replay-tutorial" class="secondary">Replay tutorial</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>

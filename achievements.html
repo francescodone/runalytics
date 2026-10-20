@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Achievements</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link">Injuries</a>
+      <a href="achievements.html" class="nav-link active">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+    </nav>
+    <main id="app">
+      <section id="streaks" class="panel">
+        <header class="panel-head">
+          <h2>Streaks</h2>
+          <span class="panel-meta" id="streak-meta"></span>
+        </header>
+        <div id="streak-stats" class="stat-grid"></div>
+        <div class="heatmap-row">
+          <div id="streak-heatmap" class="streak-heatmap" aria-label="Activity in the last 12 weeks"></div>
+          <p class="muted heatmap-legend">Last 12 weeks<br />darker means more running kilometres<br /><span class="hm-cell cross" aria-hidden="true"></span> trained another way</p>
+        </div>
+      </section>
+      <section id="badges" class="panel">
+        <header class="panel-head">
+          <h2>Badges</h2>
+          <span class="panel-meta" id="badge-summary"></span>
+        </header>
+        <div id="badge-cards" class="achieve-grid"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/achievements.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link active">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+      <span class="nav-spacer"></span>
+    </nav>
+    <main id="app">
+      <section id="pain-banner" class="notice bad" hidden></section>
+      <section id="empty" hidden></section>
+      <div id="dash" hidden>
+        <section id="today" class="hero" aria-label="Today">
+          <div id="today-hero"></div>
+        </section>
+
+        <div class="group">
+          <h2 class="group-head">Your week</h2>
+          <section id="week" class="panel">
+            <header class="panel-head">
+              <h2>This week</h2>
+              <span class="panel-meta" id="week-meta"></span>
+            </header>
+            <div id="week-strip" class="bar-chart week"></div>
+            <p class="muted heatmap-legend" id="week-legend" hidden></p>
+            <div id="week-tiles" class="tile-grid"></div>
+            <div id="week-plan" class="week-plan"></div>
+          </section>
+        </div>
+
+        <div class="group">
+          <h2 class="group-head">Training trends</h2>
+          <section id="volume" class="panel">
+            <header class="panel-head">
+              <h2>Weekly mileage</h2>
+              <span class="panel-meta" id="volume-meta"></span>
+            </header>
+            <div id="volume-panel" class="bar-chart volume"></div>
+            <p class="muted heatmap-legend" id="volume-legend" hidden></p>
+          </section>
+          <section id="status" class="panel">
+            <header class="panel-head">
+              <h2>Training load</h2>
+            </header>
+            <div id="status-panel"></div>
+          </section>
+          <section id="fitness" class="panel">
+            <header class="panel-head">
+              <h2>Fitness</h2>
+              <span class="panel-meta">What you could race right now</span>
+            </header>
+            <div class="carousel"><div id="fitness-cards" class="cards"></div></div>
+          </section>
+        </div>
+
+        <div class="group">
+          <h2 class="group-head">Recovery &amp; risk</h2>
+          <section id="recovery" class="panel">
+            <header class="panel-head">
+              <h2>Recovery</h2>
+            </header>
+            <div id="recovery-panel"></div>
+            <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
+          </section>
+          <section id="risk" class="panel">
+            <header class="panel-head">
+              <h2>Injury risk</h2>
+            </header>
+            <div id="risk-panel" class="risk-body"></div>
+          </section>
+        </div>
+
+        <section id="recent" class="panel">
+          <header class="panel-head">
+            <h2>Recent runs</h2>
+          </header>
+          <div class="table-scroll" role="region" aria-label="Recent runs" tabindex="0">
+          <table id="activities-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Sport</th>
+                <th>Distance</th>
+                <th>Duration</th>
+                <th>Avg HR</th>
+                <th>Pace</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          </div>
+          <div id="map"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/dashboard.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Injuries</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link active">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+    </nav>
+    <main id="app">
+      <section id="log-pain" class="panel">
+        <header class="panel-head">
+          <h2>Where does it hurt?</h2>
+        </header>
+        <p class="muted">
+          Click the spot on the body map, rate how bad it is, and say when it
+          started. Runalytics keeps the journal and, when a plan is active,
+          proposes a change to help it heal.
+        </p>
+        <div class="pain-body">
+          <div id="bodymap" class="bodymap"></div>
+          <div class="pain-ask">
+            <p id="bodymap-selected" class="bodymap-selected muted" aria-live="polite">
+              Nothing selected yet.
+            </p>
+            <div class="pain-form" id="pain-form">
+              <label class="pain-field">
+                <span>Intensity <strong id="intensity-value">5</strong>/10</span>
+                <input id="pain-intensity" type="range" min="0" max="10" step="1" value="5" />
+              </label>
+              <label class="pain-field">
+                <span>Started on</span>
+                <input id="pain-started" type="date" />
+              </label>
+              <label class="pain-field pain-field-notes">
+                <span>Notes</span>
+                <textarea id="pain-notes" rows="3" placeholder="Sharp on downhill, only in the last km…"></textarea>
+              </label>
+              <div class="actions">
+                <button id="pain-save" class="primary" disabled>Log pain</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="proposal-section" class="panel" hidden>
+        <header class="panel-head">
+          <h2>Proposed plan change</h2>
+        </header>
+        <div id="proposal-card" class="notice accent stack"></div>
+      </section>
+
+      <section id="journal-section" class="panel">
+        <header class="panel-head">
+          <h2>Pain journal</h2>
+        </header>
+        <div id="pain-list" class="pain-list"></div>
+      </section>
+
+      <section id="assistant-section" class="panel">
+        <header class="panel-head">
+          <h2>Injury assistant</h2>
+        </header>
+        <p class="muted" id="assistant-mode-note"></p>
+        <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+        <div class="chat-input">
+          <input id="chat-question" type="text" placeholder="Ask about this spot…" disabled />
+          <button id="chat-send" class="primary" disabled>Ask</button>
+        </div>
+        <div class="actions">
+          <button id="chat-clear" class="secondary">Clear thread</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/injury.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "runalytics",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "predev": "lsof -ti tcp:1499 | xargs kill -9 2>/dev/null || true",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:dmg": "tauri build && bash scripts/make_dmg.sh",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "maplibre-gl": "^5",
+    "motion": "^14.4.0",
+    "pmtiles": "^4"
+  },
+  "devDependencies": {
+    "@tabler/icons": "^3.49.0",
+    "@tauri-apps/cli": "^2",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.16"
+  }
+}

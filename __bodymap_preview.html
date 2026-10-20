@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bodymap preview</title>
+    <style>
+      body.bodymap-preview {
+        margin: 0;
+        background: linear-gradient(#f0f0f0, #fafafa);
+      }
+      .bodymap-preview main {
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 12px;
+        margin: 0;
+        max-width: none;
+        box-sizing: border-box;
+      }
+      #bodymap {
+        width: min(100%, calc((100dvh - 24px) * 555 / 752));
+        max-width: 555px;
+      }
+    </style>
+  </head>
+  <body class="bodymap-preview">
+    <main><div id="bodymap" class="bodymap"></div></main>
+    <script type="module">
+      import "/src/styles/app.css";
+      import { renderBodyMap } from "/src/lib/bodymap.ts";
+
+      const container = document.querySelector("#bodymap");
+      const tints = new Map([
+        ["biceps.left", 10], ["biceps.right", 10],
+        ["lat.left", 10], ["lat.right", 10],
+      ]);
+      function draw(selected = null) {
+        renderBodyMap(container, { selected, tints, onSelect: draw });
+      }
+      draw();
+    </script>
+  </body>
+</html>

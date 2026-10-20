@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Plan</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="plan.html" class="nav-link active">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+    </nav>
+    <main id="app">
+      <section id="plan-form" class="panel">
+        <header class="panel-head">
+          <h2>Create a plan</h2>
+        </header>
+        <div id="plan-pain-warning" class="notice warn" hidden></div>
+        <form id="create-plan" class="plan-card" novalidate>
+          <div class="plan-grid">
+            <fieldset class="plan-field plan-field-wide">
+              <legend>What is this plan for</legend>
+              <div class="plan-seg">
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-kind" value="race" checked />
+                  <span class="seg-face">Race<small>build to a date</small></span>
+                </label>
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-kind" value="improvement" />
+                  <span class="seg-face">Improvement<small>a block, then a time trial</small></span>
+                </label>
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-kind" value="maintenance" />
+                  <span class="seg-face">Maintenance<small>hold what you have</small></span>
+                </label>
+              </div>
+              <small class="plan-hint" id="plan-kind-hint">
+                A race build ramps to a peak, tapers and ends on race day.
+              </small>
+            </fieldset>
+            <fieldset class="plan-field plan-field-wide">
+              <legend id="plan-distance-legend">Race distance</legend>
+              <div class="plan-seg">
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-distance" value="5K" checked />
+                  <span class="seg-face">5K</span>
+                </label>
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-distance" value="10K" />
+                  <span class="seg-face">10K</span>
+                </label>
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-distance" value="21K" />
+                  <span class="seg-face">21K<small>Half</small></span>
+                </label>
+                <label class="plan-seg-opt">
+                  <input type="radio" name="plan-distance" value="42K" />
+                  <span class="seg-face">42K<small>Marathon</small></span>
+                </label>
+              </div>
+              <small class="plan-hint" id="plan-distance-hint">
+                The distance the plan builds toward — it sets the peak volume and the long runs.
+              </small>
+            </fieldset>
+            <label class="plan-field" id="plan-date-field">
+              <span class="plan-field-label" id="plan-date-label">Race date</span>
+              <input id="plan-target-date" type="date" required />
+              <small class="plan-hint" id="plan-date-hint">At least two weeks out.</small>
+            </label>
+            <label class="plan-field" id="plan-weeks-field" hidden>
+              Block length
+              <select id="plan-block-weeks">
+                <option value="8">8 weeks</option>
+                <option value="10" selected>10 weeks</option>
+                <option value="12">12 weeks</option>
+                <option value="16">16 weeks</option>
+              </select>
+              <small class="plan-hint" id="plan-weeks-hint">
+                Sixteen weeks is the longest block COROS will hold.
+              </small>
+            </label>
+            <label class="plan-field">
+              Threshold pace
+              <input
+                id="plan-threshold"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="4:45"
+                aria-describedby="plan-threshold-hint"
+                required
+              />
+              <small class="plan-hint" id="plan-threshold-hint">min/km — e.g. 4:45</small>
+            </label>
+            <label class="plan-field">
+              Current mileage
+              <div class="plan-suffix">
+                <input
+                  id="plan-mileage"
+                  type="number"
+                  min="5"
+                  max="250"
+                  step="0.5"
+                  inputmode="decimal"
+                  placeholder="—"
+                  aria-describedby="plan-mileage-hint"
+                />
+                <span class="plan-suffix-tag">km/wk</span>
+              </div>
+              <small class="plan-hint" id="plan-mileage-hint">From your watch — sync to fill this in.</small>
+            </label>
+            <div class="plan-field">
+              <span class="plan-field-label">Weekly frequency</span>
+              <div class="plan-stepper">
+                <button
+                  type="button"
+                  class="plan-step"
+                  data-dir="-1"
+                  aria-label="One fewer run per week"
+                >&minus;</button>                <input
+                  id="plan-frequency"
+                  type="number"
+                  min="3"
+                  max="7"
+                  value="4"
+                  readonly
+                  aria-label="Runs per week"
+                />
+                <button
+                  type="button"
+                  class="plan-step"
+                  data-dir="1"
+                  aria-label="One more run per week"
+                >+</button>
+              </div>
+              <small class="plan-hint">3&ndash;7 runs, long run included.</small>
+            </div>
+            <label class="plan-field">
+              Long-run day
+              <select id="plan-longrun-day">
+                <option value="6">Saturday</option>
+                <option value="7">Sunday</option>
+                <option value="5">Friday</option>
+                <option value="3">Wednesday</option>
+              </select>
+            </label>
+            <label class="plan-field" id="plan-increase-field">
+              Mileage increase
+              <select id="plan-increase">
+                <option value="conservative">Conservative (+5%/wk)</option>
+                <option value="moderate" selected>Moderate (+8%/wk)</option>
+                <option value="ambitious">Ambitious (+12%/wk)</option>
+              </select>
+              <small class="plan-hint" id="plan-increase-hint">
+                How fast the weekly volume climbs toward its peak.
+              </small>
+            </label>
+          </div>
+
+          <details class="inset threshold-explainer">
+            <summary>What &ldquo;threshold pace&rdquo; is, and why every pace comes from it</summary>
+            <p>
+              Threshold pace is the fastest pace you can hold for about an hour — a
+              comfortably hard effort you could sustain for an hour but not two. It sits
+              right at the lactate threshold, where your body stops clearing lactate as
+              fast as it makes it. In practice it is close to the pace you race a 10K to
+              a half marathon at: someone running 4:45/km threshold is roughly a 48-minute
+              10K runner and a 1:45 half.
+            </p>
+            <p>
+              It is the single number the plan is built on. Every pace the sessions
+              prescribe is derived from it, so one honest value here makes the whole plan
+              honest:
+            </p>
+            <ul class="pace-table">
+              <li><span>Easy</span><span id="pace-easy">threshold + 45&ndash;75 s</span></li>
+              <li><span>Tempo</span><span id="pace-tempo">threshold &plusmn; 5 s</span></li>
+              <li><span>Intervals</span><span id="pace-intervals">about 25 s faster than threshold</span></li>
+              <li><span>Long-run steady stretches</span><span id="pace-mp">marathon pace, from the same model</span></li>
+            </ul>
+            <p class="muted">
+              Your watch already measures this: COROS derives it from your best efforts
+              and its fitness assessments, and it fills this field in after a sync. Type
+              over it only if you know the number is stale — a threshold that is too fast
+              makes every easy day hard and every quality day unsustainable, which is the
+              most common way a plan goes wrong.
+            </p>
+          </details>
+          <div class="inset plan-preview" id="plan-preview" aria-live="polite">
+            <p class="inset-hint">Pick a race date to see the shape of your plan.</p>
+          </div>
+          <div class="plan-submit">
+            <button type="submit" class="lg">Generate plan</button>
+            <p class="plan-error" id="plan-error" role="alert" hidden></p>
+          </div>
+        </form>
+        <p class="notice warn" id="plan-active-notice" hidden>
+          You already have an active plan — abort it above before creating a new one.
+        </p>
+      </section>
+      <section id="plan-view" class="panel">
+        <header class="panel-head">
+          <h2>Active plan</h2>
+        </header>
+        <div id="plan-status"></div>
+        <div id="plan-weeks"></div>
+        <div class="actions">
+          <button id="push-plan" disabled>Push to COROS</button>
+          <button id="abort-plan" class="danger" disabled>Abort plan</button>
+        </div>
+      </section>
+      <section id="pacing-section" class="panel" hidden>
+        <header class="panel-head">
+          <h2>Pacing</h2>
+          <p class="panel-meta">Tempo and interval reps, against the range each session asked for</p>
+        </header>
+        <div id="pacing-proposal" class="notice accent stack" hidden></div>
+        <div id="pacing-body"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/plan.ts"></script>
+  </body>
+</html>

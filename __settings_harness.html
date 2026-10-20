@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Settings (harness)</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+    <!-- Dev-only preview: stubs the Tauri IPC and then loads the real
+         settings.html body, so this file never duplicates the page markup and
+         cannot drift from it. Serve with `npm run dev` and open
+         /__settings_harness.html — the fetch of /settings.html needs the server.
+         Not part of the app: nothing in src/ references it. -->
+    <script>
+      // In-memory settings, so the pickers persist across saves in one session
+      // and the zone editor can show what the backend "normalised" to.
+      const settings = {
+        pmtilesPath: "~/maps/planet.pmtiles",
+        lastProvider: "coros",
+        theme: "system",
+        llmEnabled: false,
+        llmEndpoint: null,
+        llmModel: null,
+        thresholds: {
+          ratioDecreasingHi: 0.5,
+          ratioResumingHi: 0.8,
+          ratioMaintainingHi: 1.0,
+          ratioOptimizedHi: 1.5,
+          recoveryExhausted: 19,
+          recoveryFatigued: 69,
+          recoveryNormal: 89,
+          buildWeeks: 3,
+          downWeekFactor: 0.7,
+          paceToleranceSecKm: 4,
+          paceStreak: 3,
+        },
+      };
+
+      // Mirrors Thresholds::normalized() in Rust closely enough to prove the
+      // round trip: out-of-range input comes back clamped and ordered.
+      function normalize(t) {
+        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+        const dec = clamp(t.ratioDecreasingHi, 0.2, 0.7);
+        const res = Math.max(clamp(t.ratioResumingHi, 0.3, 0.95), dec + 0.05);
+        const main = Math.max(clamp(t.ratioMaintainingHi, 0.5, 1.2), res + 0.05);
+        const opt = Math.max(clamp(t.ratioOptimizedHi, 0.9, 3.0), main + 0.05);
+        const ex = Math.min(t.recoveryExhausted, 95);
+        const fa = Math.min(Math.max(t.recoveryFatigued, ex + 1), 97);
+        const no = Math.min(Math.max(t.recoveryNormal, fa + 1), 99);
+        return {
+          ratioDecreasingHi: dec,
+          ratioResumingHi: res,
+          ratioMaintainingHi: main,
+          ratioOptimizedHi: opt,
+          recoveryExhausted: ex,
+          recoveryFatigued: fa,
+          recoveryNormal: no,
+          buildWeeks: Math.min(Math.max(t.buildWeeks, 1), 8),
+          downWeekFactor: Math.min(Math.max(t.downWeekFactor, 0.4), 1.0),
+          paceToleranceSecKm: Math.min(Math.max(t.paceToleranceSecKm, 0), 20),
+          paceStreak: Math.min(Math.max(t.paceStreak, 2), 6),
+        };
+      }
+
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          switch (cmd) {
+            case "get_settings":
+              return structuredClone(settings);
+            case "save_settings":
+              Object.assign(settings, args.settings);
+              settings.thresholds = normalize(settings.thresholds);
+              return;
+            case "provider_status":
+              return [{ provider: "coros", connected: true, lastSync: new Date().toISOString(), detail: "" }];
+            case "current_plan":
+              // Deliberately no plan: the Setup pane should be sitting on step 3.
+              return null;
+            case "llm_status":
+              return { hasKey: false, endpoint: null, model: null };
+            case "flow_state":
+              return { connected: true, lastSync: new Date().toISOString(), plan: null, pushed: false };
+            case "sync_status":
+              return false;
+            default:
+              throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
+          }
+        },
+      };
+    </script>
+    <script type="module">
+      const page = await (await fetch("/settings.html")).text();
+      const body = new DOMParser().parseFromString(page, "text/html").body;
+      // Drop the page's own entry script; it is imported below, after the
+      // markup exists, so settings.ts finds its elements.
+      body.querySelectorAll("script").forEach((s) => s.remove());
+      document.body.replaceChildren(...body.childNodes);
+      await import("/src/settings.ts");
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics harness</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+    <script>
+      localStorage.setItem("runalytics.onboarding.v1", "done");
+      const day = (n) => new Date(Date.now() - n * 864e5).toISOString();
+      // ?offset=-5 gives the plan an accepted pacing adjustment, to check the
+      // week plan shows the shifted tempo range rather than the stored one. The
+      // offset takes effect from Monday so the week's tempo session falls under
+      // it, exactly as a session run after accepting an adjustment would.
+      const harnessOffset = Number(new URLSearchParams(location.search).get("offset") ?? 0);
+      const ymdOf = (d) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+          d.getDate(),
+        ).padStart(2, "0")}`;
+      const mondayThisWeek = () => {
+        const d = new Date();
+        d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        return ymdOf(d);
+      };
+      // Per-day readiness sub-scores, oldest→newest — mirrors the backend's
+      // score_history: the last point's values are the headline scores.
+      const scoreHistory = Array.from({ length: 7 }, (_, i) => {
+        const n = 6 - i;
+        return {
+          date: day(n),
+          training: 60 + ((n * 17) % 30),
+          recovery: 45 + ((n * 11) % 40),
+          risk: 20 + ((n * 7) % 45),
+        };
+      });
+      scoreHistory[scoreHistory.length - 1] = {
+        date: day(0),
+        training: 78,
+        recovery: 61,
+        risk: 34,
+      };
+      const health = (n) => ({
+        date: day(n),
+        steps: 8000 + ((n * 971) % 4000),
+        avgHr: 62 + ((n * 7) % 9),
+        restingHr: 54 + ((n * 5) % 8),
+        stressAvg: 28 + ((n * 11) % 22),
+        sleepScore: 62 + ((n * 13) % 30),
+        sleepMin: 380 + ((n * 17) % 90),
+        deepMin: 60 + ((n * 9) % 40),
+        remMin: 80 + ((n * 6) % 40),
+        hrvAvg: 40 + ((n * 12) % 26),
+      });
+      // A run today (offset 0) so the week strip has actuals for the day the
+      // dashboard is being viewed on; the rest sit in earlier weeks.
+      const activities = [0, 1, 2, 4, 5, 8].map((n, i) => ({
+        id: i + 1,
+        provider: "coros",
+        providerRecordId: "x" + i,
+        sport: "Run",
+        startTime: day(n),
+        durationS: 2400 + i * 600,
+        distanceM: 8200 + i * 1500,
+        avgHr: 148 + i * 3,
+        maxHr: 170 + i * 2,
+        avgPaceSKm: 320 + i * 8,
+        elevationGainM: 60 + i * 20,
+        hasTrack: true,
+      }));
+      // Cross-training, deliberately placed to exercise both charts: a long
+      // spin TODAY (a double day — the week strip must mark it and keep it out
+      // of the kilometres), one ride last week, and a gym session whose
+      // distance is zero — the case that would print "0 km of strength work".
+      const cross = [
+        {
+          id: 90,
+          provider: "coros",
+          providerRecordId: "ride-0",
+          sport: "Ride",
+          startTime: day(0),
+          durationS: 9000,
+          distanceM: 90000,
+          avgHr: 132,
+          maxHr: 158,
+          avgPaceSKm: 100,
+          elevationGainM: 340,
+          hasTrack: true,
+        },
+        {
+          id: 91,
+          provider: "coros",
+          providerRecordId: "ride-9",
+          sport: "Ride",
+          startTime: day(9),
+          durationS: 7200,
+          distanceM: 62000,
+          avgHr: 128,
+          maxHr: 151,
+          avgPaceSKm: 116,
+          elevationGainM: 210,
+          hasTrack: true,
+        },
+        {
+          id: 92,
+          provider: "coros",
+          providerRecordId: "gym-5",
+          sport: "Strength",
+          startTime: day(5),
+          durationS: 2700,
+          distanceM: 0,
+          avgHr: 108,
+          maxHr: 142,
+          avgPaceSKm: null,
+          elevationGainM: null,
+          hasTrack: false,
+        },
+      ];
+      const dashboard = {
+        scores: { trainingScore: 78, injuryRisk: 34, recoveryScore: 61, globalScore: 68, notes: [] },
+        scoreHistory,
+        fitness: {
+          date: day(0), vo2max: 54.2, thresholdSecKm: 278,
+          predict5kS: 1210, predict10kS: 2560, predictHalfS: 5600, predictMarathonS: 12100,
+        },
+        load: { date: day(0), shortTerm: 62, longTerm: 55, ratio: 1.13, comment: "" },
+        // Daily acute:chronic load, oldest→newest — a build that tips over the
+        // performance boundary, which is the interesting shape to look at.
+        loadHistory: [27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14].map((n, i, a) => {
+          const shortTerm = [38, 41, 44, 42, 47, 51, 49, 54, 58, 56, 60, 63, 61, 62][i];
+          const longTerm = [52, 52, 53, 52, 53, 54, 53, 54, 55, 54, 55, 55, 55, 55][i];
+          return {
+            date: day(n),
+            shortTerm,
+            longTerm,
+            ratio: +(shortTerm / longTerm).toFixed(2),
+            comment: "",
+          };
+        }),
+        trainingStatus: { state: "optimized", label: "Optimized", reason: "Recent load is 1.13× your recent average — the productive zone where base fitness is increasing.", tone: "good", ratio: 1.13 },
+        // The boundaries the chart draws its bands from — normally the backend's
+        // normalised Thresholds, so the harness carries the COROS defaults.
+        thresholds: { ratioDecreasingHi: 0.5, ratioResumingHi: 0.8, ratioMaintainingHi: 1.0, ratioOptimizedHi: 1.5, recoveryExhausted: 19, recoveryFatigued: 69, recoveryNormal: 89, buildWeeks: 3, downWeekFactor: 0.7, paceToleranceSecKm: 4, paceStreak: 3 },
+        recoveryBand: { state: "fatigued", label: "Fatigued", tone: "warn", min: 20, max: 69 },
+        loadRecommendation: { target: 55, downWeek: false, weekInCycle: 2, cycleLength: 4, note: "" },
+        activities,
+        range: "7d",
+        stats: { distanceM: 52300, durationS: 14400, sessions: 5, avgPaceSKm: 332, avgHr: 151 },
+        health: [0, 1, 2, 3, 4, 5, 6].map(health),
+        // Mixed on purpose: the backend reports per-factor severity, so a
+        // healthy signal legitimately lands at 0 and the row has to say so.
+        riskFactors: [
+          { label: "Load ratio (ACWR)", detail: "1.13 — within optimized range", contribution: 0 },
+          { label: "Volume spike", detail: "within baseline (106%)", contribution: 0 },
+          { label: "Sleep quality", detail: "78/100 avg", contribution: 0 },
+          { label: "HRV trend", detail: "41 ms vs 52 ms baseline", contribution: 0.46 },
+          { label: "Resting HR drift", detail: "52 bpm vs 50 bpm baseline", contribution: 0 },
+          { label: "Recovery debt", detail: "71/100 recovery from sleep, HRV and resting HR", contribution: 0 },
+        ],
+      };
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          if (cmd === "provider_status") return [{ provider: "coros", connected: true, lastSync: day(0), detail: "" }];
+          if (cmd === "current_plan") return [
+            { id: "p1", distance: "21K", kind: "race", targetDate: day(-30), status: "pushed", weeklyFrequency: 4, longrunDay: 6, increase: "moderate", thresholdSecKm: 280, createdAt: day(10), pushedId: "z", baselineWeeklyKm: 32, qualityOffsetSecKm: harnessOffset, qualityOffsetFrom: harnessOffset === 0 ? null : mondayThisWeek() },
+            [],
+          ];
+          if (cmd === "dashboard") return dashboard;
+          if (cmd === "activity_detail") {
+            const a = activities.find((x) => x.id === args.activityId) ?? activities[0];
+            // An open route along the Isar with some wiggle, so the sheet's
+            // route map, its start/finish dots and its controls all render.
+            const base = Math.floor(Date.parse(a.startTime) / 1000);
+            const track = [];
+            for (let i = 0; i <= 80; i++) {
+              const t = i / 80;
+              track.push({
+                ts: base + i * 30,
+                lat: 48.1345 + t * 0.038 + Math.sin(t * 9) * 0.0016,
+                lon: 11.5768 + t * 0.014 + Math.sin(t * 7) * 0.0022,
+                hr: 140 + Math.round(20 * Math.sin(t * 4)),
+              });
+            }
+            return {
+              activity: a,
+              track,
+              health: health(1),
+              load: dashboard.load,
+              fitness: dashboard.fitness,
+              riskFactors: dashboard.riskFactors,
+              injuryRisk: 34,
+            };
+          }
+          // The dashboard's own `activities` stays runs-only, but all_activities
+          // carries every sport — that is the pair the mileage split is tested on.
+          if (cmd === "all_activities") return [...activities, ...cross];
+          if (cmd === "workouts_between") {
+            // A plausible week: easy Mon, tempo Wed, easy Fri, long Sun —
+            // keyed by local YYYY-MM-DD like the backend's plan_workouts.
+            const ymd = (offset) => {
+              const d = new Date();
+              const dow = (d.getDay() + 6) % 7;
+              d.setDate(d.getDate() - dow + offset);
+              const m = String(d.getMonth() + 1).padStart(2, "0");
+              const dd = String(d.getDate()).padStart(2, "0");
+              return `${d.getFullYear()}-${m}-${dd}`;
+            };
+            return [
+              { id: "w1", planId: "p1", date: ymd(0), kind: "easy", title: "Easy 6 km", distanceM: 6000, durationMin: 35, paceLoSKm: 360, paceHiSKm: 400, done: false },
+              { id: "w2", planId: "p1", date: ymd(2), kind: "tempo", title: "Tempo 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 300, paceHiSKm: 330, done: true },
+              { id: "w3", planId: "p1", date: ymd(4), kind: "easy", title: "Easy 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 360, paceHiSKm: 400, done: false },
+              { id: "w4", planId: "p1", date: ymd(6), kind: "longRun", title: "Long 14 km", distanceM: 14000, durationMin: 80, paceLoSKm: 370, paceHiSKm: 420, done: false },
+            ];
+          }
+          if (cmd === "heat_points") {
+            // A run cluster around Munich (English Garden / Isar) so the map
+            // and its controls render in the harness.
+            const pts = [];
+            for (let i = 0; i < 60; i++) {
+              pts.push({
+                lat: 48.1542 + Math.sin(i * 0.7) * 0.021 + (i % 5) * 0.0015,
+                lon: 11.582 + Math.cos(i * 0.5) * 0.026 + (i % 7) * 0.0012,
+                weight: ((i * 37) % 10) / 9,
+              });
+            }
+            return pts;
+          }
+          if (cmd === "get_settings") return { pmtilesPath: null, lastProvider: "coros", theme: "system", llmEnabled: false, llmEndpoint: null, llmModel: null, thresholds: dashboard.thresholds };
+          if (cmd === "sync_status") return false;
+          // Pacing: two sessions that landed too fast, one short of the streak
+          // of three — enough to prove the range bars and the "one more" line.
+          if (cmd === "pacing_report")
+            return {
+              needed: 3,
+              triggered: false,
+              streak: 2,
+              direction: "ahead",
+              reviews: [
+                { workoutId: "w2", date: day(-14), kind: "tempo", title: "Tempo 5 km", bandLoSKm: 275, bandHiSKm: 285, actualSKm: 268, measuredM: 1200, execution: "ahead" },
+                { workoutId: "w2", date: day(-7), kind: "intervals", title: "6 x 800 m intervals", bandLoSKm: 250, bandHiSKm: 260, actualSKm: 244, measuredM: 2400, execution: "ahead" },
+                { workoutId: "w2", date: day(-2), kind: "tempo", title: "Tempo 6 km", bandLoSKm: 275, bandHiSKm: 285, actualSKm: 279, measuredM: 1500, execution: "in" },
+              ],
+            };
+          if (cmd === "pending_pacing_proposal") return null;
+          throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link active">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+      <span class="nav-spacer"></span>
+    </nav>
+    <main id="app">
+      <section id="pain-banner" class="notice bad" hidden></section>
+      <section id="empty" hidden></section>
+      <div id="dash" hidden>
+        <section id="today" class="hero" aria-label="Today">
+          <div id="today-hero"></div>
+        </section>
+
+        <div class="group">
+          <h2 class="group-head">Your week</h2>
+          <section id="week" class="panel">
+            <header class="panel-head">
+              <h2>This week</h2>
+              <span class="panel-meta" id="week-meta"></span>
+            </header>
+            <div id="week-strip" class="bar-chart week"></div>
+            <p class="muted heatmap-legend" id="week-legend" hidden></p>
+            <div id="week-tiles" class="tile-grid"></div>
+            <div id="week-plan" class="week-plan"></div>
+          </section>
+        </div>
+
+        <div class="group">
+          <h2 class="group-head">Training trends</h2>
+          <section id="volume" class="panel">
+            <header class="panel-head">
+              <h2>Weekly mileage</h2>
+              <span class="panel-meta" id="volume-meta"></span>
+            </header>
+            <div id="volume-panel" class="bar-chart volume"></div>
+            <p class="muted heatmap-legend" id="volume-legend" hidden></p>
+          </section>
+          <section id="status" class="panel">
+            <header class="panel-head">
+              <h2>Training load</h2>
+            </header>
+            <div id="status-panel"></div>
+          </section>
+          <section id="fitness" class="panel">
+            <header class="panel-head">
+              <h2>Fitness</h2>
+              <span class="panel-meta">What you could race right now</span>
+            </header>
+            <div class="carousel"><div id="fitness-cards" class="cards"></div></div>
+          </section>
+        </div>
+
+        <div class="group">
+          <h2 class="group-head">Recovery &amp; risk</h2>
+          <section id="recovery" class="panel">
+            <header class="panel-head">
+              <h2>Recovery</h2>
+            </header>
+            <div id="recovery-panel"></div>
+            <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
+          </section>
+          <section id="risk" class="panel">
+            <header class="panel-head">
+              <h2>Injury risk</h2>
+            </header>
+            <div id="risk-panel" class="risk-body"></div>
+          </section>
+        </div>
+
+        <section id="recent" class="panel">
+          <header class="panel-head">
+            <h2>Recent runs</h2>
+          </header>
+          <div class="table-scroll" role="region" aria-label="Recent runs" tabindex="0">
+          <table id="activities-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Sport</th>
+                <th>Distance</th>
+                <th>Duration</th>
+                <th>Avg HR</th>
+                <th>Pace</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          </div>
+          <div id="map"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/dashboard.ts"></script>
+  </body>
+</html>

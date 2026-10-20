@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics — Injuries (harness)</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+    <script>
+      localStorage.setItem("runalytics.onboarding.v1", "done");
+      const day = (n) => new Date(Date.now() - n * 864e5).toISOString();
+      const DB = { entries: [], msgs: [], proposals: [] };
+      window.__INJURY_DB = DB;
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          console.log("[stub]", cmd, JSON.stringify(args));
+          if (cmd === "provider_status")
+            return [{ provider: "coros", connected: true, lastSync: day(0), detail: "" }];
+          if (cmd === "current_plan")
+            // The injury page is gated behind an existing plan (its proposals
+            // change one), so the harness has to carry one to be testable.
+            return [
+              {
+                id: "p1", distance: "21K", kind: "race", targetDate: day(-30),
+                status: "pushed", weeklyFrequency: 4, longrunDay: 6,
+                increase: "moderate", thresholdSecKm: 280, createdAt: day(10),
+                pushedId: "z", baselineWeeklyKm: 40,
+              },
+              [],
+            ];
+          if (cmd === "sync_status") return false;
+          if (cmd === "llm_status")
+            return { configured: false, hasKey: false, endpoint: null, model: null };
+          if (cmd === "pain_by_region") return [];
+          if (cmd === "pain_entries") return DB.entries;
+          if (cmd === "pending_proposal") return null;
+          if (cmd === "pain_messages")
+            return DB.msgs.filter((m) => m.bodyPart === args.bodyPart);
+          if (cmd === "save_pain_entry") {
+            const e = {
+              id: "e" + DB.entries.length,
+              bodyPart: args.bodyPart,
+              intensity: args.intensity,
+              startedOn: args.startedOn,
+              notes: args.notes,
+              createdAt: new Date().toISOString(),
+              resolvedOn: null,
+              followupAt: null,
+            };
+            DB.entries.unshift(e);
+            return [e, null];
+          }
+          if (cmd === "delete_pain_entry") {
+            DB.entries = DB.entries.filter((e) => e.id !== args.id);
+            return null;
+          }
+          if (cmd === "resolve_pain") {
+            const e = DB.entries.find((x) => x.id === args.id);
+            if (e) e.resolvedOn = args.resolvedOn;
+            return null;
+          }
+          if (cmd === "mark_pain_followup") return null;
+          if (cmd === "clear_pain_messages") {
+            DB.msgs = DB.msgs.filter((m) => m.bodyPart !== args.bodyPart);
+            return null;
+          }
+          if (cmd === "ask_assistant") {
+            const reply = {
+              id: "m" + DB.msgs.length,
+              bodyPart: args.bodyPart,
+              role: "assistant",
+              content: "offline note",
+              ts: new Date().toISOString(),
+            };
+            DB.msgs.push({
+              id: "u" + DB.msgs.length,
+              bodyPart: args.bodyPart,
+              role: "user",
+              content: args.question,
+              ts: reply.ts,
+            }, reply);
+            return reply;
+          }
+          throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="injury.html" class="nav-link active">Injuries</a>
+      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+    </nav>
+    <main id="app">
+      <section id="log-pain">
+        <h2>Where does it hurt?</h2>
+        <p class="muted">
+          Click the spot on the body map, rate how bad it is, and say when it started.
+        </p>
+        <div id="bodymap" class="bodymap"></div>
+        <p id="bodymap-selected" class="bodymap-selected muted" aria-live="polite">
+          Nothing selected yet.
+        </p>
+        <div class="pain-form" id="pain-form">
+          <label class="pain-field">
+            <span>Intensity <strong id="intensity-value">5</strong>/10</span>
+            <input id="pain-intensity" type="range" min="0" max="10" step="1" value="5" />
+          </label>
+          <label class="pain-field">
+            <span>Started on</span>
+            <input id="pain-started" type="date" />
+          </label>
+          <label class="pain-field pain-field-notes">
+            <span>Notes</span>
+            <textarea id="pain-notes" rows="3" placeholder="Sharp on downhill…"></textarea>
+          </label>
+          <div class="actions">
+            <button id="pain-save" class="primary" disabled>Log pain</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="proposal-section" hidden>
+        <h2>Proposed plan change</h2>
+        <div id="proposal-card" class="notice accent stack"></div>
+      </section>
+
+      <section id="journal-section">
+        <h2>Pain journal</h2>
+        <div id="pain-list" class="pain-list"></div>
+      </section>
+
+      <section id="assistant-section">
+        <h2>Injury assistant</h2>
+        <p class="muted" id="assistant-mode-note"></p>
+        <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+        <div class="chat-input">
+          <input id="chat-question" type="text" placeholder="Ask about this spot…" disabled />
+          <button id="chat-send" class="primary" disabled>Ask</button>
+        </div>
+        <div class="actions">
+          <button id="chat-clear" class="secondary">Clear thread</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/injury.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics plan harness</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+    <script>
+      localStorage.setItem("runalytics.onboarding.v1", "done");
+      const iso = (n) => new Date(Date.now() - n * 864e5).toISOString();
+      const ymd = (n) => iso(n).slice(0, 10);
+
+      // A plan whose quality sessions were run in the past, so the pacing panel
+      // has something to grade. The offset fields are the ones the range bars
+      // read; ?offset=-5 shifts every future range to prove the bars move.
+      const params = new URLSearchParams(location.search);
+      const offset = Number(params.get("offset") ?? 0);
+      const plan = {
+        id: "p1",
+        distance: "10K",
+        kind: "race",
+        targetDate: ymd(-49),
+        status: "active",
+        weeklyFrequency: 4,
+        longrunDay: 7,
+        increase: "moderate",
+        thresholdSecKm: 285,
+        createdAt: iso(70),
+        pushedId: null,
+        baselineWeeklyKm: 40,
+        qualityOffsetSecKm: offset,
+        qualityOffsetFrom: offset === 0 ? null : ymd(0),
+      };
+
+      // Seven weeks: easy / tempo / easy / long run, all dated in the past so
+      // the quality sessions are gradeable. Bands are the plan's own tempo and
+      // easy ranges.
+      const workouts = [];
+      const weekShape = [
+        // [kind, days before today within the week, distance, band lo, band hi]
+        ["easy", 3, 6000, 360, 400],
+        ["tempo", 1, 8000, 280, 290],
+        ["easy", 5, 6000, 360, 400],
+        ["longRun", 0, 14000, 370, 420],
+      ];
+      for (let week = 6; week >= 0; week--) {
+        const back = week * 7;
+        for (const [kind, inWeek, dist, lo, hi] of weekShape) {
+          const ago = back + inWeek;
+          workouts.push({
+            id: `w-${week}-${kind}`,
+            planId: "p1",
+            date: ymd(ago),
+            kind,
+            title:
+              kind === "tempo"
+                ? "3 x 1.0 km tempo"
+                : kind === "longRun"
+                  ? "Long run 14 km"
+                  : "Easy run 6 km",
+            distanceM: dist,
+            durationMin: Math.round(dist / 200),
+            paceLoSKm: lo,
+            paceHiSKm: hi,
+            done: true,
+          });
+        }
+      }
+      workouts.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Where the reps actually landed. The streak counts consecutively from
+      // the newest session backwards, so ?streak=2 makes the two most recent
+      // tempo runs too fast and the older one in range; ?streak=3 makes all
+      // three too fast, which is the state that offers an adjustment.
+      //
+      // Computed per call, because accepting the offer moves the plan's offset
+      // and the real backend re-grades the same runs against the shifted bands
+      // — which spends the streak. A stub that froze the report would show the
+      // panel still claiming an adjustment after one was applied.
+      const graded = workouts.filter((w) => w.kind === "tempo" || w.kind === "intervals");
+      const makeReport = () => {
+        const applied = window.__offerAnswered === true;
+        const streak = applied ? 0 : Number(params.get("streak") ?? 2);
+        // Mirrors `pacing::reviews`: sessions dated before the plan's offset
+        // took effect were read under the old ranges and drop out — which is
+        // why the panel has a "just applied" state rather than rows.
+        const gradeable = graded.filter(
+          (w) => plan.qualityOffsetFrom == null || w.date >= plan.qualityOffsetFrom,
+        );
+        const reviews = gradeable.slice(-3).map((w, i, all) => {
+          const fromEnd = all.length - 1 - i;
+          const execution = fromEnd < streak ? "ahead" : "in";
+          const bandLo = w.paceLoSKm + plan.qualityOffsetSecKm;
+          const bandHi = w.paceHiSKm + plan.qualityOffsetSecKm;
+          // The pace held over the reps: outside the fast end when the session
+          // counts toward the streak, mid-band otherwise.
+          const actual = execution === "ahead" ? bandLo - 12 : (bandLo + bandHi) / 2;
+          return {
+            workoutId: w.id,
+            date: w.date,
+            kind: w.kind,
+            title: w.title,
+            bandLoSKm: bandLo,
+            bandHiSKm: bandHi,
+            actualSKm: actual,
+            measuredM: 2400,
+            execution,
+          };
+        });
+        return {
+          reviews,
+          streak: Math.min(streak, 3),
+          direction: streak > 0 ? "ahead" : null,
+          needed: 3,
+          triggered: streak >= 3,
+        };
+      };
+      const offer = {
+        id: "offer-1",
+        bodyPart: "",
+        signature: "pacing:ahead:p1",
+        summary:
+          "3 of the last 3 tempo sessions landed faster than the range — sharpen every quality pace by 5 s/km from today.",
+        reason:
+          "3 quality sessions in a row outside the range, all of them too fast. Oct 5 — held 4:28 min/km against 4:40-4:50. Oct 12 — held 4:26 min/km against 4:40-4:50. Oct 19 — held 4:29 min/km against 4:40-4:50. Easy days, long runs and race pace are untouched — only the tempo and interval ranges move.",
+        edits: [],
+        planQualityOffsetSecKm: -5,
+        planQualityOffsetFrom: ymd(0),
+        status: "pending",
+        source: "pacing",
+        createdAt: iso(0),
+        actedAt: null,
+      };
+
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          switch (cmd) {
+            case "current_plan":
+              return [plan, workouts];
+            case "pacing_report":
+              return makeReport();
+            case "pending_pacing_proposal":
+              return Number(params.get("streak") ?? 2) >= 3 && !window.__offerAnswered ? offer : null;
+            case "apply_proposal":
+              // Mirrors the real command: the plan takes the offset and the
+              // offer leaves the pending state.
+              plan.qualityOffsetSecKm = offer.planQualityOffsetSecKm;
+              plan.qualityOffsetFrom = offer.planQualityOffsetFrom;
+              window.__offerAnswered = true;
+              return workouts;
+            case "dismiss_proposal":
+              window.__offerAnswered = true;
+              return null;
+            case "plan_defaults":
+              return {
+                currentWeeklyKm: 40,
+                thresholdSecKm: 285,
+                predict5kS: 1010,
+                predict10kS: 2130,
+                predictHalfS: 4520,
+                predictMarathonS: 9600,
+                thisWeekKm: 12.4,
+                totalKm: 812,
+                weeksObserved: 4,
+                lastSync: iso(1),
+                activePain: null,
+              };
+            case "calendar_events":
+              return workouts.map((w) => ({
+                id: w.id,
+                workoutId: w.id,
+                activityId: null,
+                date: w.date,
+                kind: w.kind,
+                title: w.title,
+                distanceM: w.distanceM,
+                durationMin: w.durationMin,
+                notes: "Harness notes.",
+                start: w.date,
+                end: w.date,
+                allDay: true,
+              }));
+            case "get_settings":
+              return {
+                pmtilesPath: null,
+                lastProvider: "coros",
+                theme: "system",
+                llmEnabled: false,
+                llmEndpoint: null,
+                llmModel: null,
+                thresholds: {
+                  ratioDecreasingHi: 0.5,
+                  ratioResumingHi: 0.8,
+                  ratioMaintainingHi: 1.0,
+                  ratioOptimizedHi: 1.5,
+                  recoveryExhausted: 19,
+                  recoveryFatigued: 69,
+                  recoveryNormal: 89,
+                  buildWeeks: 3,
+                  downWeekFactor: 0.7,
+                  paceToleranceSecKm: 4,
+                  paceStreak: 3,
+                },
+              };
+            case "provider_status":
+              return [{ provider: "coros", connected: true, lastSync: iso(1), detail: "" }];
+            case "flow_state":
+              return { connected: true, lastSync: iso(1), plan: "p1", pushed: false };
+            case "sync_status":
+              return false;
+            default:
+              throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
+          }
+        },
+      };
+    </script>
+    <script type="module">
+      const page = await (await fetch("/plan.html")).text();
+      const body = new DOMParser().parseFromString(page, "text/html").body;
+      // Drop the page's own entry script; it is imported below, after the
+      // markup exists, so plan.ts finds its elements.
+      body.querySelectorAll("script").forEach((s) => s.remove());
+      document.body.replaceChildren(...body.childNodes);
+      await import("/src/plan.ts");
+    </script>
+  </head>
+  <body></body>
+</html>
