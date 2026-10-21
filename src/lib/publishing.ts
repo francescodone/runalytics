@@ -1,0 +1,111 @@
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { tauri, el, fail, inTauri } from "./ipc";
+import type { CalendarPublishing } from "./types";
+
+/// The Calendar subscription pane, hosted by Settings (it configures the
+/// feed, it is not part of the month view). initPublishing() is a no-op on
+/// pages without the pane, so the sync-completed listener only lives where
+/// the controls are.
+let publishing: CalendarPublishing | null = null;
+
+function showPublishing(config: CalendarPublishing): void {
+  publishing = config;
+  el<HTMLInputElement>("calendar-enabled").checked = config.enabled;
+  el<HTMLInputElement>("calendar-upload-url").value = config.uploadUrl;
+  el<HTMLInputElement>("calendar-read-url").value = config.subscriptionUrl;
+  el<HTMLInputElement>("calendar-username").value = config.username;
+  el<HTMLInputElement>("calendar-password").placeholder = config.hasPassword ? "Saved in Keychain" : "Password or bearer token";
+  el<HTMLInputElement>("calendar-subscription-url").value = config.subscriptionUrl;
+  const ready = !!config.lastPublished && !!config.subscriptionUrl;
+  el<HTMLButtonElement>("calendar-copy").disabled = !ready;
+  el<HTMLButtonElement>("calendar-subscribe").disabled = !ready;
+  el("publish-status").textContent = config.lastError
+    ? `${config.lastError}. Local calendar is up to date.`
+    : !config.enabled
+      ? "Remote publishing is off."
+      : config.lastPublished
+        ? `Published ${new Date(config.lastPublished).toLocaleString()}`
+        : "Not yet published.";
+  el("publish-status").classList.toggle("error", !!config.lastError);
+}
+
+/// Reading the pane's state must never publish: `ics_path` is a read-only
+/// path getter and `calendar_publishing` only loads the config. Publishing
+/// happens on sync, on calendar edits, and through the Refresh button below.
+async function refreshPublishing(publish: boolean): Promise<void> {
+  const button = el<HTMLButtonElement>("ics-regenerate");
+  button.disabled = true;
+  try {
+    if (publish) await tauri.publishCalendar();
+    el("ics-path").textContent = await tauri.icsPath();
+    showPublishing(await tauri.calendarPublishing());
+  } catch (e) {
+    if (!inTauri) {
+      el("ics-path").textContent = "Available in the desktop app.";
+      el("publish-status").textContent = "Publishing is available in the desktop app.";
+    }
+    else el("publish-status").textContent = String(e);
+  } finally { button.disabled = false; }
+}
+
+export function initPublishing(): void {
+  if (!document.getElementById("calendar-publishing-form")) return;
+  el("calendar-publishing-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = el<HTMLButtonElement>("calendar-save");
+    button.disabled = true;
+    el("publish-status").textContent = "Saving calendar settings...";
+    const password = el<HTMLInputElement>("calendar-password");
+    const clear = el<HTMLInputElement>("calendar-clear-password");
+    try {
+      const config: CalendarPublishing = {
+        enabled: el<HTMLInputElement>("calendar-enabled").checked,
+        uploadUrl: el<HTMLInputElement>("calendar-upload-url").value.trim(),
+        subscriptionUrl: el<HTMLInputElement>("calendar-read-url").value.trim(),
+        username: el<HTMLInputElement>("calendar-username").value.trim(),
+        hasPassword: false, lastPublished: null, lastError: null,
+      };
+      const secret = clear.checked ? "" : password.value || null;
+      showPublishing(await tauri.saveCalendarPublishing(config, secret));
+      password.value = "";
+      clear.checked = false;
+    } catch (error) { el("publish-status").textContent = String(error); }
+    finally { button.disabled = false; }
+  });
+  el("calendar-copy").addEventListener("click", async () => {
+    if (!publishing?.subscriptionUrl) return;
+    try {
+      await navigator.clipboard.writeText(publishing.subscriptionUrl);
+      el("publish-status").textContent = "Subscription URL copied.";
+    } catch { el("publish-status").textContent = "Clipboard unavailable. Select the subscription URL to copy it."; }
+  });
+  el("calendar-subscribe").addEventListener("click", () => {
+    if (publishing?.subscriptionUrl) {
+      void openUrl(publishing.subscriptionUrl.replace(/^https:/, "webcal:")).catch(fail);
+    }
+  });
+  el("ics-regenerate").addEventListener("click", () => void refreshPublishing(true));
+  el("ics-reveal").addEventListener("click", async () => {
+    const path = el("ics-path").textContent;
+    if (!path) return;
+    if (!inTauri) {
+      alert("Reveal is only available in the desktop app.");
+      return;
+    }
+    try {
+      await revealItemInDir(path);
+    } catch {
+      // Fall back to showing the folder in a browser-style listing is not
+      // possible; open the parent directory path as a last resort.
+      await openUrl(`file://${path.split("/").slice(0, -1).join("/")}`).catch(fail);
+    }
+  });
+  // A sync republishes the feed, so the published timestamp on the pane goes
+  // stale the moment one lands anywhere in the app.
+  for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
+    window.addEventListener(event, () => {
+      void tauri.calendarPublishing().then(showPublishing).catch(fail);
+    });
+  }
+  void refreshPublishing(false);
+}

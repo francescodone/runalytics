@@ -27,7 +27,10 @@ const KIND_LABEL: Record<string, string> = {
   easy: "Easy",
   tempo: "Tempo",
   intervals: "Intervals",
+  // Two spellings, one kind: PlanWorkout.kind arrives as "longrun" (serde
+  // lowercase), the calendar's event_kind emits "longRun". Label both.
   longRun: "Long run",
+  longrun: "Long run",
   race: "Race",
   rest: "Rest",
 };
@@ -367,6 +370,23 @@ const PLAN_KIND_LABEL: Record<PlanKind, string> = {
   maintenance: "Maintenance block",
 };
 
+/// Injury-risk impact per done session, keyed by workout id — how many points
+/// the run itself moved the runner's risk (risk with the session minus risk
+/// without it), the same number the calendar description prints. Refreshed
+/// with the plan; empty outside the desktop app or before any run has a
+/// snapshot, which simply renders no badge.
+let riskDeltaByWorkout = new Map<string, number>();
+
+/// The small signed badge on a done session. An empty string means no
+/// snapshot exists for this session yet (a future week, or a sync that has
+/// not run) — not a zero.
+function riskDeltaBadge(workoutId: string): string {
+  const d = riskDeltaByWorkout.get(workoutId);
+  if (d == null) return "";
+  const tone = d > 0 ? "risk-up" : "risk-down";
+  return `<span class="risk-delta ${tone}">${d > 0 ? "+" : ""}${d}%</span>`;
+}
+
 function renderPlan(plan: TrainingPlan, workouts: PlanWorkout[]): void {
   // Only a plan that ends on a start line has a finish time worth predicting:
   // a maintenance block never races its target date, so a predicted 42K there
@@ -391,18 +411,41 @@ function renderPlan(plan: TrainingPlan, workouts: PlanWorkout[]): void {
     (weeks.get(key) ?? weeks.set(key, []).get(key)!).push(w);
   }
 
+  const todayKey = ymdLocal(new Date());
   const rows = [...weeks.entries()].map(([monday, ws], i) => {
     const km = ws.reduce((s, w) => s + (w.distanceM ?? 0), 0) / 1000;
-    const cells = ws
-      .sort((a, b) => a.date.localeCompare(b.date))
+    // The week you are living in gets the expanded treatment: its sessions
+    // stack as full-width rows (the calendar agenda's shape) instead of
+    // crowding as chips in a table cell, and the row takes an accent rim so
+    // "this week" is findable without scanning dates. `monday` is this
+    // week's Monday key, so today's key falling in [monday, monday+6] is
+    // the whole test — string compare works because the keys are ISO.
+    const sunday = new Date(new Date(`${monday}T12:00:00`).getTime() + 6 * 86_400_000);
+    const isNow = todayKey >= monday && todayKey <= ymdLocal(sunday);
+    const sorted = [...ws].sort((a, b) => a.date.localeCompare(b.date));
+    const cells = sorted
       .map(
         (w) =>
-          `<button type="button" class="chip workout-chip chip-${w.kind}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}" aria-label="${escapeHtml(`${w.date}: ${w.title}${w.done ? ", completed" : ""}`)}">${w.done ? "Done: " : ""}${KIND_LABEL[w.kind] ?? w.kind}${
+          `<button type="button" class="chip workout-chip chip-${w.kind}${w.done ? " chip-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}" aria-label="${escapeHtml(`${w.date}: ${w.title}${w.done ? ", completed" : ""}`)}">${KIND_LABEL[w.kind] ?? w.kind}${
             w.distanceM ? ` ${(w.distanceM / 1000).toFixed(0)}km` : ""
-          }</button>`,
+          }${w.done ? riskDeltaBadge(w.id) : ""}</button>`,
       )
       .join(" ");
-    return `<tr><td>W${i + 1}<span class="muted"> ${monday}</span></td><td>${km.toFixed(1)} km</td><td>${cells}</td></tr>`;
+    // Expanded: one session per line in the calendar agenda's shape — kind
+    // on the left, title, distance on the right. The weekday rides with the
+    // distance, since stacking drops the chip order that was the dates'
+    // only cue.
+    const stacked = sorted
+      .map(
+        (w) =>
+          `<button type="button" class="week-session agenda-row chip-${w.kind}${w.done ? " chip-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}" aria-label="${escapeHtml(`${w.date}: ${w.title}${w.done ? ", completed" : ""}`)}">
+            <span class="agenda-kind">${KIND_LABEL[w.kind] ?? w.kind}</span>
+            <span class="agenda-title">${escapeHtml(w.title)}</span>
+            <span class="agenda-meta">${new Date(w.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short" })}${w.distanceM ? ` · ${(w.distanceM / 1000).toFixed(1)} km` : ""}${w.done ? ` ${riskDeltaBadge(w.id)}` : ""}</span>
+          </button>`,
+      )
+      .join("");
+    return `<tr${isNow ? ' class="plan-week-now"' : ""}><td>W${i + 1}<span class="muted"> ${monday}</span></td><td>${km.toFixed(1)} km</td><td>${isNow ? `<div class="week-sessions">${stacked}</div>` : cells}</td></tr>`;
   });
   el("plan-weeks").innerHTML = rows.length
     ? `<table id="weeks-table"><thead><tr><th>Week</th><th>Volume</th><th>Sessions</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
@@ -441,6 +484,18 @@ function setCreateFormEnabled(enabled: boolean): void {
 
 async function refresh(): Promise<void> {
   const current = await tauri.currentPlan();
+  // Done sessions show their run's injury-risk delta; a failed fetch (or no
+  // desktop app) just means no badges rather than a broken plan page.
+  try {
+    const scores = await tauri.runScores();
+    riskDeltaByWorkout = new Map(
+      scores
+        .filter((s) => s.workoutId != null)
+        .map((s) => [s.workoutId as string, s.riskDelta]),
+    );
+  } catch {
+    riskDeltaByWorkout = new Map();
+  }
   if (current) {
     renderPlan(current[0], current[1]);
     setCreateFormEnabled(false);

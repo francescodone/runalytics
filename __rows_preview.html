@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rows preview</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <main style="max-width: 720px; margin: 32px auto; display: grid; gap: 24px">
+      <section class="card">
+        <h2>This week</h2>
+        <ul class="agenda-list">
+          <li>
+            <button class="agenda-row chip-easy">
+              <span class="agenda-kind">Easy</span>
+              <span class="agenda-title">Recovery jog</span>
+              <span class="agenda-meta">5.0 km · 32 min</span>
+            </button>
+          </li>
+          <li>
+            <button class="agenda-row chip-tempo">
+              <span class="agenda-kind">Tempo</span>
+              <span class="agenda-title">Threshold 3 × 10'</span>
+              <span class="agenda-meta">9.5 km · 48 min</span>
+            </button>
+          </li>
+          <li>
+            <button class="agenda-row chip-intervals">
+              <span class="agenda-kind">Intervals</span>
+              <span class="agenda-title">6 × 800 m</span>
+              <span class="agenda-meta">10.2 km · 52 min</span>
+            </button>
+          </li>
+          <li>
+            <button class="agenda-row chip-longRun chip-done">
+              <span class="agenda-kind">Long run</span>
+              <span class="agenda-title">Hill loop</span>
+              <span class="agenda-meta">18.0 km · 1 h 42</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+      <section class="card">
+        <h2>Calendar chips</h2>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <button class="chip workout-chip chip-easy">Easy 5k</button>
+          <button class="chip workout-chip chip-tempo">Tempo</button>
+          <button class="chip workout-chip chip-intervals">Intervals</button>
+          <button class="chip workout-chip chip-race">Race</button>
+          <button class="chip workout-chip chip-longRun chip-done">Long ✓</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

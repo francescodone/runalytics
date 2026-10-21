@@ -27,6 +27,9 @@ pub fn run() {
             let db_path = data_dir.join("runalytics.sqlite");
             let store = store::Store::open(&db_path)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            if let Err(error) = calendar::adopt_naming(&store) {
+                eprintln!("could not update plan names: {error}");
+            }
 
             // Load settings (atomic JSON file, defaults on any problem).
             let settings_path = data_dir.join("settings.json");
@@ -65,6 +68,9 @@ pub fn run() {
             .title("Runalytics")
             .inner_size(1180.0, 780.0)
             .min_inner_size(900.0, 600.0)
+            // The native file-drop handler swallows HTML5 drag events, which
+            // the calendar uses to reschedule sessions.
+            .disable_drag_drop_handler()
             .build()?;
 
             // Auto-sync on launch: pull fresh COROS data in the background
@@ -104,6 +110,7 @@ pub fn run() {
             commands::heat_points,
             commands::all_activities,
             commands::activity_detail,
+            commands::run_scores,
             commands::create_plan,
             commands::plan_defaults,
             commands::current_plan,
@@ -111,10 +118,12 @@ pub fn run() {
             commands::abort_plan,
             commands::workouts_between,
             commands::ics_path,
+            commands::publish_calendar,
             commands::calendar_events,
             commands::calendar_publishing,
             commands::save_calendar_publishing,
             commands::match_calendar_activity,
+            commands::move_workout,
             commands::get_settings,
             commands::save_settings,
             commands::save_pain_entry,

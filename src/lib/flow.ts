@@ -634,8 +634,8 @@ export function gamificationStats(
     // Cross-training earns its own badges. Without these the honest split
     // above would read as a punishment: a week of cycling used to buy running
     // distance badges, and now it must buy its own.
-    count("cross-10", "Cross-trainer", "10 sessions away from the road", icons.bike, crossSessions, 10, "sessions"),
-    count("cross-50", "Versatile engine", "50 sessions away from the road", icons.bike, crossSessions, 50, "sessions"),
+    count("cross-10", "Cross-trainer", "10 sessions away from the road", icons.dumbbell, crossSessions, 10, "sessions"),
+    count("cross-50", "Versatile engine", "50 sessions away from the road", icons.dumbbell, crossSessions, 50, "sessions"),
     count("cross-100h", "All-round athlete", "100 h of cross-training", icons.clock, crossHours, 100, "hours"),
   ];
   // Per-day distances for the last 12 weeks (heatmap columns), oldest first.

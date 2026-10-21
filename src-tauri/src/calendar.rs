@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use serde::Serialize;
 
 use crate::error::{AppError, Result};
+use crate::metrics;
 use crate::plan::session;
 use crate::store::Store;
 use crate::types::*;
@@ -17,6 +18,10 @@ pub struct CalendarEvent {
     pub workout_id: Option<String>,
     pub activity_id: Option<i64>,
     pub date: NaiveDate,
+    /// The session's kind — `easy`, `tempo`, `intervals`, `longRun`, `race` —
+    /// carried by planned *and* completed events: a finished run keeps the
+    /// kind it was planned as, so its colour still says what was run. Only a
+    /// run with no planned session behind it is `completed`.
     pub kind: String,
     pub title: String,
     pub distance_m: Option<f64>,
@@ -38,43 +43,161 @@ pub struct CalendarExport {
     pub path: PathBuf,
 }
 
+/// Signature line of every description.
+const BRAND: &str = "Made with Runalytics - a virtual personal vibecoded coach 🏃";
+
+/// Every session description — planned or completed — is: brand,
+/// the event title, a `Plan:` lap list, then `Why:`.
 pub fn workout_notes(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
     let details = session::details_for_plan(workout, plan);
-    let mut notes = format!("{}\n{}\n{}", workout.title, workout.date, details.purpose);
-    if let Some(distance) = workout.distance_m {
-        let _ = write!(notes, "\nTotal: {:.2} km", distance / 1000.0);
+    let mut notes = format!("{BRAND}\n\n{RUN_EMOJI} {}", workout.title);
+    // A title that already ends in its own distance would just repeat it.
+    let total_m = workout.distance_m.unwrap_or_else(|| details.distance_m());
+    if total_m > 0.0 && trim_total(&workout.title) == workout.title {
+        let _ = write!(notes, " (total {:.1} km)", total_m / 1000.0);
     }
-    if let Some(minutes) = details.estimated_min {
-        let _ = write!(notes, "\nEstimated duration: {:.0} min", minutes);
+    if !details.steps.is_empty() {
+        notes.push_str("\n\nPlan:");
+        for step in &details.steps {
+            let _ = write!(notes, "\n  - {}", lap_line(step));
+        }
     }
-    for (index, step) in details.steps.iter().enumerate() {
-        let _ = write!(notes, "\n\n{}. {}: ", index + 1, step.label);
-        if step.repeats > 1 {
-            let _ = write!(notes, "{} x ", step.repeats);
-        }
-        let _ = write!(
-            notes,
-            "{:.0} m{}",
-            step.distance_m,
-            pace_band(step.pace_lo_s_km, step.pace_hi_s_km)
-        );
-        if step.recovery_m > 0.0 {
-            let _ = write!(notes, "\nBetween repetitions: {:.0} m easy jog{} ({} recoveries, none after the last rep)", step.recovery_m, pace_band(step.recovery_pace_lo_s_km, step.recovery_pace_hi_s_km), step.repeats - 1);
-        }
+    let _ = write!(notes, "\n\nWhy: {}", details.purpose);
+    notes
+}
+
+/// Open-ended (easy) steps only have a floor; everything slower is fine.
+fn no_faster_than(low: i64) -> String {
+    format!("no faster than {}/km, at conversational pace 🗣️", fmt_pace(low))
+}
+
+fn lap_pace(step: &session::WorkoutStep) -> String {
+    match (step.open_ended, step.pace_lo_s_km, step.pace_hi_s_km) {
+        (true, Some(low), _) => format!(", {}", no_faster_than(low)),
+        (false, Some(low), Some(high)) => format!(" @ {}-{}/km", fmt_pace(low), fmt_pace(high)),
+        _ => String::new(),
+    }
+}
+
+/// One lap of the session, e.g. `3 × 1.6 km Tempo @ 4:45-4:55/km + 400 m recovery`.
+fn lap_line(step: &session::WorkoutStep) -> String {
+    let (head, tail) = step.label.split_once(" - ").unwrap_or((&step.label, ""));
+    let name = if head == "Long run" && !tail.is_empty() { tail } else { head };
+    let mut part = String::new();
+    if step.repeats > 1 {
+        let _ = write!(part, "{} × ", step.repeats);
+    }
+    let _ = write!(part, "{} {}", fmt_distance(step.distance_m), name);
+    part.push_str(&lap_pace(step));
+    if step.recovery_m > 0.0 {
+        let _ = write!(part, " + {} recovery", fmt_distance(step.recovery_m));
+    }
+    part
+}
+
+/// Strip a trailing ` <number> km` total, as older notes put on the name line.
+fn trim_total(line: &str) -> &str {
+    let Some(before) = line.strip_suffix(" km") else {
+        return line;
+    };
+    match before.rsplit_once(' ') {
+        Some((name, number)) if number.parse::<f64>().is_ok() => name,
+        _ => line,
+    }
+}
+
+/// The workout title from stored plan notes: the third line of the shared
+/// pattern (or, for older notes, the first), minus emoji and any total.
+fn plan_name(notes: &str) -> String {
+    let line = stored_title_line(notes);
+    let line = line.strip_prefix(RUN_EMOJI).unwrap_or(line).trim();
+    let line = match line.rsplit_once(" (total ") {
+        Some((title, _)) if line.ends_with(" km)") => title,
+        _ => line,
+    };
+    trim_total(line).to_string()
+}
+
+fn stored_title_line(notes: &str) -> &str {
+    let line = if notes.starts_with(BRAND) {
+        notes.lines().nth(2)
+    } else {
+        notes.lines().next()
+    };
+    line.unwrap_or("Run").trim()
+}
+
+/// Stored plan notes normalised to the current layout; run stats and the
+/// quoted plan are dropped.
+fn completed_notes(stored: &str) -> String {
+    // The stored title line keeps its `(total ...)`; older notes only have a name.
+    let title = if stored.contains(" (total ") {
+        stored_title_line(stored).to_string()
+    } else {
+        format!("{RUN_EMOJI} {}", plan_name(stored))
+    };
+    let mut notes = format!("{BRAND}\n\n{title}");
+    // Notes from before the shared pattern have no body to carry over.
+    let rest = if stored.starts_with(BRAND) {
+        stored.splitn(4, '\n').nth(3).unwrap_or_default()
+    } else {
+        ""
+    };
+    let markers = ["—— Original plan ——", "—— Why ——", "Why:"];
+    let cut = markers
+        .iter()
+        .filter_map(|marker| rest.find(marker))
+        .min()
+        .unwrap_or(rest.len());
+    let plan = rest[..cut].trim();
+    if !plan.is_empty() {
+        let _ = write!(notes, "\n\n{plan}");
+    }
+    let why = rest
+        .split_once("—— Why ——")
+        .or_else(|| rest.split_once("Why:"))
+        .map(|(_, why)| why.trim());
+    if let Some(why) = why {
+        let _ = write!(notes, "\n\nWhy: {why}");
     }
     notes
 }
 
-fn pace_band(low: Option<i64>, high: Option<i64>) -> String {
-    match (low, high) {
-        (Some(low), Some(high)) => format!(" at {}-{} min/km", fmt_pace(low), fmt_pace(high)),
-        _ => String::new(),
+fn fmt_distance(metres: f64) -> String {
+    if metres < 1000.0 {
+        format!("{metres:.0} m")
+    } else {
+        format!("{:.1} km", metres / 1000.0)
     }
 }
 
 fn is_run(activity: &Activity) -> bool {
     let sport = activity.sport.to_lowercase();
     sport.contains("run") || matches!(sport.as_str(), "jog" | "jogging")
+}
+
+/// Bring the current plan up to the naming and description conventions:
+/// quality sessions get their names and completed runs get notes rebuilt in
+/// the shared pattern. Idempotent, so it is safe on every start.
+pub fn adopt_naming(store: &Store) -> Result<()> {
+    let Some((plan, workouts)) = store.current_plan()? else {
+        return Ok(());
+    };
+    let completions = store.calendar_completions()?;
+    for workout in workouts {
+        let mut workout = workout;
+        if let Some(title) = session::title_for_plan(&workout, &plan) {
+            workout.title = title;
+            store.update_workout(&workout)?;
+        }
+        if let Some(entry) = completions.iter().find(|entry| entry.0 == workout.id) {
+            let notes = workout_notes(&workout, &plan);
+            if entry.2 != notes {
+                store.set_completion_notes(&workout.id, &notes)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn reconcile(store: &Store) -> Result<()> {
@@ -146,47 +269,185 @@ pub fn match_activity(store: &Store, workout_id: &str, activity_id: i64) -> Resu
     store.complete_calendar_workout(workout_id, activity.id, &workout_notes(workout, &plan))
 }
 
+fn monday_of(date: NaiveDate) -> NaiveDate {
+    date - Duration::days(date.weekday().num_days_from_monday() as i64)
+}
+
+/// Snapshot the runner's load ratio and injury risk for every run activity
+/// that does not have one yet, evaluated as of the day it was banked. This
+/// is the calendar's half of "update the injury risk after every new done
+/// activity": the numbers are frozen when the run lands, so a description
+/// written in October keeps saying what the risk was in October even after
+/// November's health data arrives. Called from every calendar refresh, so
+/// both matched sessions and standalone synced runs are covered.
+pub fn snapshot_scores(store: &Store, th: &Thresholds) -> Result<()> {
+    let have: HashSet<i64> = store
+        .activity_scores()?
+        .into_iter()
+        .map(|(activity_id, _, _, _)| activity_id)
+        .collect();
+    for activity in store.list_activities(-1)?.into_iter().filter(is_run) {
+        if have.contains(&activity.id) || activity.duration_s <= 0.0 {
+            continue;
+        }
+        let day = activity.start_time.with_timezone(&Local).date_naive();
+        // The same load ratio the training-status chart shows for that day.
+        let load = store
+            .training_load_on_or_before(day)?
+            .and_then(|entry| entry.ratio);
+        // The same headline the dashboard hero shows, evaluated as of that
+        // day: the blended risk (point-in-time formula averaged with the
+        // range-aware factor sum), with the recent-sessions window pinned to
+        // this run's own start — so the run being scored counts in its own
+        // week's pressure, and an easy jog and a threshold session on the
+        // same day get different numbers.
+        let session_ts = activity.start_time.timestamp();
+        let risk = metrics::risk_headline_as_of(store, day, 30, th, Some(session_ts))?;
+        // The run's own impact: the same headline minus itself. Every run
+        // has one — that is the point of the model — so every description
+        // gets a delta, and it stays the same number no matter when the
+        // snapshot is taken or how the model later evolves.
+        let risk_delta =
+            metrics::session_risk_impact(store, day, 30, th, session_ts, activity.id)?;
+        store.insert_activity_score(activity.id, load, risk, risk_delta)?;
+    }
+    Ok(())
+}
+
+/// The two score lines appended to a banked run's description. Both are
+/// percentages: injury risk is already 0..=100, and the load ratio is the
+/// COROS Intensity Trend percentage (1.35 reads as 135 %, the number the
+/// training-status chart's band is named by). The risk delta is the run's own
+/// impact — risk with the session minus risk without it — so it is never
+/// missing: an easy jog moves the number a little, a threshold session a lot.
+/// The load delta compares against the run banked before this one (snapshots
+/// arrive oldest first), and a first-ever run simply has no earlier ratio to
+/// change against.
+fn score_lines(
+    snapshots: &[(i64, Option<f64>, u32, i64)],
+    index: Option<usize>,
+    activity_id: i64,
+) -> String {
+    let Some(index) = index else {
+        return String::new();
+    };
+    let (id, load, risk, risk_delta) = snapshots[index];
+    debug_assert_eq!(id, activity_id);
+    let previous = index.checked_sub(1).map(|i| snapshots[i]);
+    // The block always starts with its own blank line, whether or not the
+    // run has a Load line — a run the provider never scored must not have
+    // its risk line glued to the paragraph above.
+    let mut lines = String::from("\n\n");
+    if let Some(ratio) = load {
+        let load_pct = ratio * 100.0;
+        let _ = write!(lines, "Load: {load_pct:.0}%");
+        if let Some((_, Some(before), _, _)) = previous {
+            let delta = load_pct - before * 100.0;
+            if delta.abs() >= 0.5 {
+                let _ = write!(lines, " ({delta:+.0}%)");
+            }
+        }
+        lines.push('\n');
+    }
+    let _ = write!(lines, "Injury risk: {risk}% ({risk_delta:+}%)");
+    lines
+}
+
+/// Reschedule a planned, not-yet-run session to another day of the current
+/// week. Staying inside the week keeps the session in the plan week it was
+/// sized for, so its structure and the week's load are unchanged.
+pub fn move_workout(
+    store: &Store,
+    workout_id: &str,
+    to: NaiveDate,
+    today: NaiveDate,
+) -> Result<PlanWorkout> {
+    let (_, workouts) = store
+        .current_plan()?
+        .ok_or_else(|| AppError::Other("No active plan".into()))?;
+    let workout = workouts
+        .iter()
+        .find(|workout| workout.id == workout_id)
+        .ok_or_else(|| AppError::Other("Planned workout not found".into()))?;
+    let week = monday_of(today);
+    if monday_of(workout.date) != week || monday_of(to) != week {
+        return Err(AppError::Other(
+            "Sessions can only be moved within the current week".into(),
+        ));
+    }
+    if workout.kind == WorkoutKind::Race {
+        return Err(AppError::Other("Race day is fixed by the event".into()));
+    }
+    let completed = store
+        .calendar_completions()?
+        .iter()
+        .any(|entry| entry.0 == workout.id);
+    if workout.done || completed {
+        return Err(AppError::Other("This session is already completed".into()));
+    }
+    let moved = PlanWorkout {
+        date: to,
+        ..workout.clone()
+    };
+    if to != workout.date {
+        store.update_workout(&moved)?;
+    }
+    Ok(moved)
+}
+
+/// The `kind` a calendar event carries, spelled the way the frontend's chip
+/// classes expect.
+fn event_kind(kind: WorkoutKind) -> String {
+    if kind == WorkoutKind::LongRun {
+        "longRun".into()
+    } else {
+        format!("{:?}", kind).to_lowercase()
+    }
+}
+
 pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
     let completions = store.calendar_completions()?;
+    let current = store.current_plan()?;
+    let snapshots = store.activity_scores()?;
+    let snapshot_index: HashMap<i64, usize> = snapshots
+        .iter()
+        .enumerate()
+        .map(|(i, (activity_id, _, _, _))| (*activity_id, i))
+        .collect();
+    let planned: HashMap<&str, (String, String)> = current
+        .iter()
+        .flat_map(|(_, workouts)| workouts.iter())
+        .map(|workout| {
+            (
+                workout.id.as_str(),
+                (workout.title.clone(), event_kind(workout.kind)),
+            )
+        })
+        .collect();
     let mut output = Vec::new();
     for activity in store.list_activities(-1)?.into_iter().filter(is_run) {
         let completion = completions.iter().find(|entry| entry.1 == activity.id);
-        let start_local = activity.start_time.with_timezone(&Local);
-        let end_local =
-            start_local + Duration::seconds(activity.duration_s.ceil().max(1.0) as i64);
-        // Matched runs keep the name they had in the plan (the first line
-        // of the stored plan notes); standalone runs get a plain title.
-        let base_title = completion
-            .map(|entry| {
-                entry
-                    .2
-                    .lines()
-                    .next()
-                    .unwrap_or("Run")
-                    .trim()
-                    .to_string()
-            })
-            .unwrap_or_else(|| format!("Run {:.2} km", activity.distance_m / 1000.0));
-        let mut notes = format!(
-            "{base_title}\nDistance: {:.2} km\nDuration: {:.1} min\nStarted: {}\nEnded: {}",
-            activity.distance_m / 1000.0,
-            activity.duration_s / 60.0,
-            start_local.format("%H:%M"),
-            end_local.format("%H:%M")
+        // Matched runs keep the name and the kind they had in the plan (the
+        // plan's own title while it exists, else the name in the stored
+        // notes); standalone runs get a plain title and no kind to inherit.
+        let meta = completion.and_then(|entry| planned.get(entry.0.as_str()));
+        let base_title = match (completion, meta) {
+            (Some(_), Some((title, _))) => title.clone(),
+            (Some(entry), None) => plan_name(&entry.2),
+            (None, _) => format!("Run {:.2} km", activity.distance_m / 1000.0),
+        };
+        let kind = meta
+            .map(|(_, kind)| kind.clone())
+            .unwrap_or_else(|| "completed".into());
+        let notes = match completion {
+            Some(entry) => completed_notes(&entry.2),
+            None => format!("{BRAND}\n\n{RUN_EMOJI} {base_title}"),
+        };
+        // A banked run carries what the body was carrying when it landed.
+        let notes = format!(
+            "{notes}{}",
+            score_lines(&snapshots, snapshot_index.get(&activity.id).copied(), activity.id)
         );
-        if let Some(pace) = activity.avg_pace_s_km {
-            let _ = write!(
-                notes,
-                "\nAverage pace: {} min/km",
-                fmt_pace(pace.round() as i64)
-            );
-        }
-        if let Some(hr) = activity.avg_hr {
-            let _ = write!(notes, "\nAverage heart rate: {hr} bpm");
-        }
-        if let Some((_, _, original)) = completion {
-            let _ = write!(notes, "\n\nOriginal plan\n{original}");
-        }
         output.push(CalendarEvent {
             id: completion
                 .map(|entry| entry.0.clone())
@@ -194,7 +455,7 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
             workout_id: completion.map(|entry| entry.0.clone()),
             activity_id: Some(activity.id),
             date: activity.start_time.with_timezone(&Local).date_naive(),
-            kind: "completed".into(),
+            kind,
             title: format!("{RUN_EMOJI} {base_title}"),
             distance_m: Some(activity.distance_m),
             duration_min: Some(activity.duration_s / 60.0),
@@ -207,7 +468,7 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
             all_day: false,
         });
     }
-    if let Some((plan, workouts)) = store.current_plan()? {
+    if let Some((plan, workouts)) = current {
         for workout in workouts {
             if workout.kind == WorkoutKind::Rest
                 || completions.iter().any(|entry| entry.0 == workout.id)
@@ -224,11 +485,7 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
                 workout_id: Some(workout.id.clone()),
                 activity_id: None,
                 date: workout.date,
-                kind: if workout.kind == WorkoutKind::LongRun {
-                    "longRun".into()
-                } else {
-                    format!("{:?}", workout.kind).to_lowercase()
-                },
+                kind: event_kind(workout.kind),
                 title: format!("{RUN_EMOJI} {}", workout.title),
                 distance_m: workout.distance_m,
                 duration_min: Some(duration),
@@ -376,8 +633,8 @@ mod tests {
         assert_eq!(updated.len(), workouts.len());
         let done = updated.iter().find(|event| event.id == workout.id).unwrap();
         assert_eq!(done.activity_id, Some(activity_id));
-        assert!(done.notes.contains("Original plan"));
-        assert!(done.notes.contains(&workout.title));
+        assert!(done.notes.contains("Why:"));
+        assert!(done.notes.starts_with(BRAND));
         assert!(
             store
                 .plan_workouts(&plan.id)
@@ -419,7 +676,251 @@ mod tests {
         store.delete_plan(&plan.id).unwrap();
         let retained = events(&store).unwrap();
         assert_eq!(retained.len(), 1);
-        assert!(retained[0].notes.contains("Original plan"));
+        assert!(retained[0].notes.contains("Why:"));
+    }
+
+    #[test]
+    fn sessions_move_only_within_the_current_week_and_stay_pending() {
+        let (store, plan, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|w| {
+                w.kind != WorkoutKind::Race && w.date.weekday().num_days_from_monday() < 6
+            })
+            .unwrap();
+        let today = workout.date;
+        let next_day = workout.date + Duration::days(1);
+        let moved = move_workout(&store, &workout.id, next_day, today).unwrap();
+        assert_eq!(moved.date, next_day);
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        assert_eq!(
+            stored.iter().find(|w| w.id == workout.id).unwrap().date,
+            next_day
+        );
+        assert!(events(&store)
+            .unwrap()
+            .iter()
+            .any(|e| e.workout_id.as_deref() == Some(&workout.id) && e.date == next_day));
+
+        // Out of the current week: neither from another week nor into one.
+        let sunday = monday_of(today) + Duration::days(6);
+        assert!(move_workout(&store, &workout.id, sunday + Duration::days(1), today).is_err());
+        assert!(move_workout(&store, &workout.id, sunday, today + Duration::days(7)).is_err());
+
+        // A completed session is history, and race day belongs to the event.
+        let activity = insert_run(&store, &moved, "running", "moved");
+        match_activity(&store, &workout.id, activity).unwrap();
+        assert!(move_workout(&store, &workout.id, today, today).is_err());
+        let race = workouts
+            .iter()
+            .find(|w| w.kind == WorkoutKind::Race)
+            .unwrap();
+        assert!(
+            move_workout(&store, &race.id, race.date - Duration::days(1), race.date).is_err()
+        );
+    }
+
+    #[test]
+    fn notes_are_brand_then_title_then_plan_then_why() {
+        let (store, plan, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|workout| workout.kind == WorkoutKind::Intervals || workout.kind == WorkoutKind::Tempo)
+            .unwrap();
+        let notes = workout_notes(workout, &plan);
+        let total = format!(" (total {:.1} km)", workout.distance_m.unwrap() / 1000.0);
+        assert_eq!(
+            notes.lines().nth(2),
+            Some(format!("{RUN_EMOJI} {}{total}", workout.title).as_str())
+        );
+        assert!(notes.lines().nth(3) == Some(""));
+        assert!(notes.lines().nth(4) == Some("Plan:"));
+        assert!(!notes.contains("——"));
+        let brand = notes.find(BRAND).unwrap();
+        let plan_list = notes.find("\n\nPlan:\n  - ").unwrap();
+        let why = notes.find("\n\nWhy: ").unwrap();
+        assert_eq!(brand, 0);
+        assert!(brand < plan_list && plan_list < why);
+        insert_run(&store, workout, "run", "done");
+        reconcile(&store).unwrap();
+        let done = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.id == workout.id)
+            .unwrap();
+        assert_eq!(done.notes.matches(BRAND).count(), 1);
+        assert!(done.notes.contains("\n\nWhy: "));
+        assert!(done.notes.contains("\n\nPlan:\n  - "));
+        assert!(!done.notes.contains("——"));
+    }
+
+    #[test]
+    fn quality_sessions_are_named_and_easy_steps_have_no_upper_bound() {
+        let (store, plan, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|workout| matches!(workout.kind, WorkoutKind::Intervals | WorkoutKind::Tempo))
+            .unwrap();
+        assert!(workout.title.contains(session::TITLE_SEP), "{}", workout.title);
+        let notes = workout_notes(workout, &plan);
+        let warm = notes
+            .lines()
+            .find(|line| line.starts_with("  - ") && line.contains("Warm-up"))
+            .unwrap();
+        assert!(warm.contains(", no faster than "), "{warm}");
+        assert!(warm.ends_with("at conversational pace 🗣️"), "{warm}");
+
+        // A plan stored with the old plain titles is renamed in place.
+        let mut old = workout.clone();
+        old.title = "6 x 400 m intervals".into();
+        store.update_workout(&old).unwrap();
+        adopt_naming(&store).unwrap();
+        let (_, stored) = store.current_plan().unwrap().unwrap();
+        let renamed = stored.iter().find(|w| w.id == workout.id).unwrap();
+        assert!(renamed.title.contains(session::TITLE_SEP), "{}", renamed.title);
+        adopt_naming(&store).unwrap();
+        let (_, again) = store.current_plan().unwrap().unwrap();
+        assert_eq!(again.iter().find(|w| w.id == workout.id).unwrap().title, renamed.title);
+    }
+
+    #[test]
+    fn a_finished_run_keeps_the_kind_it_was_planned_as() {        let (store, _, workouts) = fixture();
+        let long_run = workouts
+            .iter()
+            .find(|workout| workout.kind == WorkoutKind::LongRun)
+            .unwrap();
+        let activity_id = insert_run(&store, long_run, "run", "long");
+        match_activity(&store, &long_run.id, activity_id).unwrap();
+        let done = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.id == long_run.id)
+            .unwrap();
+        // The chip's colour comes from the kind, so a finished long run must
+        // not arrive as the generic tone every completed run used to wear.
+        assert_eq!(done.kind, "longRun");
+        let tempo = workouts
+            .iter()
+            .find(|workout| workout.kind == WorkoutKind::Tempo)
+            .unwrap();
+        let tempo_run = insert_run(&store, tempo, "run", "tempo");
+        match_activity(&store, &tempo.id, tempo_run).unwrap();
+        let done = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.id == tempo.id)
+            .unwrap();
+        assert_eq!(done.kind, "tempo");
+        // A run with no planned session behind it has no kind to inherit.
+        insert_run(&store, &workouts[0], "run", "solo");
+        let solo = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.workout_id.is_none())
+            .unwrap();
+        assert_eq!(solo.kind, "completed");
+    }
+
+    #[test]
+    fn score_lines_show_each_value_and_its_change_since_the_previous_run() {
+        // (activity_id, load, risk, own impact) — oldest run first.
+        let snapshots = vec![
+            (1, Some(1.20), 30, 2),
+            (2, Some(1.35), 35, 5),
+            (3, None, 35, -1),
+        ];
+        // The first banked run has no earlier ratio to change against, but
+        // its own impact is always there.
+        assert_eq!(
+            score_lines(&snapshots, Some(0), 1),
+            "\n\nLoad: 120%\nInjury risk: 30% (+2%)"
+        );
+        assert_eq!(
+            score_lines(&snapshots, Some(1), 2),
+            "\n\nLoad: 135% (+15%)\nInjury risk: 35% (+5%)"
+        );
+        // A run that diluted a heavy week comes out negative, and a run the
+        // provider never scored for load simply has no Load line.
+        assert_eq!(score_lines(&snapshots, Some(2), 3), "\n\nInjury risk: 35% (-1%)");
+    }
+
+    #[test]
+    fn scores_snapshot_once_per_run_and_appear_in_its_description() {
+        let (store, _, workouts) = fixture();
+        let days: Vec<PlanWorkout> = workouts
+            .iter()
+            .filter(|w| w.kind != WorkoutKind::Rest)
+            .take(2)
+            .cloned()
+            .collect();
+        assert_ne!(days[0].date, days[1].date);
+        for (workout, record, ratio) in [
+            (&days[0], "load-1", 1.2),
+            (&days[1], "load-2", 1.35),
+        ] {
+            store
+                .upsert_training_load(
+                    ProviderKind::Coros,
+                    &TrainingLoad {
+                        date: workout.date,
+                        short_term: None,
+                        long_term: None,
+                        ratio: Some(ratio),
+                        comment: None,
+                    },
+                )
+                .unwrap();
+            insert_run(&store, workout, "run", record);
+        }
+        let th = Thresholds::default();
+        snapshot_scores(&store, &th).unwrap();
+        // Idempotent: the snapshot is what the run landed with, so a later
+        // refresh must not overwrite it even when the load row has moved on.
+        store
+            .upsert_training_load(
+                ProviderKind::Coros,
+                &TrainingLoad {
+                    date: days[0].date,
+                    short_term: None,
+                    long_term: None,
+                    ratio: Some(2.0),
+                    comment: None,
+                },
+            )
+            .unwrap();
+        snapshot_scores(&store, &th).unwrap();
+        let stored = store.activity_scores().unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].1, Some(1.2));
+
+        let entries = events(&store).unwrap();
+        // The runs are unmatched, so each day also holds its planned session:
+        // only the activity-backed event carries the score lines.
+        let run_notes = |day: NaiveDate| {
+            entries
+                .iter()
+                .find(|event| event.date == day && event.activity_id.is_some())
+                .unwrap()
+                .notes
+                .clone()
+        };
+        let first = run_notes(days[0].date);
+        let second = run_notes(days[1].date);
+        // The first banked run has no earlier ratio to change against, but
+        // its own risk impact is always there. Both values are percentages:
+        // the 1.35 ratio reads as the chart's 135 %. The risk value itself
+        // depends on the fixture's volumes, so only its line shape is pinned
+        // here.
+        let lines: Vec<&str> = first.lines().rev().take(2).collect();
+        assert!(
+            lines[0].starts_with("Injury risk: ") && lines[0].ends_with("%)")
+                && lines[0].contains("% ("),
+            "{first}"
+        );
+        assert_eq!(lines[1], "Load: 120%", "{first}");
+        let lines: Vec<&str> = second.lines().rev().take(2).collect();
+        assert!(lines[0].starts_with("Injury risk: "), "{second}");
+        assert_eq!(lines[1], "Load: 135% (+15%)", "{second}");
     }
 
     #[test]

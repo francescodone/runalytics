@@ -236,6 +236,17 @@ export interface PlanWorkout {
   done: boolean;
 }
 
+/// A banked run's frozen score snapshot (see the backend's `run_scores`).
+/// `riskDelta` is the run's own impact on injury risk: risk with the session
+/// minus risk without it. Every run has one.
+export interface RunScore {
+  activityId: number;
+  workoutId: string | null;
+  load: number | null;
+  risk: number;
+  riskDelta: number;
+}
+
 export interface CalendarEvent {
   id: string;
   workoutId: string | null;

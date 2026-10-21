@@ -1121,26 +1121,32 @@ impl Provider for CorosProvider {
         // every plan it is handed, so blindly calling createTrainingPlan
         // again would leave the stale schedule on the watch beside the new
         // one. updateTrainingPlan is day-granular, so the update path also
-        // rest-clears days that no longer hold a workout.
-        if let Some(id) = plan.pushed_id.as_deref() {
-            report("Looking up the plan on COROS", 15);
-            if let Some(exec) = self.find_execution_plan(&service, Some(id)).await? {
-                report("Reading its schedule", 30);
-                match self
-                    .update_plan(&service, &exec, plan, workouts, progress)
-                    .await
-                {
-                    Ok(()) => return Ok(Some(exec)),
-                    Err(e) => {
-                        // The execution record may have been quit or finished
-                        // in the COROS app since we pushed; a fresh create is
-                        // the only way to get the plan back onto the watch.
-                        // Clear the old schedule first so the watch never
-                        // holds two Runalytics plans at once.
-                        eprintln!("[coros] plan update failed, pushing as new: {e}");
-                        if let Err(e) = self.cancel_existing(&service, &exec, progress).await {
-                            eprintln!("[coros] clearing the stale plan failed: {e}");
-                        }
+        // rest-clears days that no longer hold a workout. The lookup runs
+        // even without a stored pushed id: a push whose report did not name
+        // the new plan id leaves status=pushed with pushed_id=NULL, and
+        // skipping the lookup then would duplicate the plan on the watch on
+        // every re-push. find_execution_plan takes any editable execution
+        // row when there is no id to prefer.
+        report("Looking up the plan on COROS", 15);
+        if let Some(exec) = self
+            .find_execution_plan(&service, plan.pushed_id.as_deref())
+            .await?
+        {
+            report("Reading its schedule", 30);
+            match self
+                .update_plan(&service, &exec, plan, workouts, progress)
+                .await
+            {
+                Ok(()) => return Ok(Some(exec)),
+                Err(e) => {
+                    // The execution record may have been quit or finished
+                    // in the COROS app since we pushed; a fresh create is
+                    // the only way to get the plan back onto the watch.
+                    // Clear the old schedule first so the watch never
+                    // holds two Runalytics plans at once.
+                    eprintln!("[coros] plan update failed, pushing as new: {e}");
+                    if let Err(e) = self.cancel_existing(&service, &exec, progress).await {
+                        eprintln!("[coros] clearing the stale plan failed: {e}");
                     }
                 }
             }
@@ -1611,9 +1617,15 @@ impl CorosProvider {
 
     /// Absolute pace intensity for a section: COROS takes intensityType 2
     /// with an integer s/km range of 120..=1499; a step without a pace band
-    /// gets no intensity at all (fields absent, never 0).
-    fn pace_intensity(low: Option<i64>, high: Option<i64>) -> serde_json::Map<String, Value> {
+    /// gets no intensity at all (fields absent, never 0). An open-ended step
+    /// runs from its floor to the slowest value COROS accepts.
+    fn pace_intensity(
+        low: Option<i64>,
+        high: Option<i64>,
+        open_ended: bool,
+    ) -> serde_json::Map<String, Value> {
         let mut o = serde_json::Map::new();
+        let high = if open_ended { low.map(|_| 1499) } else { high };
         if let (Some(low), Some(high)) = (low, high) {
             let low = low.clamp(120, 1499);
             let high = high.clamp(120, 1499).max(low);
@@ -1631,12 +1643,15 @@ impl CorosProvider {
     fn course_section(step: &crate::plan::session::WorkoutStep) -> Value {
         let metres = |m: f64| (m - 1e-6).round().max(1.0) as i64;
         if step.repeats > 1 {
-            let mut work = Self::pace_intensity(step.pace_lo_s_km, step.pace_hi_s_km);
+            let mut work = Self::pace_intensity(step.pace_lo_s_km, step.pace_hi_s_km, false);
             work.insert("sectionType".into(), json!(2));
             work.insert("targetType".into(), json!(1)); // distance, metres
             work.insert("targetValue".into(), json!(metres(step.distance_m)));
-            let mut recovery =
-                Self::pace_intensity(step.recovery_pace_lo_s_km, step.recovery_pace_hi_s_km);
+            let mut recovery = Self::pace_intensity(
+                step.recovery_pace_lo_s_km,
+                step.recovery_pace_hi_s_km,
+                false,
+            );
             recovery.insert("sectionType".into(), json!(3));
             recovery.insert("targetType".into(), json!(1));
             recovery.insert("targetValue".into(), json!(metres(step.recovery_m)));
@@ -1653,7 +1668,7 @@ impl CorosProvider {
         } else {
             2
         };
-        let mut o = Self::pace_intensity(step.pace_lo_s_km, step.pace_hi_s_km);
+        let mut o = Self::pace_intensity(step.pace_lo_s_km, step.pace_hi_s_km, step.open_ended);
         o.insert("sectionType".into(), json!(section_type));
         o.insert("targetType".into(), json!(1));
         o.insert("targetValue".into(), json!(metres(step.distance_m)));

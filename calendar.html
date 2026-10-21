@@ -44,37 +44,6 @@
         <div id="cal-grid"></div>
         <div id="cal-agenda"></div>
       </section>
-      <section id="ics" class="panel">
-        <header class="panel-head">
-          <h2>Calendar subscription</h2>
-        </header>
-        <label for="calendar-subscription-url">Subscription URL</label>
-        <div class="calendar-subscription">
-          <input id="calendar-subscription-url" type="url" readonly placeholder="Not configured" />
-          <button id="calendar-copy" type="button" class="secondary" disabled>Copy URL</button>
-          <button id="calendar-subscribe" type="button" class="secondary" disabled><span data-icon="calendar"></span> Subscribe</button>
-        </div>
-        <p id="publish-status" role="status">Loading publishing settings...</p>
-        <details>
-          <summary>HTTPS / WebDAV / GitHub gist publishing</summary>
-          <form id="calendar-publishing-form" class="calendar-publishing-form">
-            <p class="muted">GitHub gist: upload URL <code>https://api.github.com/gists/&lt;id&gt;</code>, subscription URL <code>https://gist.githubusercontent.com/&lt;user&gt;/&lt;id&gt;/raw/runalytics.ics</code>, no username, token with gist scope.</p>
-            <label class="check-label"><input id="calendar-enabled" type="checkbox" /> Publish automatically</label>
-            <label>Upload URL (PUT, or gist API)<input id="calendar-upload-url" type="url" placeholder="https://host.example/private/runalytics.ics" autocomplete="off" /></label>
-            <label>Subscription URL (GET)<input id="calendar-read-url" type="url" placeholder="https://host.example/feed/private-id.ics" autocomplete="off" /></label>
-            <label>Upload username<input id="calendar-username" type="text" autocomplete="off" /></label>
-            <label>Upload password / token<input id="calendar-password" type="password" autocomplete="new-password" /></label>
-            <label class="check-label"><input id="calendar-clear-password" type="checkbox" /> Remove saved credential</label>
-            <div class="actions"><button id="calendar-save" type="submit"><span data-icon="check"></span> Save settings</button></div>
-          </form>
-        </details>
-        <h3>Local export</h3>
-        <p id="ics-path" class="mono" aria-live="polite"></p>
-        <div class="actions">
-          <button id="ics-regenerate" class="secondary"><span data-icon="sync"></span> Refresh calendar</button>
-          <button id="ics-reveal" class="secondary">Reveal in Finder</button>
-        </div>
-      </section>
     </main>
     <script type="module" src="/src/calendar.ts"></script>
   </body>

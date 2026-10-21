@@ -2,8 +2,15 @@
 //!
 //! Model: weekly volume grows geometrically from the runner's recent baseline
 //! to a peak (capped by race distance), with a 3-week build / 1-downweek
-//! cycle, a fixed long-run day, one quality session (intervals or tempo),
-//! easy runs filling the remaining frequency, and a 2-week taper.
+//! cycle and a 2-week taper. The build is periodised (Pfitzinger mesocycles;
+//! Casado et al. 2022) into Base -> Build -> Peak:
+//! - easy running carries the volume (~80 % or more, Seiler 2010);
+//! - one quality day a week, two (one threshold, one VO2max) once the runner
+//!   runs 5+ times and the week can afford it without breaking 80/20;
+//! - 21K/42K weeks get a mid-week medium-long run, and from the Build phase
+//!   on the long run alternates easy with race-pace finishes/blocks, a
+//!   race-pace long run counting as the week's second hard day;
+//! - a marathon build closes its peak with a half-marathon tune-up.
 //!
 //! The marathon constants are calibrated against two completed builds aimed at
 //! 2:50 (Runna, ~80 km peak, one track session a week): their biggest long
@@ -15,6 +22,8 @@ use uuid::Uuid;
 
 use crate::error::{AppError, Result};
 use crate::types::*;
+
+use super::session::QualityPattern;
 
 /// Longest long-run (km) worth doing before the taper, per race.
 ///
@@ -71,6 +80,49 @@ fn peak_weekly_km(d: RaceDistance, increase: IncreaseMethod, frequency: u32) -> 
 
 /// Shortest run a plan prescribes (km); shorter easy runs fold into the others.
 const MIN_RUN_KM: f64 = 6.0;
+
+/// Most of a week's running time that may be quality main sets: the ~80/20
+/// intensity distribution well-trained endurance athletes converge on.
+const MAX_HARD_SHARE: f64 = 0.20;
+
+/// Training phase of a plan week.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Phase {
+    /// Aerobic foundation: volume, threshold-lite work, some leg speed.
+    Base,
+    /// Lactate threshold and VO2max development.
+    Build,
+    /// Race-specific sharpening.
+    Peak,
+    Taper,
+}
+
+/// Phase of week `w`. A build is ~30 % base, ~35 % build, ~35 % peak; one too
+/// short for a meaningful base (under 8 weeks) starts in Build. A maintenance
+/// block holds the mixed Build diet throughout.
+pub(super) fn phase_at(kind: PlanKind, d: RaceDistance, weeks: usize, w: usize) -> Phase {
+    if kind == PlanKind::Maintenance {
+        return Phase::Build;
+    }
+    let taper = if kind.has_race() {
+        taper_weeks_for(kind, d) as usize
+    } else {
+        0
+    };
+    let span = weeks.saturating_sub(taper).max(1);
+    if w >= span {
+        return Phase::Taper;
+    }
+    let progress = w as f64 / span as f64;
+    let base_end = if span >= 8 { 0.3 } else { 0.0 };
+    if progress < base_end {
+        Phase::Base
+    } else if progress < 0.65 {
+        Phase::Build
+    } else {
+        Phase::Peak
+    }
+}
 
 /// Planned distances are whole km, rounded up (the epsilon keeps float noise from adding a km).
 fn ceil_km(km: f64) -> f64 {
@@ -398,6 +450,14 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         } else {
             ceil_km((target * long_run_share(req.distance)).min(long_cap)).max(MIN_RUN_KM)
         };
+        let long_pattern = super::session::long_run_pattern(req.kind, req.distance, w, weeks);
+        // A tune-up is a race effort, not a long run: hold it near a half
+        // marathon and drop the excess, making the week a lighter one.
+        let mut target_km = target_km;
+        if long_pattern == super::session::LongRunPattern::TuneUp && long_km > 21.0 {
+            target_km -= long_km - 21.0;
+            long_km = 21.0;
+        }
 
         // One session per day: the long-run day is fixed, the remaining slots
         // are evenly spaced and collisions nudged forward.
@@ -441,18 +501,95 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
 
         // Every quality session carries the plan's fixed load; a week too
         // small to hold it alongside the long run runs easy instead.
-        let pattern = super::session::quality_pattern(req.kind, req.distance, w, weeks);
-        let mut quality_km = 0.0;
-        let quality_off = quality_off
-            .filter(|&off| !is_race_week && !down && before_race(off))
+        let week_quality = super::session::week_quality(req.kind, req.distance, w, weeks);
+        let session_km = |pattern| {
+            ceil_km(super::session::quality_session_m(pattern, thr_w, load) / 1000.0)
+                .max(MIN_RUN_KM)
+        };
+        // The tune-up is that week's quality: a race effort fills its 80/20 budget.
+        let tune_up = long_pattern == super::session::LongRunPattern::TuneUp && long_km > 0.0;
+        let quality_open = |off: usize| !is_race_week && !down && !tune_up && before_race(off);
+
+        // A second quality day (threshold + VO2max, as both reference builds
+        // ran) only when the week has the frequency for it, the long run is
+        // easy (a race-pace long run is already the second hard day), and
+        // both main sets stay inside the 80/20 intensity budget.
+        let phase = phase_at(req.kind, req.distance, weeks, w);
+        let (lead, follow) = (
+            week_quality.emphasis,
+            week_quality.other(week_quality.emphasis),
+        );
+        let (lead_km, follow_km) = (session_km(lead), session_km(follow));
+        let easy_mid = {
+            let (lo, hi) = easy_pace_s_km(thr_w);
+            (lo + hi) as f64 / 2.0
+        };
+        let week_minutes = target_km * easy_mid / 60.0;
+        // Race-pace minutes inside the long run spend the same 80/20 budget.
+        let long_fast_minutes: f64 =
+            super::session::long_run_steps(long_km * 1000.0, long_pattern, thr_w, req.distance)
+                .iter()
+                .filter(|s| !s.label.contains("easy"))
+                .map(|s| s.distance_m / 1000.0 * s.pace_hi_s_km.unwrap_or(0) as f64 / 60.0)
+                .sum();
+        let second_off = quality_off
+            .filter(|&off| quality_open(off))
             .filter(|_| {
-                let session_m = super::session::quality_session_m(pattern, thr_w, load);
-                quality_km = ceil_km(session_m / 1000.0).max(MIN_RUN_KM);
-                quality_km <= target_km - long_km
+                req.weekly_frequency >= 5
+                    && matches!(phase, Phase::Build | Phase::Peak)
+                    && !tapering
+                    && !(long_km > 0.0 && long_pattern.is_hard())
+                    && 2.0 * load + long_fast_minutes <= MAX_HARD_SHARE * week_minutes
+                    && lead_km + follow_km + long_km + MIN_RUN_KM <= target_km
+            })
+            .and_then(|primary| {
+                // Hard days never touch: two clear days from the long run and
+                // at least one easy day between the two sessions.
+                let spaced = |off: usize| {
+                    off != primary && off != lr_off && gap(off) >= 2 && {
+                        let d = (off as i64 - primary as i64).abs();
+                        d.min(7 - d) >= 2
+                    }
+                };
+                let pick = slots
+                    .iter()
+                    .copied()
+                    .filter(|&off| spaced(off) && before_race(off))
+                    .max_by_key(|&off| gap(off));
+                pick.or_else(|| {
+                    let free = (0..7)
+                        .filter(|&off| !slots.contains(&off) && spaced(off) && before_race(off))
+                        .max_by_key(|&off| gap(off))?;
+                    // Give up the easy slot nearest the long run for it.
+                    let moved = slots
+                        .iter()
+                        .copied()
+                        .filter(|&off| off != primary)
+                        .min_by_key(|&off| gap(off))?;
+                    slots.retain(|&off| off != moved);
+                    slots.push(free);
+                    slots.sort();
+                    Some(free)
+                })
             });
+
+        let pattern = if second_off.is_some() {
+            lead
+        } else {
+            week_quality.single
+        };
+        let mut quality_km = 0.0;
+        let quality_off = quality_off.filter(|&off| quality_open(off)).filter(|_| {
+            quality_km = session_km(pattern);
+            quality_km <= target_km - long_km
+        });
         if quality_off.is_none() {
             quality_km = 0.0;
         }
+        let second = second_off
+            .filter(|_| quality_off.is_some())
+            .map(|off| (off, follow, follow_km));
+        let second_km = second.map_or(0.0, |s| s.2);
 
         // Easy runs share what is left in whole km. Any that would fall under
         // the minimum are dropped (closest to the long run first) and their
@@ -460,10 +597,12 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         let mut easy_offs: Vec<usize> = slots
             .iter()
             .copied()
-            .filter(|&off| Some(off) != quality_off && before_race(off))
+            .filter(|&off| {
+                Some(off) != quality_off && Some(off) != second.map(|s| s.0) && before_race(off)
+            })
             .collect();
         easy_offs.sort_by_key(|&off| std::cmp::Reverse(gap(off)));
-        let mut rest = (target_km - long_km - quality_km).max(0.0);
+        let mut rest = (target_km - long_km - quality_km - second_km).max(0.0);
         while rest < MIN_RUN_KM * easy_offs.len() as f64 {
             easy_offs.pop();
         }
@@ -482,38 +621,60 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             }
             rest = 0.0;
         }
-        let easy_base = (rest / easy_offs.len().max(1) as f64).floor();
-        let easy_extra = rest - easy_base * easy_offs.len() as f64;
+        // Medium-long run (Pfitzinger): for 21K/42K the easy day farthest from
+        // the long run carries ~60 % of it, the others become short recovery
+        // runs — more aerobic stimulus at the same weekly volume.
+        let medium_long = (matches!(req.distance, RaceDistance::K21 | RaceDistance::K42)
+            && easy_offs.len() >= 2
+            && long_km > 0.0
+            && !tapering
+            && !is_race_week)
+            .then(|| {
+                let cap = if req.distance == RaceDistance::K42 {
+                    24.0
+                } else {
+                    16.0
+                };
+                let others = easy_offs.len() as f64 - 1.0;
+                ceil_km((long_km * 0.6).min(cap)).min(rest - MIN_RUN_KM * others)
+            })
+            .filter(|&km| km >= 10.0 && km >= (rest / easy_offs.len() as f64).floor() + 2.0);
+        let (split_rest, split_n) = match medium_long {
+            Some(km) => (rest - km, easy_offs.len() - 1),
+            None => (rest, easy_offs.len()),
+        };
+        let easy_base = (split_rest / split_n.max(1) as f64).floor();
+        let easy_extra = split_rest - easy_base * split_n as f64;
 
-        let mut sessions: Vec<(usize, WorkoutKind, f64)> = easy_offs
+        // (day, kind, km, quality pattern, medium-long)
+        let mut sessions: Vec<(usize, WorkoutKind, f64, Option<QualityPattern>, bool)> = easy_offs
             .iter()
             .enumerate()
-            .map(|(i, &off)| {
-                let km = easy_base + if (i as f64) < easy_extra { 1.0 } else { 0.0 };
-                (off, WorkoutKind::Easy, km)
+            .map(|(i, &off)| match (i, medium_long) {
+                (0, Some(km)) => (off, WorkoutKind::Easy, km, None, true),
+                _ => {
+                    let j = i - usize::from(medium_long.is_some());
+                    let km = easy_base + if (j as f64) < easy_extra { 1.0 } else { 0.0 };
+                    (off, WorkoutKind::Easy, km, None, false)
+                }
             })
             .collect();
         if long_km > 0.0 {
-            sessions.push((lr_off, WorkoutKind::LongRun, long_km));
+            sessions.push((lr_off, WorkoutKind::LongRun, long_km, None, false));
         }
         if let Some(off) = quality_off {
-            sessions.push((off, pattern.kind(), quality_km));
+            sessions.push((off, pattern.kind(), quality_km, Some(pattern), false));
+        }
+        if let Some((off, follow, km)) = second {
+            sessions.push((off, follow.kind(), km, Some(follow), false));
         }
         sessions.sort_by_key(|session| session.0);
 
         let easy_pace = easy_pace_s_km(thr_w);
-        for (off, kind, km) in sessions {
-            let pace = match kind {
-                WorkoutKind::LongRun
-                    if req.distance == RaceDistance::K42
-                        && !tapering
-                        && !is_race_week
-                        && w >= weeks / 2 =>
-                {
-                    mp_s_km(thr_w)
-                }
-                WorkoutKind::Intervals | WorkoutKind::Tempo => pattern.pace(thr_w),
-                _ => easy_pace,
+        for (off, kind, km, quality, medium_long) in sessions {
+            let pace = match quality {
+                Some(pattern) => pattern.pace(thr_w),
+                None => easy_pace,
             };
             let mut workout = PlanWorkout {
                 id: Uuid::new_v4().to_string(),
@@ -527,32 +688,21 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
                 pace_hi_s_km: Some(pace.1),
                 done: false,
             };
-            workout.title = match kind {
-                WorkoutKind::LongRun => format!("Long run {km:.0} km"),
-                WorkoutKind::Easy => format!("Easy run {km:.0} km"),
-                _ => {
+            workout.title = match (kind, quality) {
+                (WorkoutKind::LongRun, _) => {
                     let details = super::session::details_for_plan(&workout, &plan);
-                    let main = &details.steps[1];
-                    if kind == WorkoutKind::Intervals {
-                        workout.pace_lo_s_km = main.pace_lo_s_km;
-                        workout.pace_hi_s_km = main.pace_hi_s_km;
-                        format!("{} x {:.0} m intervals", main.repeats, main.distance_m)
-                    } else if main.repeats > 1 {
-                        format!(
-                            "{} x {:.1} km tempo",
-                            main.repeats,
-                            main.distance_m / 1000.0
-                        )
-                    } else if details.steps.len() > 3 {
-                        let work: f64 = details.steps[1..details.steps.len() - 1]
-                            .iter()
-                            .map(|step| step.distance_m)
-                            .sum();
-                        format!("Progressive tempo {:.1} km", work / 1000.0)
-                    } else {
-                        format!("Continuous tempo {:.1} km", main.distance_m / 1000.0)
-                    }
+                    super::session::long_run_title(km, &details.steps)
                 }
+                (_, Some(pattern)) => {
+                    let details = super::session::details_for_plan(&workout, &plan);
+                    if kind == WorkoutKind::Intervals {
+                        workout.pace_lo_s_km = details.steps[1].pace_lo_s_km;
+                        workout.pace_hi_s_km = details.steps[1].pace_hi_s_km;
+                    }
+                    super::session::quality_title(pattern, &details, w)
+                }
+                _ if medium_long => format!("Medium-long run {km:.0} km"),
+                _ => format!("Easy run {km:.0} km"),
             };
             workouts.push(workout);
         }
@@ -1166,20 +1316,260 @@ mod tests {
             longest_long(&long),
             longest_long(&short)
         );
-        // The 42K block's long runs carry a marathon-pace band; the 5K block's
+        // The 42K block's long runs carry race-pace segments; the 5K block's
         // are easy throughout. That is the distance showing up in the sessions
         // themselves, not only in their length.
-        let mp_bands = |ws: &[PlanWorkout]| {
+        let mp_segments = |ws: &[PlanWorkout]| {
             ws.iter()
-                .filter(|w| w.kind == WorkoutKind::LongRun)
-                .filter(|w| w.pace_lo_s_km.unwrap() > 285 && w.pace_hi_s_km.unwrap() < 330)
+                .filter(|w| w.kind == WorkoutKind::LongRun && w.title.contains("race pace"))
                 .count()
         };
         assert!(
-            mp_bands(&long) > 0 && mp_bands(&short) == 0,
-            "marathon pace appeared in the wrong block: 42K {} bands, 5K {} bands",
-            mp_bands(&long),
-            mp_bands(&short)
+            mp_segments(&long) > 0 && mp_segments(&short) == 0,
+            "marathon pace appeared in the wrong block: 42K {}, 5K {}",
+            mp_segments(&long),
+            mp_segments(&short)
         );
+    }
+
+    // ---- periodisation -----------------------------------------------------
+
+    /// A 16-week marathon moves Base -> Build -> Peak -> Taper, never back.
+    #[test]
+    fn phases_progress_in_order() {
+        let phases: Vec<Phase> = (0..16)
+            .map(|w| phase_at(PlanKind::Race, RaceDistance::K42, 16, w))
+            .collect();
+        assert_eq!(phases[0], Phase::Base);
+        assert_eq!(phases[15], Phase::Taper);
+        assert!(phases.contains(&Phase::Build) && phases.contains(&Phase::Peak));
+        let rank = |p: &Phase| *p as u8;
+        assert!(
+            phases.windows(2).all(|p| rank(&p[0]) <= rank(&p[1])),
+            "{phases:?}"
+        );
+        // Too short for a base: straight into Build.
+        assert_eq!(
+            phase_at(PlanKind::Race, RaceDistance::K10, 6, 0),
+            Phase::Build
+        );
+    }
+
+    fn generate_with(
+        distance: RaceDistance,
+        weeks: i64,
+        frequency: u32,
+        km: f64,
+    ) -> (TrainingPlan, Vec<PlanWorkout>) {
+        let r = PlanRequest {
+            weekly_frequency: frequency,
+            current_weekly_km: Some(km),
+            threshold_sec_km: 240.0,
+            ..req_from_now(distance, weeks)
+        };
+        generate(&r, km).unwrap()
+    }
+
+    fn by_week(
+        workouts: &[PlanWorkout],
+    ) -> std::collections::BTreeMap<NaiveDate, Vec<&PlanWorkout>> {
+        let mut weeks: std::collections::BTreeMap<NaiveDate, Vec<&PlanWorkout>> =
+            Default::default();
+        for w in workouts {
+            weeks.entry(week_start(w.date)).or_default().push(w);
+        }
+        weeks
+    }
+
+    fn is_quality(w: &PlanWorkout) -> bool {
+        matches!(w.kind, WorkoutKind::Intervals | WorkoutKind::Tempo)
+    }
+
+    /// With 5+ runs a week the build holds two quality days — one threshold,
+    /// one VO2max — as both reference builds did; the base never does, and a
+    /// week whose long run carries race-pace work keeps to one.
+    #[test]
+    fn frequent_runner_gets_threshold_and_speed_days() {
+        let (plan, workouts) = generate_with(RaceDistance::K42, 16, 5, 55.0);
+        let mut doubles = 0;
+        for (monday, week) in by_week(&workouts) {
+            let quality: Vec<_> = week.iter().filter(|w| is_quality(w)).collect();
+            assert!(
+                quality.len() <= 2,
+                "week {monday}: {} quality days",
+                quality.len()
+            );
+            if quality.len() == 2 {
+                doubles += 1;
+                assert_ne!(
+                    quality[0].kind, quality[1].kind,
+                    "week {monday}: two of a kind"
+                );
+                let long_hard = week.iter().any(|w| {
+                    w.kind == WorkoutKind::LongRun
+                        && super::super::session::details_for_plan(w, &plan)
+                            .steps
+                            .iter()
+                            .filter(|s| !s.label.contains("easy"))
+                            .map(|s| s.distance_m)
+                            .sum::<f64>()
+                            > 6000.0
+                });
+                assert!(
+                    !long_hard,
+                    "week {monday}: two quality days plus a race-pace long run"
+                );
+            }
+        }
+        assert!(
+            doubles >= 3,
+            "expected several two-quality weeks, got {doubles}"
+        );
+        // The first weeks are base: one quality day.
+        let first = by_week(&workouts).into_values().next().unwrap();
+        assert!(first.iter().filter(|w| is_quality(w)).count() <= 1);
+        // And a 4-run week never doubles up.
+        let (_, four) = generate_with(RaceDistance::K42, 16, 4, 55.0);
+        assert!(by_week(&four)
+            .values()
+            .all(|week| week.iter().filter(|w| is_quality(w)).count() <= 1));
+    }
+
+    /// Easy running carries the volume: across a full plan at least 80 % of
+    /// the distance is easy (warm-ups, cool-downs, jog recoveries, easy and
+    /// long-run easy segments), and no single week drops below 75 %.
+    #[test]
+    fn intensity_distribution_stays_mostly_easy() {
+        for (distance, frequency) in [
+            (RaceDistance::K42, 5),
+            (RaceDistance::K42, 6),
+            (RaceDistance::K21, 5),
+            (RaceDistance::K10, 5),
+            (RaceDistance::K5, 4),
+        ] {
+            let (plan, workouts) = generate_with(distance, 16, frequency, 55.0);
+            let (mut total_hard, mut total) = (0.0, 0.0);
+            for (monday, week) in by_week(&workouts) {
+                let (mut hard, mut all) = (0.0, 0.0);
+                for w in week.iter().filter(|w| w.kind != WorkoutKind::Race) {
+                    let details = super::super::session::details_for_plan(w, &plan);
+                    for s in &details.steps {
+                        let work = s.distance_m * s.repeats as f64;
+                        let recovery = s.recovery_m * s.repeats.saturating_sub(1) as f64;
+                        all += work + recovery;
+                        let easy =
+                            s.label.contains("easy") || s.label.starts_with("Continuous run");
+                        if !easy && w.kind != WorkoutKind::Easy {
+                            hard += work;
+                            if s.label.starts_with("Over/unders") {
+                                hard += recovery;
+                            }
+                        }
+                    }
+                }
+                if all > 0.0 {
+                    assert!(
+                        hard / all <= 0.25,
+                        "{distance:?} f{frequency} week {monday}: {:.0} % hard",
+                        100.0 * hard / all
+                    );
+                }
+                total_hard += hard;
+                total += all;
+            }
+            assert!(
+                total_hard / total <= 0.20,
+                "{distance:?} f{frequency}: {:.0} % of the plan is hard",
+                100.0 * total_hard / total
+            );
+        }
+    }
+
+    /// Marathon structure from the reference builds and Pfitzinger: a
+    /// mid-week medium-long run, race-pace long runs only after the base,
+    /// and a half-marathon tune-up two weeks out.
+    #[test]
+    fn marathon_build_has_medium_long_race_pace_long_runs_and_tune_up() {
+        let (plan, workouts) = generate_with(RaceDistance::K42, 16, 5, 55.0);
+        let weeks = by_week(&workouts);
+        let mondays: Vec<NaiveDate> = weeks.keys().copied().collect();
+        let mut medium = 0;
+        for week in weeks.values() {
+            let long = week
+                .iter()
+                .find(|w| w.kind == WorkoutKind::LongRun)
+                .and_then(|w| w.distance_m);
+            for mlr in week.iter().filter(|w| w.title.starts_with("Medium-long")) {
+                medium += 1;
+                let km = mlr.distance_m.unwrap();
+                assert!(
+                    km < long.unwrap(),
+                    "medium-long {} not shorter than the long run",
+                    mlr.title
+                );
+                let longest_easy = week
+                    .iter()
+                    .filter(|w| w.kind == WorkoutKind::Easy && w.id != mlr.id)
+                    .filter_map(|w| w.distance_m)
+                    .fold(0.0f64, f64::max);
+                assert!(
+                    km > longest_easy,
+                    "medium-long {} no longer than the easy runs",
+                    mlr.title
+                );
+            }
+        }
+        assert!(
+            medium >= 8,
+            "expected a medium-long run most weeks, got {medium}"
+        );
+
+        let race_pace_long = |w: &PlanWorkout| {
+            super::super::session::details_for_plan(w, &plan)
+                .steps
+                .len()
+                > 1
+        };
+        let long_runs: Vec<_> = workouts
+            .iter()
+            .filter(|w| w.kind == WorkoutKind::LongRun)
+            .collect();
+        let base_weeks = (0..16)
+            .filter(|&w| phase_at(PlanKind::Race, RaceDistance::K42, 16, w) == Phase::Base)
+            .count();
+        for w in &long_runs {
+            let week = mondays
+                .iter()
+                .position(|m| *m == week_start(w.date))
+                .unwrap();
+            if week < base_weeks {
+                assert!(
+                    !race_pace_long(w),
+                    "race-pace long run in base week {week}: {}",
+                    w.title
+                );
+            }
+        }
+        assert!(
+            long_runs.iter().filter(|w| race_pace_long(w)).count() >= 4,
+            "expected several race-pace long runs"
+        );
+        let tune_up = long_runs
+            .iter()
+            .find(|w| w.title.starts_with("Tune-up"))
+            .expect("a marathon build closes its peak with a tune-up");
+        let days_out = (r_date(&workouts) - tune_up.date).num_days();
+        assert!(
+            (8..=20).contains(&days_out),
+            "tune-up {days_out} days before the race"
+        );
+    }
+
+    fn r_date(workouts: &[PlanWorkout]) -> NaiveDate {
+        workouts
+            .iter()
+            .find(|w| w.kind == WorkoutKind::Race)
+            .unwrap()
+            .date
     }
 }

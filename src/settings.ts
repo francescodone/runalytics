@@ -8,6 +8,7 @@ import { initNavGate } from "./lib/navgate";
 import { fetchSetupState, renderSetup } from "./lib/setup";
 import { noteThemeChoice } from "./lib/theme";
 import { hydrateIcons } from "./lib/icons";
+import { initPublishing } from "./lib/publishing";
 import { startOnboarding } from "./lib/onboarding";
 import { withBusy, confirmSaved } from "./lib/feedback";
 import type {
@@ -386,6 +387,7 @@ async function main(): Promise<void> {
   initSyncIndicator();
   initSegmented();
   initPanes();
+  initPublishing();
   void initNavGate().catch(() => undefined);
   // A sync from anywhere can complete step 2 — keep the pane honest about it.
   // The gate re-checks too: a plan created elsewhere (or a first sync landing

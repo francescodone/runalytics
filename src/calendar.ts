@@ -1,4 +1,3 @@
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauri, el, fail, inTauri } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
@@ -8,13 +7,12 @@ import "./lib/navigation";
 import { hydrateIcons } from "./lib/icons";
 import { animateSlideIn } from "./lib/motion";
 import { escapeHtml, openCalendarEvent } from "./lib/workout-detail";
-import type { CalendarEvent, CalendarPublishing } from "./lib/types";
+import type { CalendarEvent } from "./lib/types";
 
 let cursor = new Date();
 cursor.setDate(1);
 let monthEvents: CalendarEvent[] = [];
 let renderVersion = 0;
-let publishing: CalendarPublishing | null = null;
 
 const KIND_LABEL: Record<string, string> = {
   easy: "Easy",
@@ -31,6 +29,24 @@ function ymd(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/// First and last day (YYYY-MM-DD) of the week containing today, Monday-based.
+function currentWeek(): [string, string] {
+  const today = new Date();
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+  return [ymd(monday), ymd(sunday)];
+}
+
+function inCurrentWeek(date: string): boolean {
+  const [from, to] = currentWeek();
+  return date >= from && date <= to;
+}
+
+/// Only planned sessions still to run can move; completed runs are history and race day is fixed.
+function isMovable(w: CalendarEvent): boolean {
+  return !!w.workoutId && w.activityId == null && w.kind !== "race" && inCurrentWeek(w.date);
 }
 
 async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void> {
@@ -61,13 +77,16 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   );
   const lead = (first.getDay() + 6) % 7;
   for (let i = 0; i < lead; i++) cells.push(`<div class="cal-cell empty"></div>`);
+  const todayKey = ymd(new Date());
   for (let day = 1; day <= last.getDate(); day++) {
     const key = ymd(new Date(year, month, day));
     const ws = byDay.get(key) ?? [];
     const chips = ws
       .map(
         (w) =>
-          `<button type="button" class="chip workout-chip chip-${w.kind}" data-event-index="${workouts.indexOf(w)}" aria-label="${escapeHtml(w.title)}">${KIND_LABEL[w.kind] ?? w.kind}${
+          `<button type="button" class="chip workout-chip chip-${w.kind}${w.activityId != null ? " chip-done" : ""}${isMovable(w) ? " movable" : ""}" data-event-index="${workouts.indexOf(w)}"${
+            isMovable(w) ? ` draggable="true" title="Drag to another day this week"` : ""
+          } aria-label="${escapeHtml(w.title)}">${KIND_LABEL[w.kind] ?? w.kind}${
             w.distanceM ? ` ${(w.distanceM / 1000).toFixed(1)}k` : ""
           }</button>`,
       )
@@ -80,7 +99,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
       ? `<span class="cal-pain ${pain >= 7 ? "sev-high" : pain >= 5 ? "sev-mid" : "sev-low"}" title="Pain logged: ${pain}/10"></span>`
       : "";
     cells.push(
-      `<div class="cal-cell"><span class="cal-day"><span>${day}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
+      `<div class="cal-cell${inCurrentWeek(key) ? " cal-this-week" : ""}${key === todayKey ? " cal-today" : ""}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
     );
   }
   el("cal-grid").innerHTML = cells.join("");
@@ -114,6 +133,7 @@ function renderAgenda(
   painByDay: Map<string, number>,
 ): void {
   const rows: string[] = [];
+  const todayKey = ymd(new Date());
   for (let day = 1; day <= daysInMonth; day++) {
     const key = ymd(new Date(year, month, day));
     const ws = byDay.get(key) ?? [];
@@ -124,7 +144,7 @@ function renderAgenda(
       : "";
     const items = ws
       .map(
-        (w) => `<li><button type="button" class="agenda-row chip-${w.kind}" data-event-index="${monthEvents.indexOf(w)}">
+        (w) => `<li><button type="button" class="agenda-row chip-${w.kind}${w.activityId != null ? " chip-done" : ""}" data-event-index="${monthEvents.indexOf(w)}">
           <span class="agenda-kind">${KIND_LABEL[w.kind] ?? w.kind}</span>
           <span class="agenda-title">${escapeHtml(w.title)}</span>
           <span class="agenda-meta">${w.distanceM ? `${(w.distanceM / 1000).toFixed(1)} km` : ""}${w.distanceM && w.durationMin ? " · " : ""}${w.durationMin ? `${Math.round(w.durationMin)} min` : ""}</span>
@@ -133,7 +153,7 @@ function renderAgenda(
       .join("");
     const weekday = new Date(year, month, day).toLocaleDateString(undefined, { weekday: "short" });
     rows.push(
-      `<div class="agenda-day"><h3 class="agenda-date"><span>${day}</span> ${weekday}${painDot}</h3><ul class="agenda-list">${items}</ul></div>`,
+      `<div class="agenda-day${key === todayKey ? " agenda-today" : ""}"><h3 class="agenda-date"><span>${day}</span> ${weekday}${painDot}</h3><ul class="agenda-list">${items}</ul></div>`,
     );
   }
   el("cal-agenda").innerHTML = rows.length
@@ -151,91 +171,68 @@ function renderLegend(): void {
     legend.className = "muted heatmap-legend";
     el("cal-grid").after(legend);
   }
-  const kinds = ["easy", "tempo", "intervals", "longRun", "race", "completed"]
+  const kinds = ["easy", "tempo", "intervals", "longRun", "race"]
     .map((k) => `<span class="chip chip-${k}">${KIND_LABEL[k]}</span>`)
     .join(" ");
-  legend.innerHTML = `${kinds} · <span class="cal-pain sev-mid" aria-hidden="true"></span> pain logged that day`;
+  legend.innerHTML = kinds;
 }
 
-async function refreshIcs(): Promise<void> {
-  const button = el<HTMLButtonElement>("ics-regenerate");
-  button.disabled = true;
-  try {
-    el("ics-path").textContent = await tauri.icsPath();
-    showPublishing(await tauri.calendarPublishing());
-    await renderMonth();
-  } catch (e) {
-    if (!inTauri) {
-      el("ics-path").textContent = "Available in the desktop app.";
-      el("publish-status").textContent = "Publishing is available in the desktop app.";
-    }
-    else el("publish-status").textContent = String(e);
-  } finally { button.disabled = false; }
-}
+function initDragAndDrop(): void {
+  const grid = el("cal-grid");
+  let dragged: CalendarEvent | null = null;
+  const clearTargets = () =>
+    grid.querySelectorAll(".drop-target").forEach((cell) => cell.classList.remove("drop-target"));
+  const targetCell = (event: DragEvent) => {
+    const cell = (event.target as Element).closest<HTMLElement>(".cal-cell[data-date]");
+    return cell && dragged && inCurrentWeek(cell.dataset.date!) ? cell : null;
+  };
 
-function showPublishing(config: CalendarPublishing): void {
-  publishing = config;
-  el<HTMLInputElement>("calendar-enabled").checked = config.enabled;
-  el<HTMLInputElement>("calendar-upload-url").value = config.uploadUrl;
-  el<HTMLInputElement>("calendar-read-url").value = config.subscriptionUrl;
-  el<HTMLInputElement>("calendar-username").value = config.username;
-  el<HTMLInputElement>("calendar-password").placeholder = config.hasPassword ? "Saved in Keychain" : "Password or bearer token";
-  el<HTMLInputElement>("calendar-subscription-url").value = config.subscriptionUrl;
-  const ready = !!config.lastPublished && !!config.subscriptionUrl;
-  el<HTMLButtonElement>("calendar-copy").disabled = !ready;
-  el<HTMLButtonElement>("calendar-subscribe").disabled = !ready;
-  el("publish-status").textContent = config.lastError
-    ? `${config.lastError}. Local calendar is up to date.`
-    : !config.enabled
-      ? "Remote publishing is off."
-      : config.lastPublished
-        ? `Published ${new Date(config.lastPublished).toLocaleString()}`
-        : "Not yet published.";
-  el("publish-status").classList.toggle("error", !!config.lastError);
-}
-
-function initPublishing(): void {
-  el("calendar-publishing-form").addEventListener("submit", async (event) => {
+  grid.addEventListener("dragstart", (event) => {
+    const chip = (event.target as Element).closest<HTMLElement>(".workout-chip.movable");
+    const selected = chip ? monthEvents[Number(chip.dataset.eventIndex)] : null;
+    if (!chip || !selected || !event.dataTransfer) return;
+    dragged = selected;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", selected.workoutId!);
+    chip.classList.add("dragging");
+    grid.classList.add("is-dragging");
+  });
+  grid.addEventListener("dragend", () => {
+    dragged = null;
+    clearTargets();
+    grid.classList.remove("is-dragging");
+    grid.querySelectorAll(".dragging").forEach((chip) => chip.classList.remove("dragging"));
+  });
+  grid.addEventListener("dragover", (event) => {
+    const cell = targetCell(event);
+    if (!cell) return;
     event.preventDefault();
-    const button = el<HTMLButtonElement>("calendar-save");
-    button.disabled = true;
-    el("publish-status").textContent = "Saving calendar settings...";
-    const password = el<HTMLInputElement>("calendar-password");
-    const clear = el<HTMLInputElement>("calendar-clear-password");
-    try {
-      const config: CalendarPublishing = {
-        enabled: el<HTMLInputElement>("calendar-enabled").checked,
-        uploadUrl: el<HTMLInputElement>("calendar-upload-url").value.trim(),
-        subscriptionUrl: el<HTMLInputElement>("calendar-read-url").value.trim(),
-        username: el<HTMLInputElement>("calendar-username").value.trim(),
-        hasPassword: false, lastPublished: null, lastError: null,
-      };
-      const secret = clear.checked ? "" : password.value || null;
-      showPublishing(await tauri.saveCalendarPublishing(config, secret));
-      password.value = "";
-      clear.checked = false;
-      await renderMonth();
-    } catch (error) { el("publish-status").textContent = String(error); }
-    finally { button.disabled = false; }
-  });
-  el("calendar-copy").addEventListener("click", async () => {
-    if (!publishing?.subscriptionUrl) return;
-    try {
-      await navigator.clipboard.writeText(publishing.subscriptionUrl);
-      el("publish-status").textContent = "Subscription URL copied.";
-    } catch { el("publish-status").textContent = "Clipboard unavailable. Select the subscription URL to copy it."; }
-  });
-  el("calendar-subscribe").addEventListener("click", () => {
-    if (publishing?.subscriptionUrl) {
-      void openUrl(publishing.subscriptionUrl.replace(/^https:/, "webcal:")).catch(fail);
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    if (!cell.classList.contains("drop-target")) {
+      clearTargets();
+      cell.classList.add("drop-target");
     }
+  });
+  grid.addEventListener("drop", (event) => {
+    const cell = targetCell(event);
+    const workout = dragged;
+    clearTargets();
+    if (!cell || !workout) return;
+    event.preventDefault();
+    const date = cell.dataset.date!;
+    if (date === workout.date) return;
+    tauri
+      .moveWorkout(workout.workoutId!, date)
+      // Re-renders the grid; the Settings pane picks up the new publish time.
+      .then(() => window.dispatchEvent(new CustomEvent("runalytics:calendar-updated")))
+      .catch(fail);
   });
 }
 
 async function main(): Promise<void> {
   hydrateIcons();
   initSyncIndicator();
-  initPublishing();
+  initDragAndDrop();
   // One delegated listener covers both views: the grid's chips and the
   // agenda's rows carry the same data-event-index into the same array.
   el("calendar").addEventListener("click", (event) => {
@@ -246,7 +243,6 @@ async function main(): Promise<void> {
   for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
     window.addEventListener(event, () => {
       void renderMonth().catch(fail);
-      void tauri.calendarPublishing().then(showPublishing).catch(fail);
     });
   }
   try {
@@ -259,7 +255,6 @@ async function main(): Promise<void> {
       fail(e);
     }
   }
-  void refreshIcs();
 
   el("cal-prev").addEventListener("click", () => {
     cursor.setMonth(cursor.getMonth() - 1);
@@ -268,22 +263,6 @@ async function main(): Promise<void> {
   el("cal-next").addEventListener("click", () => {
     cursor.setMonth(cursor.getMonth() + 1);
     renderMonth("next").catch(fail);
-  });
-  el("ics-regenerate").addEventListener("click", refreshIcs);
-  el("ics-reveal").addEventListener("click", async () => {
-    const path = el("ics-path").textContent;
-    if (!path) return;
-    if (!inTauri) {
-      alert("Reveal is only available in the desktop app.");
-      return;
-    }
-    try {
-      await revealItemInDir(path);
-    } catch {
-      // Fall back to showing the folder in a browser-style listing is not
-      // possible; open the parent directory path as a last resort.
-      await openUrl(`file://${path.split("/").slice(0, -1).join("/")}`).catch(fail);
-    }
   });
 }
 

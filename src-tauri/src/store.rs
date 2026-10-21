@@ -211,6 +211,62 @@ const MIGRATIONS: &[(u32, &str)] = &[
     );
     "#,
     ),
+    (
+        6,
+        r#"
+    CREATE TABLE IF NOT EXISTS activity_scores (
+        activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+        load REAL,
+        risk INTEGER NOT NULL
+    );
+    "#,
+    ),
+    (
+        7,
+        r#"
+    -- The run-score snapshots are a derived cache: every one is recomputed
+    -- from the run's own history by the next calendar refresh. The risk model
+    -- gained the recent-sessions pressure (every run now moves the number,
+    -- not just the excess over a comfortable week), so the frozen values —
+    -- all computed by the old model, which pinned healthy runners at the 10
+    -- floor — are cleared here and backfilled fresh on first refresh.
+    DROP TABLE IF EXISTS activity_scores;
+    CREATE TABLE activity_scores (
+        activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+        load REAL,
+        risk INTEGER NOT NULL
+    );
+    "#,
+    ),
+    (
+        8,
+        r#"
+    -- The risk delta changes meaning: from "change against the previous run's
+    -- snapshot" (which compared two frozen days and said nothing about what
+    -- the run itself cost) to "risk with this session minus risk without it"
+    -- — the run's own impact, which is what the calendar and plan print.
+    -- The rows are a derived cache, so they are cleared and recomputed with
+    -- the new column on the next refresh.
+    DROP TABLE IF EXISTS activity_scores;
+    CREATE TABLE activity_scores (
+        activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+        load REAL,
+        risk INTEGER NOT NULL,
+        risk_delta INTEGER NOT NULL DEFAULT 0
+    );
+    "#,
+    ),
+    (
+        9,
+        r#"
+    -- The snapshot's risk becomes the dashboard's *blended* headline as of
+    -- the run's day (point-in-time formula averaged with the factor sum),
+    -- instead of the factor-sum half alone — which is why a description
+    -- could say 15% while the dashboard showed 12% for the same day. The
+    -- cache is derived, so it is cleared and recomputed on first refresh.
+    DELETE FROM activity_scores;
+    "#,
+    ),
 ];
 
 /// `ALTER TABLE ... ADD COLUMN` for a column that a migration gained *after*
@@ -873,6 +929,58 @@ impl Store {
             params![workout_id],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_completion_notes(&self, workout_id: &str, notes: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE calendar_completions SET original_notes=?2 WHERE workout_id=?1",
+            params![workout_id, notes],
+        )?;
+        Ok(())
+    }
+
+    // ---- run score snapshots ----------------------------------------------
+
+    /// Every stored run snapshot, oldest run first — the order the calendar
+    /// needs to look a snapshot up by activity. The 4th element is the run's
+    /// own risk impact: risk with the session minus risk without it.
+    pub fn activity_scores(
+        &self,
+    ) -> Result<Vec<(i64, Option<f64>, u32, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT s.activity_id, s.load, s.risk, s.risk_delta
+             FROM activity_scores s JOIN activities a ON a.id = s.activity_id
+             ORDER BY a.start_ts",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, i64>(2)? as u32,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Record a run's snapshot once; a later refresh never overwrites it, so
+    /// the calendar keeps saying what the numbers were when the run landed
+    /// rather than what a later health sync would make them look like.
+    pub fn insert_activity_score(
+        &self,
+        activity_id: i64,
+        load: Option<f64>,
+        risk: u32,
+        risk_delta: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO activity_scores (activity_id, load, risk, risk_delta) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(activity_id) DO NOTHING",
+            params![activity_id, load, risk as i64, risk_delta],
+        )?;
         Ok(())
     }
 
@@ -1878,6 +1986,40 @@ impl Store {
             |r| r.get(0),
         )?;
         Ok(total.unwrap_or(0.0))
+    }
+
+    /// Run activities started within `[from_ts, to_ts)` (unix seconds),
+    /// oldest first. Feeds the recent-sessions risk factor, which weighs each
+    /// of the last week's runs by its own intensity — so it needs the per-run
+    /// HR and pace columns, not just the distance sum.
+    pub fn runs_between(&self, from_ts: i64, to_ts: i64) -> Result<Vec<Activity>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            &format!(
+                "SELECT id, provider, provider_record_id, sport, start_ts, duration_s,
+                        distance_m, avg_hr, max_hr, avg_pace_s_km, elevation_gain_m
+                 FROM activities
+                 WHERE {RUN_SQL} AND start_ts >= ?1 AND start_ts < ?2
+                 ORDER BY start_ts"
+            ),
+        )?;
+        let rows = stmt.query_map(params![from_ts, to_ts], |r| {
+            Ok(Activity {
+                id: r.get(0)?,
+                provider: provider_from(&r.get::<_, String>(1)?),
+                provider_record_id: r.get(2)?,
+                sport: r.get(3)?,
+                start_time: ts_to_dt(r.get::<_, i64>(4)?),
+                duration_s: r.get(5)?,
+                distance_m: r.get(6)?,
+                avg_hr: r.get(7)?,
+                max_hr: r.get(8)?,
+                avg_pace_s_km: r.get(9)?,
+                elevation_gain_m: r.get(10)?,
+                has_track: false,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     /// Health records in `[from_day, to_day]`, newest first.

@@ -85,7 +85,7 @@ function renderStreaks(s: GamificationStats): void {
     // streak it keeps alive is an activity streak. Distance may not join them.
     statCard(icons.watch, statValue(s.totalHours, 0, " h"), "time training"),
     s.crossSessions > 0
-      ? statCard(icons.bike, statValue(s.crossHours, 0, " h"), "cross-training")
+      ? statCard(icons.dumbbell, statValue(s.crossHours, 0, " h"), "cross-training")
       : "",
   ].join("");
   if (!hasRendered) countUp(el("streak-stats"));

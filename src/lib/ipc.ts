@@ -16,6 +16,7 @@ import type {
   PlanWorkout,
   ProviderKind,
   ProviderStatus,
+  RunScore,
   Settings,
   SyncReport,
   TimeRange,
@@ -71,6 +72,7 @@ export const tauri = {
   activityDetail: (activityId: number, range: TimeRange) =>
     call<ActivityDetail>("activity_detail", { activityId, range }),
   allActivities: () => call<Activity[]>("all_activities"),
+  runScores: () => call<RunScore[]>("run_scores"),
   createPlan: (request: PlanRequest) =>
     call<[TrainingPlan, PlanWorkout[]]>("create_plan", { request }),
   planDefaults: () => call<PlanDefaults>("plan_defaults"),
@@ -82,6 +84,7 @@ export const tauri = {
   workoutsBetween: (from: string, to: string) =>
     call<PlanWorkout[]>("workouts_between", { from, to }),
   icsPath: () => call<string>("ics_path"),
+  publishCalendar: () => call<string>("publish_calendar"),
   calendarEvents: (from: string, to: string) =>
     call<CalendarEvent[]>("calendar_events", { from, to }),
   calendarPublishing: () => call<CalendarPublishing>("calendar_publishing"),
@@ -89,6 +92,8 @@ export const tauri = {
     call<CalendarPublishing>("save_calendar_publishing", { config, password }),
   matchCalendarActivity: (workoutId: string, activityId: number) =>
     call<void>("match_calendar_activity", { workoutId, activityId }),
+  moveWorkout: (workoutId: string, date: string) =>
+    call<void>("move_workout", { workoutId, date }),
   getSettings: () => call<Settings>("get_settings"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
   // ---- injury journal ----

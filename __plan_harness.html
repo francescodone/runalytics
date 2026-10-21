@@ -137,6 +137,17 @@
           switch (cmd) {
             case "current_plan":
               return [plan, workouts];
+            case "run_scores":
+              // A few done sessions carry a risk delta; the rest (and every
+              // future week) render without a badge, which is the real
+              // backend's normal state for runs whose risk did not move.
+              return [
+                { activityId: 1, workoutId: "w-6-tempo", load: 1.2, risk: 34, riskDelta: 5 },
+                { activityId: 2, workoutId: "w-6-longRun", load: 1.35, risk: 31, riskDelta: -3 },
+                { activityId: 3, workoutId: "w-5-tempo", load: 1.4, risk: 38, riskDelta: 7 },
+                { activityId: 4, workoutId: "w-0-easy", load: 1.1, risk: 29, riskDelta: 1 },
+                { activityId: 5, workoutId: "w-0-tempo", load: 1.25, risk: 33, riskDelta: 4 },
+              ];
             case "pacing_report":
               return makeReport();
             case "pending_pacing_proposal":

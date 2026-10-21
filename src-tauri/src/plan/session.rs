@@ -1,14 +1,19 @@
 use serde::Serialize;
 
+use super::engine::Phase;
 use crate::types::{PlanKind, PlanWorkout, RaceDistance, TrainingPlan, WorkoutKind};
 use chrono::{Datelike, NaiveDate};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum QualityPattern {
     Repeats(u32),
     Continuous,
     Cruise,
     Progressive,
+    /// Over/unders: reps at 10K pace floated at marathon pace, never stopping.
+    Rolling(u32),
+    /// Descending 3:2:1 blocks from just slower than threshold to 10K pace.
+    Ladder,
 }
 
 impl QualityPattern {
@@ -26,6 +31,10 @@ impl QualityPattern {
             Self::Repeats(metres) => {
                 let race_m = if metres <= 1000 { 5000.0 } else { 10_000.0 };
                 let pace = super::engine::race_pace_s_km(threshold, race_m);
+                ((pace - 5.0).round() as i64, (pace + 5.0).round() as i64)
+            }
+            Self::Rolling(_) => {
+                let pace = super::engine::race_pace_s_km(threshold, 10_000.0);
                 ((pace - 5.0).round() as i64, (pace + 5.0).round() as i64)
             }
             _ => super::engine::tempo_s_km(threshold),
@@ -48,42 +57,350 @@ impl QualityPattern {
     }
 }
 
-pub(super) fn quality_pattern(
+/// The quality sessions a plan week can hold: one threshold-family and one
+/// speed-family pattern. A week runs `single` when it has one quality day and
+/// both (`emphasis` first) when it has two. Because each kind maps to exactly
+/// one pattern per week, a session is reconstructed from its kind alone.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct WeekQuality {
+    pub threshold: QualityPattern,
+    pub speed: QualityPattern,
+    pub single: QualityPattern,
+    pub emphasis: QualityPattern,
+}
+
+impl WeekQuality {
+    pub(super) fn for_kind(self, kind: WorkoutKind) -> QualityPattern {
+        if kind == WorkoutKind::Intervals {
+            self.speed
+        } else {
+            self.threshold
+        }
+    }
+
+    pub(super) fn other(self, pattern: QualityPattern) -> QualityPattern {
+        if pattern.kind() == WorkoutKind::Intervals {
+            self.threshold
+        } else {
+            self.speed
+        }
+    }
+}
+
+/// Periodised session choice (Pfitzinger's mesocycles; Casado et al. 2022):
+/// - Base: aerobic foundation — progressive/steady threshold-lite running with
+///   an occasional set of 400s to keep leg speed.
+/// - Build: lactate threshold (cruise, ladders, over/unders) alongside VO2max
+///   reps of 400-1000 m, alternating when there is one quality day.
+/// - Peak: race-specific — long threshold for 21K/42K, 600-1600 m reps for
+///   5K/10K — with the other family every third session.
+/// - Taper: short sharpening reps.
+pub(super) fn week_quality(
     kind: PlanKind,
     distance: RaceDistance,
     week: usize,
     weeks: usize,
-) -> QualityPattern {
+) -> WeekQuality {
     use QualityPattern::*;
     let index = week - week / 4;
     // The closing weeks of a build narrow to short repeats: sharpening into a
     // race, and sharpening into an improvement block's time trial. A
     // maintenance block has neither, so it keeps rotating the full mix —
     // otherwise week 7 of a held block would look like a taper it isn't in.
-    if kind.has_race() || kind == PlanKind::Improvement {
-        if weeks.saturating_sub(week) <= 2 {
-            return Repeats(400);
+    if (kind.has_race() || kind == PlanKind::Improvement) && weeks.saturating_sub(week) <= 2 {
+        return WeekQuality {
+            threshold: Cruise,
+            speed: Repeats(400),
+            single: Repeats(400),
+            emphasis: Repeats(400),
+        };
+    }
+    let long_race = matches!(distance, RaceDistance::K21 | RaceDistance::K42);
+    // (threshold list, speed list, speed leads, minority every third slot)
+    let (thresholds, speeds, speed_led, every_third): (&[QualityPattern], &[QualityPattern], _, _) =
+        match super::engine::phase_at(kind, distance, weeks, week) {
+            Phase::Base => (
+                &[Progressive, Rolling(400), Continuous],
+                &[Repeats(400)],
+                false,
+                true,
+            ),
+            Phase::Build => (
+                &[Cruise, Ladder, Continuous, Rolling(1000)],
+                &[Repeats(400), Repeats(800), Repeats(600), Repeats(1000)],
+                !long_race,
+                false,
+            ),
+            Phase::Peak | Phase::Taper if long_race => (
+                &[Continuous, Cruise, Ladder, Progressive],
+                &[Repeats(1000), Repeats(1600), Repeats(600)],
+                false,
+                true,
+            ),
+            Phase::Peak | Phase::Taper => (
+                &[Cruise, Rolling(400), Ladder],
+                &[Repeats(1000), Repeats(600), Repeats(800), Repeats(400)],
+                true,
+                true,
+            ),
+        };
+    let minority = if every_third {
+        index % 3 == 2
+    } else {
+        index % 2 == 1
+    };
+    // Ordinal of each family's sessions so far, so each list rotates in full.
+    let minority_n = if every_third { index / 3 } else { index / 2 };
+    let majority_n = index - minority_n;
+    let (threshold_n, speed_n) = if speed_led {
+        (minority_n, majority_n)
+    } else {
+        (majority_n, minority_n)
+    };
+    let threshold = thresholds[threshold_n % thresholds.len()];
+    let speed = speeds[speed_n % speeds.len()];
+    WeekQuality {
+        threshold,
+        speed,
+        single: if speed_led != minority {
+            speed
+        } else {
+            threshold
+        },
+        emphasis: if speed_led { speed } else { threshold },
+    }
+}
+
+/// How a week's long run is run. Only 21K/42K long runs carry race-pace work
+/// (Pfitzinger's marathon-pace long runs; both reference builds ran MP blocks
+/// and fast finishes in the final two months).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LongRunPattern {
+    Easy,
+    /// Last ~20 % at race pace (cap 6 km).
+    ShortFinish,
+    /// Last ~25 % at race pace (cap 12 km).
+    LongFinish,
+    /// Two race-pace blocks split by an easy float.
+    RaceBlocks,
+    /// Half-marathon effort two weeks out, as both builds raced one.
+    TuneUp,
+}
+
+impl LongRunPattern {
+    /// A long race-pace segment makes the long run the week's second hard
+    /// day; a short fast finish is a light touch that still leaves room.
+    pub(super) fn is_hard(self) -> bool {
+        !matches!(self, Self::Easy | Self::ShortFinish)
+    }
+}
+
+pub(super) fn long_run_pattern(
+    kind: PlanKind,
+    distance: RaceDistance,
+    week: usize,
+    weeks: usize,
+) -> LongRunPattern {
+    use LongRunPattern::*;
+    if !matches!(distance, RaceDistance::K21 | RaceDistance::K42) {
+        return Easy;
+    }
+    let weeks_to_race = weeks.saturating_sub(week + 1);
+    if kind.has_race() && distance == RaceDistance::K42 && weeks >= 10 && weeks_to_race == 2 {
+        return TuneUp;
+    }
+    if (week + 1) % 4 == 0 {
+        return Easy;
+    }
+    let index = week - week / 4;
+    match super::engine::phase_at(kind, distance, weeks, week) {
+        Phase::Base | Phase::Taper => Easy,
+        Phase::Build => [Easy, ShortFinish][index % 2],
+        Phase::Peak if distance == RaceDistance::K42 => [LongFinish, Easy, RaceBlocks][index % 3],
+        Phase::Peak => [LongFinish, Easy, ShortFinish][index % 3],
+    }
+}
+
+/// Steps of a long run: easy throughout, or with race-pace segments. Each
+/// segment is rounded to 500 m and the easy running absorbs the remainder, so
+/// the steps always sum to `distance_m`.
+pub(super) fn long_run_steps(
+    distance_m: f64,
+    pattern: LongRunPattern,
+    threshold: f64,
+    race: RaceDistance,
+) -> Vec<WorkoutStep> {
+    let easy = super::engine::easy_pace_s_km(threshold);
+    let easy: Band = (Some(easy.0), Some(easy.1));
+    let around = |pace: f64| -> Band {
+        (
+            Some((pace - 6.0).round() as i64),
+            Some((pace + 6.0).round() as i64),
+        )
+    };
+    let half = around(super::engine::race_pace_s_km(
+        threshold,
+        RaceDistance::K21.distance_m(),
+    ));
+    let race_band = if race == RaceDistance::K42 {
+        let mp = super::engine::mp_s_km(threshold);
+        (Some(mp.0), Some(mp.1))
+    } else {
+        half
+    };
+    let round = |m: f64| (m / 500.0).floor() * 500.0;
+    let easy_step = |label: &str, metres: f64| open(step(label, metres, easy));
+    let plain = || vec![easy_step("Long run - easy", distance_m)];
+    let finish = |share: f64, cap: f64| {
+        let fast = round((share * distance_m).min(cap));
+        if fast < 2000.0 {
+            return plain();
+        }
+        vec![
+            easy_step("Long run - easy", distance_m - fast),
+            step("Long run - finish at race pace", fast, race_band),
+        ]
+    };
+    match pattern {
+        LongRunPattern::Easy => plain(),
+        LongRunPattern::ShortFinish => finish(0.2, 6000.0),
+        LongRunPattern::LongFinish => finish(0.25, 12_000.0),
+        LongRunPattern::RaceBlocks => {
+            let block = round((0.18 * distance_m).min(7000.0));
+            let float = 3000.0;
+            let rest = distance_m - 2.0 * block - float;
+            let warm = round(rest / 2.0);
+            if block < 3000.0 || warm < 3000.0 {
+                return finish(0.25, 12_000.0);
+            }
+            vec![
+                easy_step("Long run - easy", warm),
+                step("Long run - race-pace block", block, race_band),
+                easy_step("Long run - easy float", float),
+                step("Long run - race-pace block", block, race_band),
+                easy_step("Long run - easy", rest - warm),
+            ]
+        }
+        LongRunPattern::TuneUp => {
+            let warm = 3000.0;
+            let block = round((distance_m - 5000.0).min(14_000.0));
+            if block < 8000.0 {
+                return plain();
+            }
+            vec![
+                easy_step("Warm-up - easy jog", warm),
+                step("Tune-up - half-marathon effort", block, half),
+                easy_step("Cool-down - easy jog", distance_m - warm - block),
+            ]
         }
     }
-    if week >= weeks / 2 && matches!(distance, RaceDistance::K21 | RaceDistance::K42) {
-        [
-            Cruise,
-            Repeats(1000),
-            Progressive,
-            Continuous,
-            Repeats(1600),
-            Continuous,
-        ][index % 6]
-    } else {
-        [
-            Repeats(400),
-            Continuous,
-            Repeats(800),
-            Cruise,
-            Repeats(600),
-            Progressive,
-        ][index % 6]
+}
+
+/// Display title for a long run built from `steps`.
+pub(super) fn long_run_title(km: f64, steps: &[WorkoutStep]) -> String {
+    let fast: Vec<&WorkoutStep> = steps.iter().filter(|s| !s.label.contains("easy")).collect();
+    match fast.as_slice() {
+        [] => format!("Long run {km:.0} km"),
+        [one] if one.label.starts_with("Tune-up") => {
+            format!(
+                "Tune-up {km:.0} km — {:.1} km at half-marathon effort",
+                one.distance_m / 1000.0
+            )
+        }
+        [one] => format!(
+            "Long run {km:.0} km — last {:.1} km at race pace",
+            one.distance_m / 1000.0
+        ),
+        [first, ..] => format!(
+            "Long run {km:.0} km — {} x {:.1} km at race pace",
+            fast.len(),
+            first.distance_m / 1000.0
+        ),
     }
+}
+
+/// Separates a quality session's name from its structure: `Tempo Tapas · 4 x 1.5 km tempo`.
+pub const TITLE_SEP: &str = " · ";
+
+const QUARTER_NAMES: &[&str] = &["Quarter Pounders", "Hamster Wheel", "Oval Office", "Round and Round"];
+const HALF_NAMES: &[&str] = &["Pace Gremlins", "Two-Lap Tantrum", "Half-Mile Mood Swings", "Eight Hundred Ways to Wheeze"];
+const KILO_NAMES: &[&str] = &["Thousand-Metre Stare", "The Full Kilo", "Kilo Kickoff"];
+const MILE_NAMES: &[&str] = &["Big Rep Energy", "Mile Marker Madness", "The Long Reps Are Coming"];
+const ROLLING_NAMES: &[&str] = &["Seesaw Shuffle", "Yo-Yo Tempo", "Gear Grinder", "Wave Rider", "Pace Roulette"];
+const CRUISE_NAMES: &[&str] = &["Tempo Tapas", "Block Party", "Cruise Control", "Threshold Buffet"];
+const LADDER_NAMES: &[&str] = &["Stairway to Tempo", "Countdown Crew", "Staircase Shuffle", "Down the Rabbit Hole"];
+const PROGRESSIVE_NAMES: &[&str] = &["Slow Burn", "Dimmer Switch", "Negative Nelly", "Turn It Up"];
+const CONTINUOUS_NAMES: &[&str] = &["Hold My Tempo", "Metronome Mode", "Straight Talk", "The Grind Stone"];
+
+/// Display title for a quality session of `pattern` built into `details`: a
+/// name picked by `seed` (the plan week, so repeats of a pattern rotate)
+/// followed by the structure.
+pub(super) fn quality_title(
+    pattern: QualityPattern,
+    details: &WorkoutDetails,
+    seed: usize,
+) -> String {
+    if details.steps.len() < 3 {
+        return "Easy run - reduced session".into();
+    }
+    let main = &details.steps[1..details.steps.len() - 1];
+    let first = &main[0];
+    let work_km: f64 = main
+        .iter()
+        .map(|s| s.distance_m * s.repeats as f64)
+        .sum::<f64>()
+        / 1000.0;
+    let (names, structure) = match pattern {
+        QualityPattern::Repeats(_) => (
+            match first.distance_m {
+                m if m <= 500.0 => QUARTER_NAMES,
+                m if m <= 900.0 => HALF_NAMES,
+                m if m <= 1200.0 => KILO_NAMES,
+                _ => MILE_NAMES,
+            },
+            format!("{} x {:.0} m", first.repeats, first.distance_m),
+        ),
+        QualityPattern::Rolling(_) if first.repeats > 1 => (
+            ROLLING_NAMES,
+            format!("{} x {:.0} m over/unders", first.repeats, first.distance_m),
+        ),
+        QualityPattern::Cruise if first.repeats > 1 => (
+            CRUISE_NAMES,
+            format!("{} x {:.1} km tempo", first.repeats, first.distance_m / 1000.0),
+        ),
+        QualityPattern::Ladder if main.len() == 3 => (
+            LADDER_NAMES,
+            format!(
+                "{:.1}/{:.1}/{:.1} km ladder",
+                main[0].distance_m / 1000.0,
+                main[1].distance_m / 1000.0,
+                main[2].distance_m / 1000.0
+            ),
+        ),
+        QualityPattern::Progressive if main.len() > 1 => (
+            PROGRESSIVE_NAMES,
+            format!("{work_km:.1} km progressive tempo"),
+        ),
+        _ => (CONTINUOUS_NAMES, format!("{work_km:.1} km tempo")),
+    };
+    format!("{}{TITLE_SEP}{structure}", names[seed % names.len()])
+}
+
+/// The new-style title for a quality session still carrying the old plain
+/// one, or `None` when there is nothing to rename.
+pub fn title_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> Option<String> {
+    if !matches!(workout.kind, WorkoutKind::Intervals | WorkoutKind::Tempo)
+        || workout.title.contains(TITLE_SEP)
+    {
+        return None;
+    }
+    let details = details_for_plan(workout, plan);
+    if details.steps.len() < 3 {
+        return None;
+    }
+    let (weeks, week) = plan_week(plan, workout);
+    let pattern = week_quality(plan.kind, plan.distance, week, weeks).for_kind(workout.kind);
+    Some(quality_title(pattern, &details, week))
 }
 
 /// `(weeks, week)` — the plan's total week count and the zero-based plan week
@@ -143,7 +460,6 @@ pub fn quality_band(plan: &TrainingPlan, workout: &PlanWorkout) -> Option<(i64, 
 
 pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDetails {
     let (weeks, week) = plan_week(plan, workout);
-    let pattern = quality_pattern(plan.kind, plan.distance, week, weeks);
     // The plan's threshold sharpens week by week (engine::threshold_at); the
     // reconstruction must use the week's value, not the one the plan was
     // created with, or the sized main set no longer fits the workout and every
@@ -151,16 +467,43 @@ pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDe
     // block holds its threshold, which `threshold_at` reports as flat.
     let thr =
         super::engine::threshold_at(plan.kind, plan.distance, plan.threshold_sec_km, weeks, week);
-    if pattern.kind() == workout.kind {
-        build_details(
-            workout,
-            Some(thr),
-            pattern,
-            workout_load(plan, workout),
-            quality_offset_for(plan, workout.date),
-        )
-    } else {
-        details(workout, Some(thr))
+    match workout.kind {
+        WorkoutKind::Intervals | WorkoutKind::Tempo => {
+            let pattern =
+                week_quality(plan.kind, plan.distance, week, weeks).for_kind(workout.kind);
+            build_details(
+                workout,
+                Some(thr),
+                pattern,
+                workout_load(plan, workout),
+                quality_offset_for(plan, workout.date),
+            )
+        }
+        WorkoutKind::LongRun => {
+            let pattern = long_run_pattern(plan.kind, plan.distance, week, weeks);
+            let steps = long_run_steps(
+                workout.distance_m.unwrap_or(0.0).max(0.0),
+                pattern,
+                thr,
+                plan.distance,
+            );
+            let purpose = if pattern.is_hard() {
+                LONG_RUN_RACE_PURPOSE
+            } else {
+                LONG_RUN_PURPOSE
+            };
+            let steps = if workout.distance_m.unwrap_or(0.0) > 0.0 {
+                steps
+            } else {
+                Vec::new()
+            };
+            WorkoutDetails {
+                purpose: purpose.into(),
+                estimated_min: estimate_min(&steps, workout.duration_min),
+                steps,
+            }
+        }
+        _ => details(workout, Some(thr)),
     }
 }
 
@@ -175,6 +518,9 @@ pub struct WorkoutStep {
     pub recovery_m: f64,
     pub recovery_pace_lo_s_km: Option<i64>,
     pub recovery_pace_hi_s_km: Option<i64>,
+    /// Easy running: `pace_lo_s_km` is a floor and anything slower is fine.
+    /// `pace_hi_s_km` stays set only for the time and load maths.
+    pub open_ended: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,6 +562,26 @@ pub(super) fn step_load(step: &WorkoutStep, threshold: f64) -> f64 {
     minutes * (threshold / pace).powi(2)
 }
 
+/// Load of a main set. Recoveries count only when they are floats run faster
+/// than easy pace (over/unders); jog recoveries are rest, not work.
+pub(super) fn set_load(steps: &[WorkoutStep], threshold: f64) -> f64 {
+    steps
+        .iter()
+        .map(|s| {
+            let float = match (s.recovery_pace_lo_s_km, s.recovery_pace_hi_s_km) {
+                (Some(lo), Some(hi))
+                    if s.recovery_m > 0.0 && ((lo + hi) as f64 / 2.0) < threshold + 40.0 =>
+                {
+                    let metres = s.recovery_m * s.repeats.saturating_sub(1) as f64;
+                    step_load(&step("", metres, (Some(lo), Some(hi))), threshold)
+                }
+                _ => 0.0,
+            };
+            step_load(s, threshold) + float
+        })
+        .sum()
+}
+
 fn widen(low: i64, high: i64) -> Band {
     let midpoint = (low + high) / 2;
     (
@@ -244,7 +610,13 @@ fn step(label: &str, distance_m: f64, pace: Band) -> WorkoutStep {
         recovery_m: 0.0,
         recovery_pace_lo_s_km: None,
         recovery_pace_hi_s_km: None,
+        open_ended: false,
     }
+}
+
+fn open(mut step: WorkoutStep) -> WorkoutStep {
+    step.open_ended = true;
+    step
 }
 
 fn with_recovery(mut work: WorkoutStep, repeats: u32, recovery_m: f64, easy: Band) -> WorkoutStep {
@@ -287,7 +659,7 @@ fn main_set(
     offset: f64,
 ) -> Vec<WorkoutStep> {
     let thr = threshold.unwrap_or(300.0);
-    let load_of = |steps: &[WorkoutStep]| steps.iter().map(|s| step_load(s, thr)).sum::<f64>();
+    let load_of = |steps: &[WorkoutStep]| set_load(steps, thr);
     if let QualityPattern::Repeats(requested) = pattern {
         let rep_band = |metres: u32| {
             threshold
@@ -398,6 +770,76 @@ fn main_set(
             ));
             set
         }
+        QualityPattern::Ladder => {
+            let shifted = |offset: i64| (band.0.map(|p| p + offset), band.1.map(|p| p + offset));
+            let paces = [shifted(10), band, shifted(-8)];
+            // Load of a ladder whose shortest block is 100 m (300/200/100 m).
+            let unit: f64 = paces
+                .iter()
+                .zip([3.0, 2.0, 1.0])
+                .map(|(pace, k)| step_load(&step("", 100.0 * k, *pace), thr))
+                .sum();
+            let max_block = (cap_m(10.0) / 6.0 / 50.0).floor() * 50.0;
+            let block = ((target / unit * 2.0).round() * 50.0).min(max_block);
+            if block < 300.0 {
+                return continuous();
+            }
+            vec![
+                step("Tempo - ladder", 3.0 * block, paces[0]),
+                step("Tempo - ladder", 2.0 * block, paces[1]),
+                step("Tempo - ladder", block, paces[2]),
+            ]
+        }
+        QualityPattern::Rolling(metres) => {
+            let rep = metres as f64;
+            let float_band = match threshold {
+                Some(t) => {
+                    let mp = super::engine::mp_s_km(t);
+                    shift_band((Some(mp.0), Some(mp.1)), offset)
+                }
+                None => (band.0.map(|p| p + 20), band.1.map(|p| p + 20)),
+            };
+            let over = step_load(&step("", rep, band), thr);
+            let under = step_load(&step("", rep, float_band), thr);
+            let secs = |pace: Band| rep / 1000.0 * pace.1.unwrap_or(300) as f64;
+            let max_n = (2..=20_u32)
+                .take_while(|&n| {
+                    let n = n as f64;
+                    n * secs(band) + (n - 1.0) * secs(float_band) <= 30.0 * 60.0
+                        && (2.0 * n - 1.0) * rep <= available
+                })
+                .last();
+            let Some(max_n) = max_n else {
+                return continuous();
+            };
+            let n = ((target + under) / (over + under))
+                .round()
+                .clamp(2.0, max_n as f64);
+            // Whole pairs miss the target by up to half a pair; trim the rep
+            // length (50 m steps, ±25 %) to close it while staying in the caps.
+            let per_m = (n * over + (n - 1.0) * under) / rep;
+            let tuned = ((target / per_m) / 50.0).round() * 50.0;
+            let tuned = tuned.clamp(
+                (rep * 0.75 / 50.0).ceil() * 50.0,
+                (rep * 1.25 / 50.0).floor() * 50.0,
+            );
+            let fits = |m: f64| {
+                let scale = m / rep;
+                scale * (n * secs(band) + (n - 1.0) * secs(float_band)) <= 30.0 * 60.0
+                    && (2.0 * n - 1.0) * m <= available
+            };
+            let rep = if target.is_finite() && fits(tuned) {
+                tuned
+            } else {
+                rep
+            };
+            let work = step(
+                "Over/unders - fast, float between at marathon pace",
+                rep,
+                band,
+            );
+            vec![with_recovery(work, n as u32, rep, float_band)]
+        }
         _ => continuous(),
     }
 }
@@ -411,6 +853,21 @@ pub fn details(workout: &PlanWorkout, threshold: Option<f64>) -> WorkoutDetails 
     build_details(workout, threshold, pattern, None, 0.0)
 }
 
+const LONG_RUN_PURPOSE: &str = "Long, sustained aerobic running raises glycogen storage, capillary density and fatigue resistance, and conditions tendons and bones. Keep it conversational; ease off if the effort stops feeling sustainable.";
+const LONG_RUN_RACE_PURPOSE: &str = "Race-pace segments on pre-fatigued legs rehearse race-specific economy and pacing, while the easy running around them keeps the session aerobic and recovery manageable. Keep the easy parts truly easy so the fast parts are controlled and even.";
+
+fn quality_purpose(pattern: QualityPattern) -> &'static str {
+    match pattern {
+        QualityPattern::Repeats(metres) if metres <= 600 => "Short fast reps near VO2max pace recruit fast-twitch fibres and sharpen running economy and neuromuscular speed; brief jog recoveries let you repeat quality without lactate build-up. Keep the last rep as fast as the first.",
+        QualityPattern::Repeats(_) => "Reps at roughly 5-10K pace accumulate time close to VO2max, the strongest stimulus for aerobic power, while jog recoveries clear lactate so each rep stays quality. Hold the last rep as controlled as the first.",
+        QualityPattern::Cruise => "Cruise intervals (Daniels) accumulate more time at lactate-threshold pace than a single run could, with short jog recoveries to limit fatigue. This raises the pace you can sustain before blood lactate climbs steeply.",
+        QualityPattern::Progressive => "Progressive blocks climb from just below to threshold pace, training lactate clearance as fatigue accumulates and rehearsing negative-split pacing. Each block should feel controlled, not raced.",
+        QualityPattern::Ladder => "Descending blocks step from just slower than threshold toward 10K pace as they shorten, training threshold endurance and the ability to change gear on tired legs without extra load.",
+        QualityPattern::Rolling(_) => "Over/unders alternate efforts just above threshold with floats at marathon pace and no stopping, so you produce lactate and clear it while still running. This trains lactate clearance and the ability to recover mid-race.",
+        QualityPattern::Continuous => "A sustained run at lactate-threshold pace, about the effort you could hold for an hour, improves lactate clearance and the fraction of VO2max you can sustain. Stay even and finish without sprinting.",
+    }
+}
+
 fn build_details(
     workout: &PlanWorkout,
     threshold: Option<f64>,
@@ -419,11 +876,10 @@ fn build_details(
     offset: f64,
 ) -> WorkoutDetails {
     let purpose = match workout.kind {
-        WorkoutKind::Intervals => "Controlled fast repetitions with easy jog recoveries. Keep the final repetition as controlled as the first.",
-        WorkoutKind::Tempo => "Controlled threshold work, continuous or broken into blocks. Progress gradually and finish without sprinting.",
-        WorkoutKind::Easy => "Relaxed aerobic running at a conversational effort.",
-        WorkoutKind::LongRun => "Build endurance with a controlled sustained run. Ease off if the effort stops feeling sustainable.",
-        WorkoutKind::Race => "Race effort. Start at the slower end of the target range and settle into rhythm.",
+        WorkoutKind::Intervals | WorkoutKind::Tempo => quality_purpose(pattern),
+        WorkoutKind::Easy => "Easy aerobic running, below the first lactate threshold, builds mitochondrial density, capillary supply and fat oxidation with little mechanical and hormonal stress, so the hard days can stay hard. If you can't talk in full sentences, slow down.",
+        WorkoutKind::LongRun => LONG_RUN_PURPOSE,
+        WorkoutKind::Race => "Race effort: starting at the slower end of the target range conserves glycogen and delays lactate accumulation, and even pacing is the most economical way to cover the distance. Settle into rhythm before pushing.",
         WorkoutKind::Rest => "Rest day. No running prescribed.",
     }.to_string();
     let band = match (workout.pace_lo_s_km, workout.pace_hi_s_km) {
@@ -465,12 +921,12 @@ fn build_details(
                 });
             // Mileage beyond the main set lands in the warm-up; the cool-down stays fixed.
             let warmup = distance - COOLDOWN_M - steps_m(&main);
-            steps.push(step("Warm-up - easy jog", warmup, easy_band));
+            steps.push(open(step("Warm-up - easy jog", warmup, easy_band)));
             steps.extend(main);
-            steps.push(step("Cool-down - easy jog", COOLDOWN_M, easy_band));
+            steps.push(open(step("Cool-down - easy jog", COOLDOWN_M, easy_band)));
         } else {
             let short_quality = matches!(workout.kind, WorkoutKind::Intervals | WorkoutKind::Tempo);
-            steps.push(step(
+            let plain = step(
                 if short_quality {
                     "Easy run - reduced session"
                 } else {
@@ -478,33 +934,38 @@ fn build_details(
                 },
                 distance,
                 if short_quality { easy_band } else { band },
-            ));
+            );
+            let easy_run = short_quality
+                || matches!(workout.kind, WorkoutKind::Easy | WorkoutKind::LongRun);
+            steps.push(if easy_run { open(plain) } else { plain });
         }
     }
-    let estimated_min = if steps.is_empty() {
-        workout.duration_min
-    } else {
-        steps
-            .iter()
-            .map(|step| {
-                let pace = (step.pace_lo_s_km? + step.pace_hi_s_km?) as f64 / 2.0;
-                let running = step.distance_m * step.repeats as f64 / 1000.0 * pace;
-                let recovery = if step.recovery_m > 0.0 {
-                    let recovery_pace =
-                        (step.recovery_pace_lo_s_km? + step.recovery_pace_hi_s_km?) as f64 / 2.0;
-                    step.recovery_m * step.repeats.saturating_sub(1) as f64 / 1000.0 * recovery_pace
-                } else {
-                    0.0
-                };
-                Some((running + recovery) / 60.0)
-            })
-            .sum::<Option<f64>>()
-    };
     WorkoutDetails {
         purpose,
+        estimated_min: estimate_min(&steps, workout.duration_min),
         steps,
-        estimated_min,
     }
+}
+
+fn estimate_min(steps: &[WorkoutStep], fallback: Option<f64>) -> Option<f64> {
+    if steps.is_empty() {
+        return fallback;
+    }
+    steps
+        .iter()
+        .map(|step| {
+            let pace = (step.pace_lo_s_km? + step.pace_hi_s_km?) as f64 / 2.0;
+            let running = step.distance_m * step.repeats as f64 / 1000.0 * pace;
+            let recovery = if step.recovery_m > 0.0 {
+                let recovery_pace =
+                    (step.recovery_pace_lo_s_km? + step.recovery_pace_hi_s_km?) as f64 / 2.0;
+                step.recovery_m * step.repeats.saturating_sub(1) as f64 / 1000.0 * recovery_pace
+            } else {
+                0.0
+            };
+            Some((running + recovery) / 60.0)
+        })
+        .sum::<Option<f64>>()
 }
 
 #[cfg(test)]
@@ -542,21 +1003,23 @@ mod tests {
         }
         // Rep lengths of 800 m and up are trimmed to hit the load, so check families, not exact metres.
         assert!(
-            reps.len() >= 5,
+            reps.len() >= 3,
             "expected the rotation's rep lengths: {reps:?}"
         );
         assert_eq!(reps.first(), Some(&400));
-        assert!(reps.contains(&600));
-        assert!(reps.iter().any(|m| (700..=1000).contains(m)));
+        assert!(reps.iter().any(|m| (700..=1200).contains(m)));
         assert!(reps.iter().any(|m| *m >= 1300), "no long reps: {reps:?}");
-        assert_eq!(
-            tempos.len(),
-            3,
-            "expected continuous, cruise and progressive tempos: {tempos:?}"
+        assert!(
+            tempos.len() >= 4,
+            "expected continuous, cruise, progressive, ladder and over/under tempos: {tempos:?}"
         );
         let late: Vec<_> = (12..22)
             .filter(|week| (week + 1) % 4 != 0)
-            .map(|week| quality_pattern(PlanKind::Race, RaceDistance::K42, week, 24).kind())
+            .map(|week| {
+                week_quality(PlanKind::Race, RaceDistance::K42, week, 24)
+                    .single
+                    .kind()
+            })
             .collect();
         assert!(
             late.iter()
@@ -576,12 +1039,13 @@ mod tests {
         ] {
             for weeks in [3, 8, 16, 24] {
                 for threshold in [228.0, 285.0, 390.0] {
-                    for baseline in [10.0, 30.0, 65.0] {
-                        let (plan, workouts) = super::super::engine::generate(
-                            &request(distance, weeks, threshold, baseline),
-                            baseline,
-                        )
-                        .unwrap();
+                    for (baseline, frequency) in
+                        [(10.0, 4), (30.0, 4), (65.0, 4), (45.0, 5), (70.0, 6)]
+                    {
+                        let mut req = request(distance, weeks, threshold, baseline);
+                        req.weekly_frequency = frequency;
+                        let (plan, workouts) =
+                            super::super::engine::generate(&req, baseline).unwrap();
                         for workout in workouts {
                             let breakdown = details_for_plan(&workout, &plan);
                             assert!((breakdown.distance_m() - workout.distance_m.unwrap()).abs() < 0.01,
@@ -606,10 +1070,8 @@ mod tests {
                                 week,
                             );
                             let target = workout_load(&plan, &workout).unwrap();
-                            let load: f64 = breakdown.steps[1..breakdown.steps.len() - 1]
-                                .iter()
-                                .map(|step| step_load(step, thr_w))
-                                .sum();
+                            let load =
+                                set_load(&breakdown.steps[1..breakdown.steps.len() - 1], thr_w);
                             assert!(
                                 (load - target).abs() <= 0.1 * target,
                                 "{distance:?}, {weeks} weeks, threshold {threshold}, {baseline} km: {} load {load:.1} vs {target:.1}",
@@ -657,6 +1119,15 @@ mod tests {
                 }) {
                     let week = (workout.date - monday).num_days() / 7;
                     assert_ne!((week + 1) % 4, 0);
+                    // Hard days never touch: no quality session the day
+                    // before or after another one.
+                    for other in workouts.iter().filter(|other| {
+                        other.id != workout.id
+                            && matches!(other.kind, WorkoutKind::Intervals | WorkoutKind::Tempo)
+                    }) {
+                        assert!((workout.date - other.date).num_days().abs() >= 2,
+                            "frequency {frequency}, long-run day {longrun_day}: back-to-back quality {} and {}", workout.date, other.date);
+                    }
                     for long in workouts
                         .iter()
                         .filter(|other| other.kind == WorkoutKind::LongRun)

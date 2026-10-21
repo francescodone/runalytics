@@ -1,28 +1,57 @@
-/* Runalytics design system: neutral content, emerald data, translucent chrome.
-  Page sections are unframed; cards group individual repeated items.
-  Light/dark follow the saved appearance or OS preference. */
+/* Runalytics design system: paper/sheet layering, monochrome ink chrome,
+  emerald reserved for data. The chrome palette is the "paper" system —
+  a neutral canvas (--bg) under brighter sheets (--panel/--panel-2) under a
+  still-brighter fill (--fill) for control tracks. Chrome itself is ink:
+  primary actions and the active nav row are inverted ink pills, so colour
+  appears only where it carries meaning (charts, status, urgency).
+  Lines are hairline ink washes (alpha), not solid greys, so they sit on any
+  sheet without a per-scheme twin. Light/dark follow the saved appearance or
+  OS preference. */
+
+/* Geist, vendored: the app's voice — a grotesque with tight-fit figures that
+   keeps big metrics compact without a condensed cut. CSP is font-src 'self',
+   so the file ships with the bundle rather than loading from a CDN. */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/geist-latin.woff2") format("woff2");
+}
 
 :root {
   color-scheme: dark;
 
-  /* Neutral surfaces keep chart and status colours distinct. */
-  --bg: #141416;
-  --panel: #1e1e21;
-  --panel-2: #29292d;
-  --line: #353539;
-  --line-strong: #56565d;
+  /* Paper → sheet → fill: the three-layer neutral stack. Sheets are pure
+     neutral (no blue or green cast) so the emerald data never competes with
+     the canvas it sits on. */
+  --bg: #0a0a0a;
+  --panel: #171717;
+  --panel-2: #1e1e1e;
+  --fill: #262626;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.15);
 
-  --text: #f5f5f7;
-  --text-dim: #b8b8c0;
-  --text-faint: #9999a3;
+  --text: #e8e8e8;
+  --text-dim: #989898;
+  --text-faint: #828282;
+
+  /* Ink chrome: the inverted pair behind primary actions and the active nav
+     row. In the dark scheme ink is light (a white pill, dark text); on paper
+     it flips. This is the single "primary" of the interface — colour stays
+     out of the chrome so the data scale owns it. */
+  --primary: #e8e8e8;
+  --primary-text: #121212;
 
   --accent: #34d399;
   --accent-text: #04120c;
-  --accent-soft: rgba(52, 211, 153, 0.16);
+  --accent-soft: rgba(52, 211, 153, 0.14);
 
-  --good: #3ecf8e;
-  --warn: #e6b838;
-  --bad: #ff6b5e;
+  /* The urgency ramp: overdue → urgent → soon → done. Bright enough to sit
+     as text on the dark sheets and as a dot on any surface. */
+  --good: #4fb772;
+  --warn: #f4b93c;
+  --bad: #f4514f;
   /* Text placed on top of --bad fills (danger buttons), tuned per scheme. */
   --bad-text: #2a0803;
 
@@ -43,27 +72,31 @@
   --scale-4: #6ee7b7;
   --scale-5: #d1fae5;
 
-  /* Content, controls, overlays, and compact status labels. */
+  /* Content, controls, overlays, and compact status labels.
+     One concentric ladder: a control (10) sits inside a card (18) with a
+     16px inset, and an overlay (22) reads as the largest, closest surface. */
   --radius: 8px;
-  --radius-control: 8px;
-  --radius-lg: 12px;
-  --radius-overlay: 18px;
+  --radius-control: 10px;
+  --radius-lg: 18px;
+  --radius-overlay: 22px;
   --radius-pill: 999px;
 
   /* Three elevation roles, so a floating surface reads as floating no matter
      which page draws it. Content bands stay flat (a rule, not a shadow); only
-     chrome and overlays lift. Shadows are transparent so they sit on either
-     scheme without a light/dark twin. */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.22);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.4);
+     chrome and overlays lift. The light scheme carries its own lighter twin
+     of every shadow below. */
+  /* Soft and far: a floating sheet is lit from above by a 1px inset rim and
+     casts one wide, deep, negative-spread shadow — no hard 6px smudge. */
+  --shadow-sm: 0 12px 30px -16px rgba(0, 0, 0, 0.7);
+  --shadow-md: 0 18px 40px -24px rgba(0, 0, 0, 0.75);
+  --shadow-lg: inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 30px 70px -30px rgba(0, 0, 0, 0.85);
   /* The lift under a small floating control (map controls, carousel discs).
      Both used to hand-write their own near-identical shadow 2px apart, so the
      two floating glass controls in the same row sat at different heights. */
-  --shadow-float: 0 2px 10px rgba(0, 0, 0, 0.22);
-  /* The scrim behind every modal and sheet. Not rgba(0,0,0,x): a pure black
-     scrim goes grey-green over the emerald canvas, so it is tinted to match. */
-  --scrim: rgba(4, 10, 8, 0.45);
+  --shadow-float: 0 2px 10px rgba(0, 0, 0, 0.35);
+  /* The scrim behind every modal and sheet — neutral, since the canvas is. */
+  --scrim: rgba(0, 0, 0, 0.55);
 
   /* One spacing scale. Every gap and padding in the app picks a step here,
      so panels that hold the same kind of content breathe identically. */
@@ -91,7 +124,8 @@
   --split-readout: minmax(200px, 260px);
 
   /* One type voice and one motion vocabulary across every page. */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   /* Type scale. Body copy and controls sit on --text-md; labels step down
      once; metrics step up by size, never by ad-hoc pixel values. */
@@ -110,8 +144,10 @@
   --metric: 24px;
   --metric-lg: 38px;
   --metric-display: 64px;
-  /* The uppercase micro-label used by every tile, table head and kicker. */
-  --label-size: var(--text-xs);
+  /* The uppercase micro-label used by every tile, table head and kicker.
+     The paper system's label voice: sentence case at body-small, so labels
+     recede by colour and size, never by shouting. */
+  --label-size: var(--text-base);
   --label-track: 0;
 
   /* One control height so a button, input, select and stepper cell all
@@ -179,11 +215,10 @@
   /* Softer than --glass-blur: a card is wide, and a heavy blur on a wide
      panel smears the ambient glow into mush instead of reading as depth. */
   --glass-blur-soft: none;
-  /* Tinted glass for button fills (primary = accent, danger = red). */
-  --glass-accent: var(--accent);
+  /* Tinted glass for button fills (danger = red; primary is plain ink). */
   --glass-danger: var(--bad);
-  /* Hairline top highlight that sells the glass surface on buttons. */
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  /* Hairline top highlight that sells the raised surface on cards. */
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   /* The light behind the glass. Backdrop blur has nothing to diffuse over a
      flat fill, so translucency alone would look identical to solid — these
      low-alpha glows are what make every panel read as glass. */
@@ -205,25 +240,37 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Warm-neutral paper with the faintest green cast. Held a step darker
-     than pure white: glass only reads as glass when the canvas behind it is
-     darker than the panel, and paper this pale made every panel invisible. */
-  --bg: #f5f5f7;
-  --panel: #ffffff;
-  --panel-2: #ebebef;
-  --line: #dcdce1;
-  --line-strong: #a2a2ab;
+  /* The same paper → sheet → fill stack, inverted: the canvas is a mid grey
+     and the sheets climb toward white, so a card still reads as a raised
+     sheet rather than disappearing into the page. */
+  --bg: #e6e6e6;
+  --panel: #fdfdfd;
+  --panel-2: #f3f3f3;
+  --fill: #f0f0f0;
+  --line: rgba(15, 15, 15, 0.09);
+  --line-strong: rgba(15, 15, 15, 0.17);
 
-  --text: #1d1d1f;
-  --text-dim: #55555e;
-  --text-faint: #696973;
+  --text: #0f0f0f;
+  /* Dim/faint are pinned to clear 4.5:1 against the PAPER canvas, not just
+     the sheets — eyebrow labels sit directly on --bg, where Autocratico's
+     own mid-grey (4.4:1) would be a step short for 11px text. */
+  --text-dim: #5c5c5c;
+  --text-faint: #666666;
+
+  /* Ink flips: on paper the primary action is a dark pill with light text. */
+  --primary: #0f0f0f;
+  --primary-text: #fafafa;
 
   --accent: #047857;
   --accent-text: #ffffff;
   --accent-soft: rgba(4, 120, 87, 0.12);
 
-  --good: #0f8a5f;
-  --warn: #9a7500;
+  /* Darkened for the pale canvas: the dark-scheme amber lands at ~2:1 on
+     white and fails as text. Good and warn are pinned just above 4.5:1
+     against a sheet, because they carry chip and notice *labels* at 12px —
+     the Autocratico originals (4.28 / 4.20) were a hair short. */
+  --good: #0e8259;
+  --warn: #8f6c00;
   --bad: #cf3a2e;
   --bad-text: #ffffff;
 
@@ -243,13 +290,20 @@
   --glass-bg-2: color-mix(in srgb, var(--panel-2) 88%, transparent);
   --glass-surface: var(--panel);
   --glass-surface-2: var(--panel-2);
-  --glass-accent: var(--accent);
   --glass-danger: var(--bad);
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   /* On paper the same glows read as stains rather than light, so they stay
      below the dark-scheme values — but they still have to be strong enough
      to see *through* the glass, or the panels look plain white. */
   --ambient: none;
+
+  /* Soft and far, lightened: a black 0.85 shadow on paper reads as a bruise. */
+  --shadow-sm: 0 12px 30px -16px rgba(23, 23, 23, 0.35);
+  --shadow-md: 0 18px 40px -24px rgba(23, 23, 23, 0.4);
+  --shadow-lg: inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 30px 70px -30px rgba(23, 23, 23, 0.35);
+  --shadow-float: 0 2px 10px rgba(23, 23, 23, 0.22);
+  --scrim: rgba(20, 20, 20, 0.4);
 }
 
 /* Users who ask for less transparency get solid materials everywhere;
@@ -264,7 +318,6 @@
     --glass-bg-2: var(--panel-2);
     --glass-surface: var(--panel);
     --glass-surface-2: var(--panel-2);
-    --glass-accent: var(--accent);
     --glass-danger: var(--bad);
     --glass-blur: none;
     --glass-blur-soft: none;
@@ -344,10 +397,10 @@ html:has(dialog[open]) {
   left: 12px;
   top: -48px;
   z-index: 100;
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--primary);
+  color: var(--primary-text);
   padding: var(--space-3) var(--control-pad-x);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   text-decoration: none;
   font-weight: 600;
   transition: top var(--dur-med) var(--ease-out);
@@ -369,7 +422,10 @@ summary:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
-  border-radius: var(--radius);
+  /* No border-radius here: the outline follows the element's own radius, and
+     forcing one made focused controls visibly change shape (a 10px nav row
+     squaring to 8px under keyboard focus). The old pill-era override and its
+     compensating rules are gone for the same reason. */
 }
 
 /* A control packed edge-to-edge inside a container that clips (a bordered
@@ -383,14 +439,7 @@ summary:focus-visible,
   outline-offset: -3px;
 }
 
-/* Focus ring must follow the pill silhouette of the global button,
-   select and input shapes. */
-button:focus-visible,
-.btn:focus-visible,
-select:focus-visible,
-input:not([type="radio"]):not([type="checkbox"]):focus-visible {
-  border-radius: var(--radius-control);
-}
+
 
 /* ---- navigation ---- */
 
@@ -487,17 +536,26 @@ nav {
 
 .nav-link:hover {
   color: var(--text);
-  background: var(--glass-surface-2);
+  background: var(--fill);
 }
 
+/* The settings rail's rows press; the nav's identical-looking rows should
+   answer on press-down too, or the same material behaves two ways. */
+.nav-link:active {
+  transform: scale(var(--press-scale));
+}
+
+/* The active row is the inverted ink pill — the same material as a primary
+   button. Chrome stays monochrome so the green scale stays the only place
+   colour carries meaning. */
 .nav-link.active {
-  color: var(--text);
-  background: var(--accent-soft);
+  color: var(--primary-text);
+  background: var(--primary);
   font-weight: 600;
 }
 
 .nav-link.active .nav-icon {
-  color: var(--accent);
+  color: var(--primary-text);
 }
 
 .nav-link[href="settings.html"] {
@@ -582,7 +640,7 @@ nav {
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  background: var(--panel-2);
+  background: var(--fill);
 }
 
 .segmented.center {
@@ -599,7 +657,7 @@ nav {
   width: var(--seg-hover-w, 0px);
   height: var(--seg-hover-h, 0px);
   transform: translateX(var(--seg-hover-x, 0px));
-  border-radius: calc(var(--radius-control) - 2px);
+  border-radius: var(--radius);
   background: var(--seg-hover-fill);
   opacity: var(--seg-hover-opacity, 0);
   pointer-events: none;
@@ -619,9 +677,9 @@ nav {
   width: var(--seg-w, 0px);
   height: var(--seg-h, 0px);
   transform: translateX(var(--seg-x, 0px));
-  border-radius: calc(var(--radius-control) - 2px);
+  border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
   opacity: 0;
   pointer-events: none;
   transition-property: transform, width, height, opacity;
@@ -664,7 +722,7 @@ nav {
   font-weight: 600;
   min-height: var(--control-h-sm);
   padding: var(--space-2) var(--space-4);
-  border-radius: calc(var(--radius-control) - 2px);
+  border-radius: var(--radius);
   /* Colour travels with the pill (a label brightens as the fill reaches it),
      press physics stays snappy. */
   transition-property: color, transform;
@@ -702,7 +760,7 @@ nav {
    must not outshine the brand next to it. */
 .segmented.sm > button {
   font-size: var(--text-base);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0;
   padding: var(--space-1) var(--space-3);
 }
@@ -729,8 +787,10 @@ main {
 .page-header h1 {
   margin: 0;
   font-size: var(--text-3xl);
-  font-weight: 650;
-  letter-spacing: 0;
+  font-weight: 700;
+  /* The display voice: Geist at large sizes wants negative tracking — the
+     same tight-fit headline treatment as the rest of the paper system. */
+  letter-spacing: -0.03em;
 }
 
 .page-header time {
@@ -784,8 +844,8 @@ main {
     padding: var(--space-2);
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
     max-height: 65dvh;
     overflow-y: auto;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -863,7 +923,9 @@ h2 {
   font-size: var(--text-xl);
   font-weight: 600;
   text-transform: none;
-  letter-spacing: var(--label-track);
+  /* The reference's card/section headings carry a touch of negative
+     tracking even at 17px — Geist reads tighter than the system stack. */
+  letter-spacing: -0.02em;
   color: var(--text);
   margin: 0 0 var(--space-3);
   text-wrap: balance;
@@ -873,7 +935,7 @@ h2 {
 h3 {
   font-size: var(--text-xl);
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
   margin: 0 0 var(--space-3);
 }
 
@@ -903,7 +965,7 @@ form {
   backdrop-filter: var(--glass-blur-soft);
   -webkit-backdrop-filter: var(--glass-blur-soft);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: var(--surface-pad);
   box-shadow: var(--glass-rim);
 }
@@ -915,6 +977,9 @@ form {
   background: var(--glass-surface-2);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  /* A grid of small squares keeps the control radius — the card's 18 would
+     round a 68px cell into a lozenge. */
+  border-radius: var(--radius-control);
 }
 
 /* A notice: a surface with a coloured rule announcing status. One component
@@ -931,7 +996,7 @@ form {
   -webkit-backdrop-filter: var(--glass-blur-soft);
   border: 1px solid var(--line);
   border-left: 3px solid var(--text-faint);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: var(--surface-pad);
   font-size: var(--text-md);
   box-shadow: var(--glass-rim);
@@ -1000,13 +1065,16 @@ form {
   height: 34px;
 }
 
-/* The uppercase micro-label: table heads, tile captions, kickers. */
+/* The uppercase micro-label: table heads, tile captions, kickers.
+   The paper system's label voice is sentence case, not small caps: a quiet
+   13px mid-grey line under the value, the way the reference's column headers
+   and card subtitles read. Uppercasing was the old dashboard dialect. */
 .eyebrow {
   font-size: var(--label-size);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 500;
+  text-transform: none;
   letter-spacing: var(--label-track);
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 /* A row of actions. One gap and one wrap behaviour wherever buttons sit. */
@@ -1030,8 +1098,8 @@ form {
   display: block;
   width: 100%;
   height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--glass-surface-2);
+  border-radius: 0;
+  background: var(--fill);
   overflow: hidden;
   color: var(--accent);
 }
@@ -1179,8 +1247,6 @@ form {
    connection, but acting on it is the steps' job. */
 .setup-advanced-head {
   margin: var(--space-7) 0 0;
-  font-size: var(--text-lg);
-  letter-spacing: 0;
 }
 
 .setup-advanced-note {
@@ -1208,6 +1274,7 @@ form {
   background: var(--chart-surface);
   padding: var(--surface-pad-lg);
   border: 0;
+  border-radius: var(--radius-lg);
   box-shadow: 0 1px 0 var(--chart-rule), 0 -1px 0 var(--chart-rule);
 }
 
@@ -1414,7 +1481,9 @@ form {
   gap: var(--space-3);
   margin: 0;
   padding-block: var(--space-3);
-  font-size: var(--text-2xl);
+  /* Same section-title voice as every other page's h2 — the dashboard's
+     groups are section titles, and a second heading size for the same role
+     reads as two systems, not hierarchy. */
   color: var(--text);
 }
 
@@ -1575,7 +1644,7 @@ form {
   bottom: 0;
   left: 0;
   right: 0;
-  border-radius: 5px 5px 2px 2px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--scale-3) 55%, transparent);
   animation: grow-up var(--dur-fill) var(--ease-out) var(--delay-fill) backwards;
   transform-origin: bottom;
@@ -1627,9 +1696,8 @@ form {
 }
 
 .bar-cap {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: var(--label-track);
+  font-weight: 600;
+  text-transform: none;
 }
 
 /* Weekly mileage captions carry two facts: how many km were actually run
@@ -1719,7 +1787,7 @@ form {
    marks the space it still occupies, so it reads before the bar does. */
 .bar-chart.volume .bar-col.now .bar-track {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 /* ---- this week's plan, day by day ----
@@ -1981,7 +2049,7 @@ form {
 }
 
 .ob-dot.active {
-  background: var(--accent);
+  background: var(--text);
 }
 
 .ob-actions {
@@ -2059,7 +2127,7 @@ form {
 .readiness-score {
   font-size: var(--metric-display);
   font-weight: 800;
-  letter-spacing: 0;
+  letter-spacing: -0.035em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
@@ -2325,7 +2393,7 @@ form {
 
 .hm-cell {
   height: var(--hm-cell, 14px);
-  border-radius: var(--radius-pill);
+  border-radius: 0;
   background: var(--glass-surface-2);
   /* --i is the week index, set inline: the 12 weeks wipe in left to right
      instead of 84 cells popping at once. */
@@ -2457,10 +2525,10 @@ td {
 
 /* Head cells are the shared uppercase micro-label, on a tinted track. */
 th {
-  color: var(--text-faint);
-  font-weight: 700;
+  color: var(--text-dim);
+  font-weight: 500;
   font-size: var(--label-size);
-  text-transform: uppercase;
+  text-transform: none;
   letter-spacing: var(--label-track);
   background: var(--glass-surface-2);
 }
@@ -2469,15 +2537,53 @@ tbody tr:hover {
   background: var(--glass-surface-2);
 }
 
+/* The row is a button wearing a table's clothes (role=button, opens a
+   sheet), so it takes the same press language as the flat list rows it
+   resembles — the wash deepens rather than scales, since squeezing a
+   full-width row would shear its columns. */
+tbody tr:active {
+  background: var(--fill);
+}
+
 tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* The plan's current week: the row takes an accent rim on its first cell so
+   the eye finds "this week" without scanning dates, and its sessions render
+   as stacked .agenda-row rows (styled where the calendar agenda defines
+   them) instead of chips. The hover tint is suppressed — the row is already
+   highlighted, and the stacked rows carry their own hover. */
+#weeks-table tr.plan-week-now {
+  background: var(--accent-soft);
+}
+
+#weeks-table tr.plan-week-now:hover {
+  background: var(--accent-soft);
+}
+
+#weeks-table tr.plan-week-now td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.week-sessions {
+  display: grid;
+  gap: 0;
+}
+
+/* The stacked rows live inside a table cell, where the table's own row
+   height and the agenda's min-height would make each session a tall band;
+   a slightly tighter row keeps the expanded week close to the table's
+   rhythm. */
+.week-sessions .agenda-row {
+  min-height: 40px;
 }
 
 /* ---- map ---- */
 
 #map {
   height: 440px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   overflow: hidden;
 }
@@ -2566,6 +2672,16 @@ tbody tr:last-child td {
   background: color-mix(in srgb, var(--panel) 72%, transparent) !important;
   color: var(--text-faint);
   font-size: var(--text-xs);
+  /* The library ships its own 12px radius (and a 2px group radius); pull it
+     onto the app's ladder so the map's chrome matches every other control. */
+  border-radius: var(--radius) !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl-group,
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-group,
+.maplibregl-ctrl-attrib.maplibregl-compact-show,
+.maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button {
+  border-radius: var(--radius) !important;
 }
 
 .maplibregl-ctrl-attrib a {
@@ -2678,7 +2794,7 @@ input[type="radio"] {
 select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23788c83' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23989898' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right var(--space-4) center;
   background-size: 12px 8px;
@@ -2688,15 +2804,16 @@ select {
 
 /* Light scheme: the chevron darkens to stay visible on the light fill. */
 :root[data-theme="light"] select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%2366796f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23696969' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* ---- buttons ----
-   Global material: every button is a glass pill. Translucent tinted fill
-   + backdrop blur + hairline top rim, rounded to a full pill, with springy
-   lift-on-hover / press-in physics. Variants (secondary, danger) only swap
-   the tint and sizes only swap the box — shape, blur and motion are
-   inherited from this one rule.
+   Global material: every button is an ink pill. The primary action is the
+   inverted pair (--primary fill, --primary-text label) — the same monochrome
+   statement as the active nav row — so colour stays out of the chrome and
+   the green scale keeps the data voice exclusive. Variants (secondary,
+   danger) only swap the fill and sizes only swap the box — shape and motion
+   are inherited from this one rule.
 
    The material is a class (.btn) as well as the `button` element, because a
    call to action that goes to another page is a LINK, not a button — and a
@@ -2707,11 +2824,11 @@ select {
 
 button,
 .btn {
-  background: var(--glass-accent);
+  background: var(--primary);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border: 1px solid transparent;
-  color: var(--accent-text);
+  color: var(--primary-text);
   font-weight: 600;
   font-size: var(--text-md);
   font-family: inherit;
@@ -2746,7 +2863,7 @@ button:active,
 .btn:active {
   filter: brightness(0.94);
   transform: translateY(0) scale(var(--press-scale));
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   transition-duration: var(--dur-press);
 }
 
@@ -2800,11 +2917,11 @@ button.btn-saved:disabled:hover {
 button.secondary {
   background: var(--panel);
   color: var(--text);
-  border-color: color-mix(in srgb, var(--line-strong) 75%, transparent);
+  border-color: var(--line-strong);
 }
 
 button.secondary:hover {
-  background: var(--glass-bg-2);
+  background: var(--fill);
 }
 
 button.danger {
@@ -2832,13 +2949,13 @@ button.icon-btn {
   display: inline-grid;
   place-items: center;
   font-size: var(--text-xl);
-  background: var(--glass-bg);
+  background: var(--panel);
   color: var(--text);
-  border-color: color-mix(in srgb, var(--line-strong) 75%, transparent);
+  border-color: var(--line-strong);
 }
 
 button.icon-btn:hover {
-  background: var(--glass-bg-2);
+  background: var(--fill);
 }
 
 button.icon-btn svg {
@@ -2877,8 +2994,11 @@ button.lg,
   gap: var(--space-1);
   font-size: var(--text-sm);
   font-weight: 600;
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-pill);
+  padding: 3px var(--space-3);
+  /* The paper system draws no fully-round pills: every small surface (the
+     reference's event pills, segmented entries, kbd) is a rounded rect at
+     the small-cell radius. Pills stay for bars and dots, not labels. */
+  border-radius: var(--radius);
   background: var(--glass-surface-2);
   border: 1px solid var(--line);
   color: var(--text-dim);
@@ -2887,8 +3007,8 @@ button.lg,
 
 .chip.status {
   font-size: var(--text-sm);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
+  text-transform: none;
   letter-spacing: 0;
 }
 
@@ -2927,14 +3047,77 @@ button.lg,
   color: var(--bad);
 }
 
-.chip-easy { color: color-mix(in srgb, var(--good) 70%, var(--text)); }
-.chip-tempo { color: var(--warn); }
-.chip-intervals { color: var(--bad); }
-.chip-longRun { color: var(--good); }
+/* Each kind's colour as a variable too, so a finished session can wear the
+   same tone as a fill (below) without a second table of colours to drift. */
+.chip-easy {
+  --chip-tone: color-mix(in srgb, var(--good) 70%, var(--text));
+  color: var(--chip-tone);
+}
+.chip-tempo {
+  --chip-tone: var(--warn);
+  color: var(--chip-tone);
+}
+.chip-intervals {
+  --chip-tone: var(--bad);
+  color: var(--chip-tone);
+}
+/* Two spellings, one kind: the calendar's event_kind() emits "longRun",
+   while serde's lowercase rename gives the plan and dashboard "longrun".
+   Without the alias the plan page's long runs silently wore the default
+   chip colour while the calendar's were green. */
+.chip-longRun,
+.chip-longrun {
+  --chip-tone: var(--good);
+  color: var(--chip-tone);
+}
+/* Race keeps its own violet, outside the good/warn/bad training-tone family:
+   race day is not a load verdict, and an outlined chip keeps "filled = banked"
+   the only fill story in the calendar. */
 .chip-race {
-  color: var(--accent-text);
-  background: var(--accent);
+  --chip-tone: #c4b5fd;
+  color: var(--chip-tone);
+  border-color: color-mix(in srgb, var(--chip-tone) 55%, var(--line));
+}
+:root[data-theme="light"] .chip-race {
+  --chip-tone: #6d28d9;
+}
+/* A run with no planned session behind it: there is no kind to inherit, so it
+   keeps the plain running tone. */
+.chip-completed {
+  --chip-tone: var(--good);
+  color: var(--chip-tone);
+}
+
+/* A finished session keeps its kind's colour and swaps the outline for a
+   fill: outlined means "still to run", filled means "banked". Before this,
+   every completed run was painted the plain running green, which is exactly
+   the long-run colour — a done interval looked like a long run. The ink is
+   the accent's own text colour, the scheme's contrast partner for a
+   saturated fill.
+   --chip-fill-shade lets a scheme deepen the fill without touching the
+   outline colour: on paper the amber and mid-green tones land at 4.3:1
+   against white ink, just under the 4.5:1 floor for text this size, so the
+   light scheme mixes the fill a shade darker (5.3:1) while the dark scheme,
+   where the tones are bright and the ink near-black (6.9:1 at the worst),
+   keeps them verbatim. */
+.chip-done {
+  --chip-bg: color-mix(in srgb, var(--chip-tone, var(--good)) var(--chip-fill-shade, 100%), #000);
+  background: var(--chip-bg);
   border-color: transparent;
+  color: var(--accent-text);
+}
+
+:root[data-theme="light"] .chip-done {
+  --chip-fill-shade: 88%;
+}
+
+/* The calendar's chip and agenda-row hover rules replace the background and
+   undo the global button material, so they would undo the fill too. Keep the
+   fill and let brightness do the hover work instead. */
+.workout-chip.chip-done:hover,
+.agenda-row.chip-done:hover {
+  background: var(--chip-bg);
+  filter: brightness(1.08);
 }
 
 /* ---- plan creation ---- */
@@ -3095,12 +3278,16 @@ fieldset.plan-field legend {
   gap: var(--space-2);
   min-height: var(--control-h);
   padding: 0 var(--control-pad-x);
+  /* Same field material as an input or the stepper track (--panel + strong
+     hairline, selected = ink): three pickers in one form, one material. */
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
-  background: var(--bg);
+  background: var(--panel);
   color: var(--text-dim);
   font-size: var(--text-md);
-  font-weight: 700;
+  /* The selected face is the ink pill — same material as a button, so the
+     same 600 weight. */
+  font-weight: 600;
   letter-spacing: 0;
   transition-property: background, color, border-color, transform;
   transition-duration: var(--dur-fast);
@@ -3122,9 +3309,9 @@ fieldset.plan-field legend {
 }
 
 .plan-seg-opt:has(input:checked) .seg-face {
-  background: var(--accent);
+  background: var(--primary);
   border-color: transparent;
-  color: var(--accent-text);
+  color: var(--primary-text);
 }
 
 .plan-seg-opt:has(input:checked) .seg-face small {
@@ -3349,7 +3536,7 @@ fieldset.plan-field legend {
   transform: rotate(-90deg);
 }
 
-.gauge-track { stroke: var(--panel-2); }
+.gauge-track { stroke: var(--fill); }
 .gauge-fill {
   stroke-linecap: round;
   opacity: 0.95;
@@ -3363,7 +3550,7 @@ fieldset.plan-field legend {
 .risk-num {
   font-size: var(--metric-lg);
   font-weight: 800;
-  letter-spacing: 0;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3868,7 +4055,7 @@ fieldset.plan-field legend {
   line-height: 1;
   color: var(--text-faint);
   background: color-mix(in srgb, var(--panel) 72%, transparent);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 0 3px;
   pointer-events: none;
 }
@@ -3906,7 +4093,7 @@ fieldset.plan-field legend {
 .zone-key i {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: 0;
   border: 1px solid var(--line);
 }
 
@@ -4029,6 +4216,11 @@ fieldset.plan-field legend {
 
 .cal-cell:hover { border-color: var(--line-strong); }
 
+/* Same reason as the history rows: the cell is a tap target (opens the
+   day sheet), and every other tap target in the app answers on press-down.
+   The wash deepens; the grid stays put. */
+.cal-cell:active { background: var(--fill); }
+
 /* Days outside the month are not days at all: no fill, no rule, and no
    rim — the surface atom's box-shadow would otherwise draw an empty outline
    and the week's leading row would read as six blank appointments. */
@@ -4076,7 +4268,7 @@ fieldset.plan-field legend {
    under the pointer. Same treatment as the agenda row — surface lifts, press
    squeezes. */
 .workout-chip:hover {
-  background: var(--glass-bg-2);
+  background: var(--fill);
   filter: none;
   transform: none;
 }
@@ -4086,7 +4278,42 @@ fieldset.plan-field legend {
   filter: none;
 }
 
-.chip-completed { color: var(--good); }
+/* Rescheduling: this week's planned chips can be dragged to another day of
+   the same week; the valid days light up while a chip is in flight. */
+.workout-chip.movable { cursor: grab; }
+.workout-chip.dragging { opacity: 0.45; cursor: grabbing; }
+#cal-grid.is-dragging .cal-this-week {
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -3px;
+}
+#cal-grid .cal-cell.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  background: var(--glass-bg-2);
+}
+
+/* Today: the one cell in the month that isn't just a date. The day number
+   wears the accent as a filled disc — the same treatment the agenda gives its
+   date — and the cell takes an accent rim, so the eye lands on "now" without
+   the cell competing with the workout chips it holds. Placed after the hover
+   rule so the accent rim survives the pointer. */
+.cal-cell.cal-today {
+  border-color: var(--accent);
+}
+
+.cal-today .cal-day {
+  color: var(--text);
+}
+
+.cal-today .cal-day-num {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+}
 
 .workout-link {
   min-height: 40px;
@@ -4104,6 +4331,19 @@ fieldset.plan-field legend {
   text-underline-offset: 4px;
 }
 .workout-link:hover { background: transparent; color: var(--accent); }
+
+/* A finished session in the Today hero: the "Done: " words are gone — the
+   same fact the filled chips carry elsewhere, said here as a check the text
+   keeps room for, so the row does not reflow when a run is banked. */
+.workout-link.workout-done {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.workout-link.workout-done::after {
+  content: " \2713";
+  color: var(--good);
+  font-weight: 700;
+}
 
 /* Centered modal: the <dialog> is a transparent full-viewport positioning
    wrapper; the card inside is the actual surface and the element that
@@ -4220,14 +4460,30 @@ fieldset.plan-field legend {
   color: var(--text);
 }
 
+/* Today's row reads the same as today's grid cell: the number's disc takes
+   the accent, so the narrow-screen agenda needs no separate marker to say
+   which day is now. */
+.agenda-today > .agenda-date > span {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.agenda-today > .agenda-date {
+  color: var(--text);
+}
+
 .agenda-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--space-2);
+  gap: 0;
 }
 
+/* The reference's list pattern: rows are flat on the sheet, divided by a
+   hairline rather than framed as boxes — the card is the surface, the rows
+   are its content. Hover paints the --fill wash inside the small radius;
+   the kind's tone rides the label, not a left rule. */
 .agenda-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -4236,13 +4492,18 @@ fieldset.plan-field legend {
   width: 100%;
   text-align: left;
   min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--glass-bg);
+  background: transparent;
   color: var(--text);
   cursor: pointer;
+}
+
+.agenda-list > li:last-child > .agenda-row,
+.week-sessions > .agenda-row:last-child {
+  border-bottom: none;
 }
 
 /* The agenda row is the primary tap target on a phone, and it undoes the
@@ -4250,8 +4511,7 @@ fieldset.plan-field legend {
    a translucent fill. Give it the same affordance the other flat rows use:
    the surface lifts one step on hover and takes the shared press squeeze. */
 .agenda-row:hover {
-  background: var(--glass-bg-2);
-  border-color: var(--line-strong);
+  background: var(--fill);
   filter: none;
   transform: none;
 }
@@ -4261,11 +4521,37 @@ fieldset.plan-field legend {
   filter: none;
 }
 
+/* A finished session's row takes the fill. Declared after .agenda-row, whose
+   own `color` would otherwise win the tie and print dark ink on a saturated
+   background. The kind's left rule goes with the fill — the colour is now the
+   whole row, not an edge on it. */
+.agenda-row.chip-done {
+  background: var(--chip-bg);
+  border-color: transparent;
+  border-radius: var(--radius-control);
+  color: var(--accent-text);
+}
+
+/* The meta keeps the fill's ink at full strength: dimming it by even 20%
+   blends the pale canvas into the letters and drops the distance read-out
+   below 3:1 on the mid tones. */
+.agenda-row.chip-done .agenda-meta {
+  color: var(--accent-text);
+}
+
 .agenda-kind {
   font-size: var(--text-sm);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  /* The row's own color is the neutral text (the kind classes' color rule
+     sits earlier in the sheet and loses), so the tone is pulled explicitly
+     from the --chip-tone the kind class sets on this same element. */
+  color: var(--chip-tone, var(--text));
+}
+
+.agenda-row.chip-done .agenda-kind {
+  color: var(--accent-text);
 }
 
 .agenda-title {
@@ -4277,6 +4563,23 @@ fieldset.plan-field legend {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Injury-risk delta on a done session ("+5" / "-3" against the previous
+   run). It only ever renders on a filled chip, whose tone varies per kind —
+   a red/green badge could land on any of them and fail contrast — so the
+   pill is drawn from the fill's own ink (currentColor) and the sign carries
+   the direction. */
+.risk-delta {
+  display: inline-block;
+  margin-left: 0.35em;
+  padding: 0 0.4em;
+  border-radius: var(--radius-pill);
+  font-size: 0.85em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 20%, transparent);
 }
 
 @media (max-width: 560px) {
@@ -4319,7 +4622,9 @@ fieldset.plan-field legend {
   backdrop-filter: var(--glass-blur-soft);
   -webkit-backdrop-filter: var(--glass-blur-soft);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  /* Concentric with the control radius inside: 10px rows + 8px padding = 18px
+     outside, the same card math as everywhere else. */
+  border-radius: var(--radius-lg);
   padding: var(--space-2);
   box-shadow: var(--glass-rim);
 }
@@ -4333,7 +4638,9 @@ fieldset.plan-field legend {
   min-height: var(--control-h);
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: calc(var(--radius) - 4px);
+  /* Same control radius as a sidebar nav row — the rail is a nav, and the
+     old calc() made its rows the only 4px controls in the app. */
+  border-radius: var(--radius-control);
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -4356,11 +4663,12 @@ fieldset.plan-field legend {
   transform: scale(var(--press-scale));
 }
 
-/* The selected category is the accent fill — same vocabulary as a selected
-   segmented entry, at list-row size. */
+/* The selected category is the ink fill — same vocabulary as the active nav
+   row and a primary button, at list-row size, including its weight bump. */
 .settings-nav-list button.active {
-  background: var(--glass-accent);
-  color: var(--accent-text);
+  background: var(--primary);
+  color: var(--primary-text);
+  font-weight: 600;
 }
 
 .sn-icon {
@@ -4473,7 +4781,7 @@ fieldset.plan-field legend {
   display: flex;
   align-items: stretch;
   min-height: 30px;
-  border-radius: calc(var(--radius) - 4px);
+  border-radius: var(--radius-control);
   overflow: hidden;
   border: 1px solid var(--line);
 }
@@ -4619,7 +4927,7 @@ fieldset.plan-field legend {
   margin: 0;
   font-size: var(--text-3xl);
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: -0.03em;
   text-transform: none;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -4642,8 +4950,8 @@ fieldset.plan-field legend {
   height: var(--control-h-sm);
   padding: 0;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
+  border: none;
+  background: transparent;
   color: var(--text-dim);
   font-size: var(--text-xl);
   cursor: pointer;
@@ -4651,7 +4959,7 @@ fieldset.plan-field legend {
 
 .sheet-close:hover {
   color: var(--text);
-  border-color: var(--line-strong);
+  background: var(--fill);
 }
 
 .sheet-dialog .sheet-body {
@@ -4910,7 +5218,7 @@ fieldset.plan-field legend {
   font-size: var(--label-size);
   text-anchor: middle;
   letter-spacing: 0;
-  text-transform: uppercase;
+  text-transform: none;
 }
 .bodymap-deco-outline {
   fill: none;
@@ -5123,7 +5431,7 @@ fieldset.plan-field legend {
 .pacing-track {
   position: relative;
   height: 10px;
-  border-radius: var(--radius-pill);
+  border-radius: 0;
   background: var(--glass-surface-2);
   border: 1px solid var(--line);
 }
@@ -5131,7 +5439,7 @@ fieldset.plan-field legend {
   position: absolute;
   top: -1px;
   bottom: -1px;
-  border-radius: var(--radius-pill);
+  border-radius: 0;
   background: color-mix(in srgb, var(--scale-3) 45%, transparent);
 }
 .pacing-marker {
@@ -5140,7 +5448,7 @@ fieldset.plan-field legend {
   bottom: -4px;
   width: 3px;
   margin-left: -1.5px;
-  border-radius: 2px;
+  border-radius: 0;
   background: var(--text);
 }
 .pacing-verdict {
@@ -5257,9 +5565,9 @@ fieldset.plan-field legend {
 }
 .chat-who {
   font-size: var(--label-size);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: var(--label-track);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
   color: var(--text-faint);
 }
 .chat-input {

@@ -47,6 +47,11 @@ export const icons = {
   bike: svg(
     `<circle cx="5" cy="17" r="3"/><circle cx="19" cy="17" r="3"/><path d="M12 17V9"/><path d="M9 5h2l3 4"/><path d="M5 17l4-8h6"/><path d="M17 17l-2.5-6"/>`,
   ),
+  // tabler: dumbbell — the cross-training glyph. A bike would name one sport
+  // (cycling) on tiles that also cover swimming, strength and hike days.
+  dumbbell: svg(
+    `<path d="M4 12h16"/><path d="M4 8v8"/><path d="M7 6v12"/><path d="M17 6v12"/><path d="M20 8v8"/>`,
+  ),
   // tabler: chart-bar
   chart: svg(
     `<path d="M3 13a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6"/><path d="M15 9a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V9"/><path d="M9 5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V5"/><path d="M4 20h14"/>`,

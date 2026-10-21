@@ -327,9 +327,23 @@ pub async fn activity_detail(
     let day = activity.start_time.date_naive();
     let days = range.days();
     let th = thresholds(&state);
-    let (risk_factors, risk_total) =
-        metrics::compute_risk_factors_as_of(&state.store, day, days, &th)?;
-    let injury_risk = (10.0 + risk_total * 55.0).clamp(0.0, 100.0).round() as u32;
+    let (risk_factors, _risk_total) = metrics::compute_risk_factors_as_of(
+        &state.store,
+        day,
+        days,
+        &th,
+        Some(activity.start_time.timestamp()),
+    )?;
+    // The same blended headline the dashboard hero shows, as of the run's
+    // day — not just the factor-sum half of it — so the sheet, the calendar
+    // description, and the dashboard agree on one number.
+    let injury_risk = metrics::risk_headline_as_of(
+        &state.store,
+        day,
+        days,
+        &th,
+        Some(activity.start_time.timestamp()),
+    )?;
     Ok(ActivityDetail {
         track: state.store.track_points(activity_id, 2000)?,
         health: state.store.health_on(day)?,
@@ -342,6 +356,43 @@ pub async fn activity_detail(
 }
 
 // ---- plans ----------------------------------------------------------------
+
+/// One run's frozen score snapshot with its injury-risk impact — how many
+/// points this session moved the runner's risk (risk with the run minus risk
+/// without it) — exposed so the plan page can mark each done session.
+/// `workout_id` is set when the run matched a plan session, which is how the
+/// plan page keys the map.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunScore {
+    pub activity_id: i64,
+    pub workout_id: Option<String>,
+    pub load: Option<f64>,
+    pub risk: u32,
+    pub risk_delta: i64,
+}
+
+#[tauri::command]
+pub async fn run_scores(state: State<'_, AppState>) -> Result<Vec<RunScore>> {
+    let workout_by_activity: std::collections::HashMap<i64, String> = state
+        .store
+        .calendar_completions()?
+        .into_iter()
+        .map(|(workout_id, activity_id, _)| (activity_id, workout_id))
+        .collect();
+    Ok(state
+        .store
+        .activity_scores()?
+        .into_iter()
+        .map(|(activity_id, load, risk, risk_delta)| RunScore {
+            activity_id,
+            workout_id: workout_by_activity.get(&activity_id).cloned(),
+            load,
+            risk,
+            risk_delta,
+        })
+        .collect())
+}
 
 #[tauri::command]
 pub async fn create_plan(
@@ -509,8 +560,18 @@ pub async fn workouts_between(
 
 // ---- calendar export -------------------------------------------------------
 
+/// Read-only: where the .ics lives. Deliberately does not regenerate or
+/// upload — opening the Settings pane must not publish. Publishing happens
+/// on sync, on calendar edits, and through `publish_calendar`.
 #[tauri::command]
 pub async fn ics_path(state: State<'_, AppState>) -> Result<String> {
+    Ok(calendar_publish::export_path(&state.data_dir))
+}
+
+/// The explicit "Refresh calendar" action: regenerate the .ics and upload
+/// it when publishing is enabled.
+#[tauri::command]
+pub async fn publish_calendar(state: State<'_, AppState>) -> Result<String> {
     calendar_publish::refresh(&state).await
 }
 
@@ -553,6 +614,49 @@ pub async fn match_calendar_activity(
         calendar::match_activity(&state.store, &workout_id, activity_id)?;
     }
     calendar_publish::refresh(&state).await?;
+    Ok(())
+}
+
+/// Drag-and-drop reschedule from the calendar. The local calendar (and its
+/// published feed) is refreshed before returning; a pushed plan is re-sent to
+/// the watch in the background because that round-trip takes tens of seconds.
+#[tauri::command]
+pub async fn move_workout(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workout_id: String,
+    date: String,
+) -> Result<()> {
+    let to = crate::store::parse_date_pub(&date)?;
+    {
+        let _guard = state.calendar_lock.lock().await;
+        calendar::move_workout(
+            &state.store,
+            &workout_id,
+            to,
+            chrono::Local::now().date_naive(),
+        )?;
+    }
+    calendar_publish::refresh(&state).await?;
+    if let Some((plan, workouts)) = state.store.current_plan()? {
+        if plan.status == PlanStatus::Pushed {
+            tauri::async_runtime::spawn(async move {
+                use tauri::Manager;
+                let state = app.state::<AppState>();
+                let result = match get_provider(&state, ProviderKind::Coros) {
+                    Ok(p) => p.push_plan(&plan, &workouts, None).await,
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Ok(Some(id)) => {
+                        let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("[coros] re-push after move failed: {e}"),
+                }
+            });
+        }
+    }
     Ok(())
 }
 

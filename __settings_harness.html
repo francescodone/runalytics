@@ -35,6 +35,17 @@
         },
       };
 
+      // In-memory publishing config for the Calendar subscription pane.
+      const publishing = {
+        enabled: false,
+        uploadUrl: "",
+        subscriptionUrl: "",
+        username: "",
+        hasPassword: false,
+        lastPublished: null,
+        lastError: null,
+      };
+
       // Mirrors Thresholds::normalized() in Rust closely enough to prove the
       // round trip: out-of-range input comes back clamped and ordered.
       function normalize(t) {
@@ -81,6 +92,22 @@
               return { connected: true, lastSync: new Date().toISOString(), plan: null, pushed: false };
             case "sync_status":
               return false;
+            case "ics_path":
+              return "~/Library/Application Support/com.fradone.runalytics/runalytics.ics";
+            case "publish_calendar":
+              if (publishing.enabled) publishing.lastPublished = new Date().toISOString();
+              publishing.lastError = null;
+              return "~/Library/Application Support/com.fradone.runalytics/runalytics.ics";
+            case "calendar_publishing":
+              return structuredClone(publishing);
+            case "save_calendar_publishing":
+              Object.assign(publishing, args.config);
+              publishing.hasPassword = !!(args.password ?? publishing.hasPassword);
+              publishing.lastPublished = publishing.enabled
+                ? new Date().toISOString()
+                : publishing.lastPublished;
+              publishing.lastError = null;
+              return structuredClone(publishing);
             default:
               throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
           }

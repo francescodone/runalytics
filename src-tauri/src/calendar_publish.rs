@@ -244,6 +244,17 @@ async fn upload_gist(
     Ok(())
 }
 
+/// Where the .ics lives, without regenerating or uploading it. The Settings
+/// pane shows this path and the publish status on open; reading must never
+/// trigger a publish — only a sync, a calendar edit, or the explicit
+/// refresh button run `refresh`.
+pub fn export_path(data_dir: &Path) -> String {
+    CalendarExport::new(&data_dir.to_path_buf())
+        .path
+        .display()
+        .to_string()
+}
+
 pub async fn refresh(state: &AppState) -> Result<String> {
     let _guard = state.calendar_lock.lock().await;
     refresh_locked(state).await
@@ -251,6 +262,11 @@ pub async fn refresh(state: &AppState) -> Result<String> {
 
 async fn refresh_locked(state: &AppState) -> Result<String> {
     calendar::reconcile(&state.store)?;
+    // Freeze each new run's load and injury risk before rendering, so every
+    // banked session's description carries the numbers the body was carrying
+    // when it landed.
+    let thresholds = state.settings.lock().unwrap().thresholds();
+    calendar::snapshot_scores(&state.store, &thresholds)?;
     let path = CalendarExport::new(&state.data_dir).regenerate(&state.store)?;
     let mut config = load(&state.data_dir)?;
     if config.enabled {

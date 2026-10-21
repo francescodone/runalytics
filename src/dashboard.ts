@@ -88,6 +88,7 @@ const KIND_LABEL: Record<string, string> = {
   tempo: "Tempo",
   intervals: "Intervals",
   longRun: "Long run",
+  longrun: "Long run",
   race: "Race day",
   rest: "Rest day",
 };
@@ -226,7 +227,7 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
           const label = KIND_LABEL[w.kind] ?? w.kind;
           const dist = w.distanceM ? ` · ${(w.distanceM / 1000).toFixed(1)} km` : "";
           const dur = w.durationMin ? ` · ${Math.round(w.durationMin)} min` : "";
-          return `<button type="button" class="workout-link" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}">${w.done ? "Done: " : ""}${label}${dist}${dur}</button>`;
+          return `<button type="button" class="workout-link${w.done ? " workout-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}">${label}${dist}${dur}</button>`;
         })
         .join(" + ")
     : null;
@@ -550,13 +551,13 @@ function mondayThisWeek(): Date {
 }
 
 /// A glyph with no key is a puzzle. Both charts mark cross-training with the
-/// same bicycle, so both get the same one-line key — and only when a flag is
+/// same dumbbell, so both get the same one-line key — and only when a flag is
 /// actually on screen, so it never explains a mark the runner cannot find.
 function crossLegend(id: string, shown: boolean): void {
   const node = el(id);
   node.hidden = !shown;
   node.innerHTML = shown
-    ? `${icons.bike} cross-training (not counted in the kilometres)`
+    ? `${icons.dumbbell} cross-training (not counted in the kilometres)`
     : "";
 }
 
@@ -636,11 +637,11 @@ function renderWeek(extras: DashExtras): void {
               // A rest day gets an em-dash, not a middle dot: a lone "·" in
               // the axis reads as a rendering glitch, while a dash is the
               // typographic way to say "nothing here". The km figure and the
-              // cross marker are separate lines so "8.2" and "🚲 90" never
+              // cross marker are separate lines so "8.2" and "🏋 90" never
               // collide into one unreadable cluster.
               d.actualKm ? d.actualKm.toFixed(1) : "—"
             }${
-              d.cross ? `<small class="cross" title="${crossDays(d.cross)} — not running">${icons.bike} ${crossShort(d.cross)}</small>` : ""
+              d.cross ? `<small class="cross" title="${crossDays(d.cross)} — not running">${icons.dumbbell} ${crossShort(d.cross)}</small>` : ""
             }</span>`,
         )
         .join("")}
@@ -669,7 +670,7 @@ function renderWeek(extras: DashExtras): void {
     // Credit the other training rather than hiding it — but in its own unit,
     // so it can never be misread as mileage the plan should have counted.
     weekCross
-      ? `<div class="tile center cross-tile" title="${crossDays(weekCross)} — not included in the run total"><b>${icons.bike} ${crossPhrase(weekCross)}</b><span>cross-training</span></div>`
+      ? `<div class="tile center cross-tile" title="${crossDays(weekCross)} — not included in the run total"><b>${icons.dumbbell} ${crossPhrase(weekCross)}</b><span>cross-training</span></div>`
       : "",
     pace ? `<div class="tile center"><b>${fmtPace(pace.avgPaceSKm)}</b><span>latest pace</span></div>` : "",
   ].join("");
@@ -728,7 +729,7 @@ function renderWeekPlan(extras: DashExtras): void {
             bits.push(`${fmtPace(band[0])}–${fmtPace(band[1])}/km`);
           }
           return `<div class="wp-session">
-            <span class="chip chip-${w.kind}">${label}</span>
+            <span class="chip chip-${w.kind}${w.done ? " chip-done" : ""}">${label}</span>
             <button type="button" class="wp-title workout-link" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}">${escapeHtml(w.title)}</button>
             ${bits.length ? `<span class="wp-meta">${bits.join(" · ")}</span>` : ""}
             ${w.done ? `<span class="wp-state" title="Completed">${icons.check}</span>` : ""}
@@ -803,7 +804,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
             `<span class="bar-label${w.current ? " now" : ""}" title="Week of ${w.label}${
               w.cross ? ` — ${crossDays(w.cross)} (not run)` : ""
             }">${w.km ? w.km.toFixed(0) : "—"}${
-              w.cross ? `<i class="cross-flag">${icons.bike}</i>` : ""
+              w.cross ? `<i class="cross-flag">${icons.dumbbell}</i>` : ""
             }<small>${w.label}</small></span>`,
         )
         .join("")}
@@ -1267,7 +1268,7 @@ function buildMapStyle(settings: Settings): maplibregl.StyleSpecification {
         },
       },
       layers: [
-        { id: "bg", type: "background", paint: { "background-color": "#0c1210" } },
+        { id: "bg", type: "background", paint: { "background-color": "#0a0a0a" } },
         { id: "basemap", type: "raster", source: "basemap" },
       ],
     };
@@ -1283,7 +1284,7 @@ function buildMapStyle(settings: Settings): maplibregl.StyleSpecification {
       },
     },
     layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#0c1210" } },
+      { id: "bg", type: "background", paint: { "background-color": "#0a0a0a" } },
       { id: "osm", type: "raster", source: "osm" },
     ],
   };
@@ -1547,7 +1548,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
       source: "track",
       filter: ["==", ["get", "kind"], "line"],
       paint: {
-        "line-color": "#0c1210",
+        "line-color": "#0a0a0a",
         "line-width": 6,
         "line-opacity": 0.55,
       },
@@ -1582,7 +1583,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
           "#d1fae5",
           "#6ee7b7",
         ],
-        "circle-stroke-color": "#0c1210",
+        "circle-stroke-color": "#0a0a0a",
         "circle-stroke-width": 1.5,
       },
     });

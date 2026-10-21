@@ -28,6 +28,87 @@ fn mean_observed(mut vals: impl Iterator<Item = f64>) -> Option<f64> {
     }
 }
 
+/// How hard one run was, as a fraction of threshold effort: 1.0 means the
+/// whole session sat at lactate threshold. Pace against the stored threshold
+/// first — the sharpest signal the sync carries; heart rate against a generic
+/// 190 bpm ceiling as a fallback (0 at 124 bpm, 1.0 at 172); a run with
+/// neither signal counts as 0.6 — evidence of *some* run, no evidence it was
+/// hard.
+fn run_intensity(run: &Activity, threshold_s_km: Option<f64>) -> f64 {
+    if let (Some(t), Some(p)) = (threshold_s_km, run.avg_pace_s_km) {
+        if p > 0.0 {
+            return (t / p).clamp(0.0, 1.3);
+        }
+    }
+    match run.avg_hr {
+        Some(hr) => ((hr as f64 - 124.0) / 48.0).clamp(0.0, 1.3),
+        None => 0.6,
+    }
+}
+
+/// Pressure from the runs of the last seven days: effort-weighted minutes
+/// (time x intensity^2, the same currency the plan's session stress uses), a
+/// penalty for hard days stacked back-to-back, and an interaction term when
+/// hard sessions land on top of reported pain — running hard on an injury is
+/// worse than either signal alone.
+/// Two components: the *session's own* effort counts with no floor (an easy
+/// jog adds a little, a threshold session adds a lot — this is what makes
+/// every banked run move the risk, so every activity has a delta to show),
+/// and the *week's* pressure beyond a comfortable 90 hard-minutes, which is
+/// where the pile-up actually starts to hurt. `self_id` picks the run being
+/// explained out of `runs` (None = no single session is the subject, so no
+/// self term — used when measuring the week as if that run had not happened).
+/// Returns the raw risk contribution and a human-readable detail.
+fn recent_sessions_pressure(
+    runs: &[Activity],
+    threshold_s_km: Option<f64>,
+    pain: Option<u32>,
+    self_id: Option<i64>,
+) -> (f64, String) {
+    let mut hard = 0.0f64;
+    let mut self_units = 0.0f64;
+    let mut hard_days: Vec<(NaiveDate, bool)> = Vec::new();
+    for run in runs {
+        let minutes = run.duration_s / 60.0;
+        let intensity = run_intensity(run, threshold_s_km);
+        let units = minutes * intensity * intensity;
+        hard += units;
+        if self_id.is_some_and(|id| id == run.id) {
+            self_units = units;
+        }
+        // A "hard day" is a session that was genuinely pushed (40 hard-
+        // minutes: an hour at threshold, not an hour of easy volume).
+        if units >= 40.0 {
+            hard_days.push((run.start_time.date_naive(), self_id.is_some_and(|id| id == run.id)));
+        }
+    }
+    hard_days.sort();
+    let stacked = hard_days
+        .windows(2)
+        .filter(|w| (w[1].0 - w[0].0).num_days() == 1)
+        .count();
+    // The session's own effort: an hour at threshold (60 units) is +0.12 raw
+    // (~+7 risk points), half an hour of easy jogging ~+1 point. The week's
+    // excess over comfort adds on top, and stacked hard days add 0.15 each.
+    let mut raw = self_units * 0.002 + (hard - 90.0).max(0.0) * 0.01 + stacked as f64 * 0.15;
+    let mut detail = if runs.is_empty() {
+        String::from("no runs in the last 7 days")
+    } else {
+        format!("{hard:.0} effort-weighted run minutes in the last 7 days")
+    };
+    if stacked > 0 {
+        detail.push_str(&format!(" · {stacked} back-to-back hard-day pair(s)"));
+    }
+    if let Some(p) = pain {
+        let extra = (p as f64 / 10.0) * 0.15 * (hard / 180.0).clamp(0.0, 1.0);
+        if extra > 0.001 {
+            raw += extra;
+            detail.push_str(" · hard sessions on top of reported pain");
+        }
+    }
+    (raw, detail)
+}
+
 /// Acute:chronic balance factor (0..=1) for a load ratio; the runner's
 /// Maintaining-and-up band scores 1.0. Notes when the ratio is missing or well
 /// out of range.
@@ -549,6 +630,9 @@ pub fn compute_risk_factors(
     }
 
     // The runner's own report, weighted like any other factor.
+    let pain_intensity = store
+        .max_pain_intensity_since(Utc::now().date_naive())?
+        .map(|(i, _)| i);
     if let Some((intensity, part)) = store.max_pain_intensity_since(Utc::now().date_naive())? {
         push(
             "Reported pain",
@@ -557,6 +641,18 @@ pub fn compute_risk_factors(
             1.0,
         );
     }
+
+    // Recent sessions: the runs of the last week themselves, weighted by how
+    // hard each was — and how they interact with the pain above. This is what
+    // makes the risk move when a run is banked, instead of waiting for the
+    // provider's ratio to catch up.
+    let now_ts = Utc::now().timestamp();
+    let runs = store.runs_between(now_ts - 7 * 86400, now_ts + 86400)?;
+    let threshold = store.latest_fitness()?.and_then(|f| f.threshold_sec_km);
+    // No single session is being explained here — the newest run's own effort
+    // stands in, which is the dashboard's "what did the last run cost me".
+    let (sessions_raw, sessions_detail) = recent_sessions_pressure(&runs, threshold, pain_intensity, None);
+    push("Recent sessions", sessions_detail, sessions_raw, 0.15 * 1.2);
 
     factors.push(RiskFactor {
         label: "Recovery debt".into(),
@@ -570,12 +666,88 @@ pub fn compute_risk_factors(
 /// Same heuristics as [`compute_risk_factors`], evaluated *as of* a past day
 /// instead of today: every window is anchored on `day`, so the factors explain
 /// the risk the runner was carrying when they did that activity.
-/// Returns the severity-scaled factors plus the raw risk sum.
+/// `session_ts` (unix seconds) is the run being explained, when the caller
+/// knows it — it pins the recent-sessions window to the session's own start
+/// instead of the day's noon, and that run's own effort counts in the week's
+/// pressure. Returns the severity-scaled factors plus the raw risk sum.
 pub fn compute_risk_factors_as_of(
     store: &Store,
     day: NaiveDate,
     window_days: i64,
     th: &Thresholds,
+    session_ts: Option<i64>,
+) -> Result<(Vec<RiskFactor>, f64)> {
+    risk_factors_as_of_inner(store, day, window_days, th, session_ts, None)
+}
+
+/// What one session cost the runner, in risk points: the headline risk as of
+/// `day` with the run counted, minus the same headline with the run removed
+/// from the week's runs. Unlike a snapshot-to-snapshot difference — which
+/// compares two days and drifts whenever the model changes — this says what
+/// *this* activity did: an easy jog moves the risk a little, a threshold
+/// session a lot, and a light run that dilutes a heavy week can even come out
+/// negative.
+pub fn session_risk_impact(
+    store: &Store,
+    day: NaiveDate,
+    window_days: i64,
+    th: &Thresholds,
+    session_ts: i64,
+    session_id: i64,
+) -> Result<i64> {
+    let with = risk_headline_inner(store, day, window_days, th, Some(session_ts), None)?;
+    let without =
+        risk_headline_inner(store, day, window_days, th, Some(session_ts), Some(session_id))?;
+    Ok(with as i64 - without as i64)
+}
+
+/// The dashboard's headline injury-risk percentage, evaluated *as of* a day:
+/// the same blend the dashboard hero shows — the point-in-time formula
+/// (ratio, volume spike, recovery, pain) averaged with the range-aware factor
+/// sum — anchored on that day instead of today. The run snapshots, the
+/// activity detail sheet, and the calendar descriptions all use this, so a
+/// run banked today carries the same risk number the dashboard shows today.
+pub fn risk_headline_as_of(
+    store: &Store,
+    day: NaiveDate,
+    window_days: i64,
+    th: &Thresholds,
+    session_ts: Option<i64>,
+) -> Result<u32> {
+    risk_headline_inner(store, day, window_days, th, session_ts, None)
+}
+
+fn risk_headline_inner(
+    store: &Store,
+    day: NaiveDate,
+    window_days: i64,
+    th: &Thresholds,
+    session_ts: Option<i64>,
+    exclude_activity: Option<i64>,
+) -> Result<u32> {
+    // The point-in-time half of the dashboard's blend, as of `day` — the
+    // same ingredients `score_history` rebuilds per day.
+    let ratio = store.training_load_on_or_before(day)?.and_then(|l| l.ratio);
+    let volumes = store.weekly_volumes_as_of(day, 8)?;
+    let window = store.health_between(day - chrono::Duration::days(2), day)?;
+    let recovery = recovery_from_health(&window);
+    let mut silent = Vec::new();
+    let base = injury_risk_from(store, day, ratio, &volumes, recovery, &mut silent, th)?;
+    // The range-aware half, with the same session-aware recent-sessions
+    // window the factor bars show.
+    let (_, total) =
+        risk_factors_as_of_inner(store, day, window_days, th, session_ts, exclude_activity)?;
+    let range = (10.0 + total * 55.0).clamp(0.0, 100.0).round() as u32;
+    Ok(((base.round() as u32 + range) / 2).clamp(0, 100))
+}
+
+fn risk_factors_as_of_inner(
+    store: &Store,
+    day: NaiveDate,
+    window_days: i64,
+    th: &Thresholds,
+    session_ts: Option<i64>,
+    exclude_activity: Option<i64>,
 ) -> Result<(Vec<RiskFactor>, f64)> {
     let day_ts = day.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
     let secs = |d: i64| 64800 + d * 86400; // half a day, so "7 days" is inclusive
@@ -677,6 +849,40 @@ pub fn compute_risk_factors_as_of(
             0.015 * 40.0,
         );
     }
+
+    // The pain still hurting on that day, and the runs of the week that led
+    // up to it — including the session being explained, whose own intensity
+    // counts here. This is the factor that makes two runs on the same ratio
+    // carry different risk: an easy jog and a threshold session move the
+    // number differently, and stacking hard days (or running hard on pain)
+    // moves it further. `exclude_activity` drops one run from the week — the
+    // counterfactual `session_risk_impact` measures against.
+    let pain_intensity = store.max_pain_intensity_since(day)?.map(|(i, _)| i);
+    if let Some((intensity, part)) = store.max_pain_intensity_since(day)? {
+        push(
+            "Reported pain",
+            format!("{} {}/10", crate::proposal::region_label(&part), intensity),
+            intensity as f64 / 10.0,
+            1.0,
+        );
+    }
+    // Anchored on the session's own start when the caller knows it, so the
+    // run being explained is inside its own window whatever timezone it was
+    // banked in; the day's noon UTC stands in otherwise.
+    let anchor = session_ts.unwrap_or(day_ts + 64_800);
+    let mut runs = store.runs_between(anchor - 7 * 86_400, anchor + 60)?;
+    if let Some(excluded) = exclude_activity {
+        runs.retain(|run| run.id != excluded);
+    }
+    let threshold = store.fitness_on_or_before(day)?.and_then(|f| f.threshold_sec_km);
+    let self_id = session_ts.and_then(|ts| {
+        runs.iter()
+            .find(|run| run.start_time.timestamp() == ts)
+            .map(|run| run.id)
+    });
+    let (sessions_raw, sessions_detail) =
+        recent_sessions_pressure(&runs, threshold, pain_intensity, self_id);
+    push("Recent sessions", sessions_detail, sessions_raw, 0.15 * 1.2);
 
     Ok((factors, total))
 }
