@@ -14,7 +14,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
-BUNDLE_DIR="$REPO/src-tauri/target/release/bundle"
 
 VERSION="$(node -p "require('$REPO/package.json').version")"
 # BUNDLE_DIR/ARCH are overridable for CI cross-target builds, whose bundle
