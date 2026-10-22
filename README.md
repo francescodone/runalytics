@@ -146,6 +146,21 @@ every field. `release.sh` commits the bump, tags and pushes, runs
 release via `gh` (requires the `gh` CLI). Pass `--dry-run` to
 `release.sh` to preview the steps without committing or publishing.
 
+Or let CI do it: push the tag and `.github/workflows/release.yml` builds
+both Apple-silicon and Intel targets via `tauri-apps/tauri-action`, builds
+each DMG with `make_dmg.sh`, and creates a **draft** release — publish it
+from the Releases page once both jobs are green.
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+No signing secret is needed: Runalytics has no in-app updater, so the DMG
+is the only release artifact. Note the two paths publish the same tag —
+if CI created the release, don't also run `release.sh` for that version
+(or delete the CI draft with `gh release delete v0.2.0 -y` first).
+
 ## Architecture
 
 | Piece | Where | Notes |

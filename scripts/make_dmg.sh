@@ -17,7 +17,11 @@ REPO="$(dirname "$HERE")"
 BUNDLE_DIR="$REPO/src-tauri/target/release/bundle"
 
 VERSION="$(node -p "require('$REPO/package.json').version")"
-ARCH="$(uname -m)"
+# BUNDLE_DIR/ARCH are overridable for CI cross-target builds, whose bundle
+# lands in target/<triple>/release and whose DMG name must carry the target
+# arch rather than the runner's CPU.
+BUNDLE_DIR="${BUNDLE_DIR:-$REPO/src-tauri/target/release/bundle}"
+ARCH="${ARCH:-$(uname -m)}"
 APP="$BUNDLE_DIR/macos/Runalytics.app"
 DMG="$BUNDLE_DIR/dmg/Runalytics_${VERSION}_${ARCH}.dmg"
 

@@ -1,0 +1,87 @@
+name: Release
+
+# Publish a draft GitHub Release with the macOS app bundles whenever a version
+# tag (e.g. v0.2.0) is pushed. To cut a release:
+#
+#   ./scripts/bump_version.sh 0.2.0
+#   git commit -am "chore: release v0.2.0" && git push
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Or just run ./scripts/release.sh v0.2.0, which commits, tags, pushes, and
+# publishes locally without CI. If CI builds the tag first, run
+# `gh release delete v0.2.0 -y` before re-running the local script.
+#
+# Both Apple-silicon and Intel bundles are built. There is no updater key:
+# Runalytics has no in-app updater, so the DMG is the only artifact. The app
+# is ad-hoc-signed, so first launch needs Privacy & Security -> Open Anyway.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build app bundle (tauri-action creates/updates the draft release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Runalytics v__VERSION__"
+          releaseBody: "See the assets below to download Runalytics for macOS (arm64 for Apple silicon, x86_64 for Intel)."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # The DMG is built with hdiutil makehybrid (see scripts/make_dmg.sh)
+      # rather than Tauri's DMG step. BUNDLE_DIR/ARCH are overridden because
+      # a cross-target build lands in target/<triple>/release and the runner
+      # CPU is arm64 regardless of the target.
+      - name: Build DMG
+        env:
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle
+          ARCH: ${{ matrix.arch }}
+        run: bash scripts/make_dmg.sh
+
+      - name: Upload DMG to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          gh release upload "v$VERSION" \
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg --clobber
