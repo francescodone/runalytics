@@ -40,6 +40,7 @@ pub fn run() {
                     pmtiles_path: None,
                     last_provider: None,
                     theme: None,
+                    palette: None,
                     llm_enabled: false,
                     llm_endpoint: None,
                     llm_model: None,

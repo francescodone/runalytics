@@ -6,12 +6,15 @@ import "./lib/theme";
 import "./lib/navigation";
 import { initNavGate } from "./lib/navgate";
 import { fetchSetupState, renderSetup } from "./lib/setup";
-import { noteThemeChoice } from "./lib/theme";
+import { noteThemeChoice, PALETTES, setPalette } from "./lib/theme";
 import { hydrateIcons } from "./lib/icons";
 import { initPublishing } from "./lib/publishing";
 import { startOnboarding } from "./lib/onboarding";
-import { withBusy, confirmSaved } from "./lib/feedback";
+import { setBusy, withBusy, confirmSaved } from "./lib/feedback";
+import { animatePaneChange, scrollIntoViewMotion } from "./lib/motion";
 import type {
+  LlmStatus,
+  PaletteId,
   ProviderStatus,
   Settings,
   ThemeChoice,
@@ -31,6 +34,7 @@ function initPanes(): void {
   const orient = () => nav.setAttribute("aria-orientation", compact.matches ? "horizontal" : "vertical");
   orient();
   compact.addEventListener("change", orient);
+  let currentPane: string | null = null;
 
   function show(pane: string, scroll = false): void {
     for (const b of buttons) {
@@ -42,13 +46,14 @@ function initPanes(): void {
     for (const section of document.querySelectorAll<HTMLElement>(".settings-content section[id^='pane-']")) {
       section.hidden = section.id !== `pane-${pane}`;
     }
-    // The pane is the content the keyboard should land in next.
-    if (scroll) {
-      document.getElementById(`pane-${pane}`)?.scrollIntoView({
-        block: "nearest",
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-      });
+    const section = document.getElementById(`pane-${pane}`);
+    if (section && currentPane && currentPane !== pane) {
+      const from = buttons.findIndex((b) => b.dataset.pane === pane) > buttons.findIndex((b) => b.dataset.pane === currentPane) ? "next" : "back";
+      void animatePaneChange(section, from);
     }
+    currentPane = pane;
+    // The pane is the content the keyboard should land in next.
+    if (scroll && section) scrollIntoViewMotion(section, { block: "nearest" });
   }
 
   buttons.forEach((b, i) => {
@@ -121,6 +126,72 @@ function initTheme(settings: Settings | null): void {
     b.addEventListener("click", () => void choose(b));
     // Arrow keys select the neighbour and move focus with it, the way a
     // native radio group does; Space/Enter select the focused radio.
+    b.addEventListener("keydown", (e) => {
+      const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+      const backward = e.key === "ArrowLeft" || e.key === "ArrowUp";
+      if (!forward && !backward) return;
+      e.preventDefault();
+      const next = buttons[(i + (forward ? 1 : -1) + buttons.length) % buttons.length];
+      next.focus();
+      void choose(next);
+    });
+  });
+}
+
+/** The palette picker: one card per palette, a radiogroup like the scheme pills. */
+function initPalette(settings: Settings | null): void {
+  const grid = el("palette-picker");
+  let current = setPalette(settings?.palette);
+
+  const buttons = PALETTES.map((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "palette-option";
+    b.dataset.palette = p.id;
+    b.setAttribute("role", "radio");
+    const swatch = document.createElement("span");
+    swatch.className = "palette-swatch";
+    swatch.setAttribute("aria-hidden", "true");
+    for (const c of p.swatch) {
+      const dot = document.createElement("i");
+      dot.style.background = c;
+      swatch.append(dot);
+    }
+    const name = document.createElement("strong");
+    name.textContent = p.name;
+    const blurb = document.createElement("span");
+    blurb.className = "muted";
+    blurb.textContent = p.blurb;
+    b.append(swatch, name, blurb);
+    grid.append(b);
+    return b;
+  });
+
+  const mark = (id: PaletteId) => {
+    buttons.forEach((b) => {
+      const active = b.dataset.palette === id;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-checked", String(active));
+      b.tabIndex = active ? 0 : -1;
+    });
+  };
+  mark(current);
+
+  const choose = async (b: HTMLButtonElement): Promise<void> => {
+    const id = b.dataset.palette as PaletteId;
+    if (id === current) return;
+    current = setPalette(id);
+    mark(current);
+    try {
+      const latest = await tauri.getSettings();
+      await tauri.saveSettings({ ...latest, palette: id });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  buttons.forEach((b, i) => {
+    b.addEventListener("click", () => void choose(b));
     b.addEventListener("keydown", (e) => {
       const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
       const backward = e.key === "ArrowLeft" || e.key === "ArrowUp";
@@ -300,30 +371,33 @@ function initZones(settings: Settings | null): void {
     }
   });
 
-  el("zones-reset").addEventListener("click", async () => {
-    // Sending the defaults through the same save path means the backend stays
-    // the only place the COROS numbers are defined for a write.
-    const latest = await tauri.getSettings().catch(() => null);
-    if (!latest) return;
-    const th: Thresholds = {
-      ratioDecreasingHi: 0.5,
-      ratioResumingHi: 0.8,
-      ratioMaintainingHi: 1.0,
-      ratioOptimizedHi: 1.5,
-      recoveryExhausted: 19,
-      recoveryFatigued: 69,
-      recoveryNormal: 89,
-      buildWeeks: 3,
-      downWeekFactor: 0.7,
-      paceToleranceSecKm: 4,
-      paceStreak: 3,
-    };
+  el("zones-reset").addEventListener("click", async (ev) => {
+    const busy = setBusy(ev.currentTarget as HTMLButtonElement, "Restoring defaults…");
     try {
+      // Sending the defaults through the same save path means the backend stays
+      // the only place the COROS numbers are defined for a write.
+      const latest = await tauri.getSettings().catch(() => null);
+      if (!latest) return;
+      const th: Thresholds = {
+        ratioDecreasingHi: 0.5,
+        ratioResumingHi: 0.8,
+        ratioMaintainingHi: 1.0,
+        ratioOptimizedHi: 1.5,
+        recoveryExhausted: 19,
+        recoveryFatigued: 69,
+        recoveryNormal: 89,
+        buildWeeks: 3,
+        downWeekFactor: 0.7,
+        paceToleranceSecKm: 4,
+        paceStreak: 3,
+      };
       await tauri.saveSettings({ ...latest, thresholds: th });
       paintForm(th);
       paintPreviews();
     } catch (e) {
       fail(e);
+    } finally {
+      busy.restore();
     }
   });
 }
@@ -403,7 +477,13 @@ async function main(): Promise<void> {
   const settings = await tauri.getSettings().catch(() => null);
   if (settings?.pmtilesPath) el<HTMLInputElement>("pmtiles-path").value = settings.pmtilesPath;
   initTheme(settings);
+  initPalette(settings);
   initZones(settings);
+  if (!inTauri) {
+    for (const id of ["zones-save", "zones-reset", "tiles-save", "llm-save", "assistant-remove"]) {
+      el<HTMLButtonElement>(id).disabled = true;
+    }
+  }
 
   el("replay-tutorial").addEventListener("click", () => startOnboarding());
 
@@ -424,9 +504,9 @@ async function main(): Promise<void> {
     }
   });
 
-  el("coros-disconnect").addEventListener("click", async () => {
+  el("coros-disconnect").addEventListener("click", async (ev) => {
     try {
-      await tauri.disconnectProvider("coros");
+      await withBusy(ev.currentTarget as HTMLButtonElement, "Disconnecting…", () => tauri.disconnectProvider("coros"));
       await refresh();
       // Disconnecting undoes step 1 — the pane has to fall back with it.
       await renderSetupPane();
@@ -452,55 +532,99 @@ async function main(): Promise<void> {
   });
 
   // ---- injury assistant ----
-  const keyStatus = () =>
-    tauri
-      .llmStatus()
-      .then((s) => {
-        el("llm-key-status").textContent = s.hasKey
-          ? "A key is stored in the keychain."
-          : "No key stored. Public endpoints don't need one; hosted ones do."
-          ;
-        el<HTMLButtonElement>("llm-clear-key").disabled = !s.hasKey;
-      })
-      .catch(() => undefined);
-  try {
-    const [status, current] = await Promise.all([tauri.llmStatus(), tauri.getSettings()]);
-    el<HTMLInputElement>("llm-enabled").checked = current.llmEnabled;
-    el<HTMLInputElement>("llm-endpoint").value = status.endpoint ?? "";
-    el<HTMLInputElement>("llm-model").value = status.model ?? "";
-  } catch {
-    /* outside Tauri — the section stays at defaults */
-  }
-  await keyStatus();
+  // One assistant, not a list: the pane shows either the configured assistant
+  // (read-only, key masked) or the add form. There is deliberately no edit
+  // path — the key can't be read back out of the keychain, so changing one
+  // means removing and re-adding, which keeps the card honest about what the
+  // app actually holds.
+  const renderAssistant = async (): Promise<void> => {
+    const card = el("assistant-card");
+    const form = el("assistant-form");
+    let status: LlmStatus | null = null;
+    try {
+      status = await tauri.llmStatus();
+    } catch {
+      /* outside Tauri — the pane stays on the form at defaults */
+    }
+    const endpoint = status?.endpoint?.trim() ?? "";
+    if (!endpoint) {
+      card.hidden = true;
+      form.hidden = false;
+      return;
+    }
+    // The enable checkbox is gone: having an endpoint *is* being enabled. An
+    // older settings.json could hold an endpoint with the flag off, which made
+    // the assistant look configured everywhere else yet answer with the
+    // offline note. Fold that state forward rather than showing a dead card.
+    if (!status!.configured) {
+      try {
+        await tauri.saveSettings({ ...(await tauri.getSettings()), llmEnabled: true });
+      } catch {
+        /* outside Tauri — the card still describes the stored endpoint */
+      }
+    }
+    el("assistant-endpoint").textContent = endpoint;
+    el("assistant-model").textContent = status!.model?.trim() || "default";
+    el("assistant-key").textContent = status!.hasKey
+      ? "••••••••••••  stored in the keychain"
+      : "none — this endpoint needs no key";
+    form.hidden = true;
+    card.hidden = false;
+  };
+  await renderAssistant();
 
   el("llm-save").addEventListener("click", async (ev) => {
     const btn = ev.target as HTMLButtonElement;
+    const endpoint = el<HTMLInputElement>("llm-endpoint").value.trim();
+    // Catch the shape here rather than at ask time: a typo saved as the
+    // assistant's endpoint surfaces as "could not reach the endpoint", which
+    // reads as a network problem, not as the field being wrong.
+    const url = URL.canParse(endpoint) ? new URL(endpoint) : null;
+    if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
+      fail("Enter the endpoint as a full URL, e.g. https://api.openai.com/v1.");
+      return;
+    }
+    if (
+      url.protocol === "http:" &&
+      !["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)
+    ) {
+      fail("Plain http is only allowed for a local endpoint (localhost).");
+      return;
+    }
     try {
-      await withBusy(btn, "Save", async () => {
-        const current = await tauri.getSettings();
+      await withBusy(btn, "Add assistant", async () => {
+        const key = el<HTMLInputElement>("llm-key").value.trim();
+        if (key) await tauri.setLlmApiKey(key);
         await tauri.saveSettings({
-          ...current,
-          llmEnabled: el<HTMLInputElement>("llm-enabled").checked,
-          llmEndpoint: el<HTMLInputElement>("llm-endpoint").value.trim() || null,
+          ...(await tauri.getSettings()),
+          llmEnabled: true,
+          llmEndpoint: endpoint,
           llmModel: el<HTMLInputElement>("llm-model").value.trim() || null,
         });
-        const key = el<HTMLInputElement>("llm-key").value.trim();
-        if (key) {
-          await tauri.setLlmApiKey(key);
-          el<HTMLInputElement>("llm-key").value = "";
-        }
+        el<HTMLInputElement>("llm-key").value = "";
       });
-      confirmSaved(btn, "Save");
-      await keyStatus();
+      confirmSaved(btn, "Add assistant");
+      await renderAssistant();
     } catch (e) {
       fail(e);
     }
   });
 
-  el("llm-clear-key").addEventListener("click", async () => {
+  el("assistant-remove").addEventListener("click", async (ev) => {
+    const btn = ev.target as HTMLButtonElement;
     try {
-      await tauri.clearLlmApiKey();
-      await keyStatus();
+      await withBusy(btn, "Remove assistant", async () => {
+        await tauri.saveSettings({
+          ...(await tauri.getSettings()),
+          llmEnabled: false,
+          llmEndpoint: null,
+          llmModel: null,
+        });
+        // The key belongs to this assistant, so it goes with it. No entry is
+        // not an error — an endpoint may never have needed one.
+        await tauri.clearLlmApiKey().catch(() => undefined);
+      });
+      await renderAssistant();
     } catch (e) {
       fail(e);
     }

@@ -82,6 +82,7 @@ export function createSheet(options: SheetOptions): Sheet {
 
   let shown = false;
   let dismissing = false;
+  let closeCycle = 0;
   let loadToken = 0;
   let opener: HTMLElement | null = null;
 
@@ -113,7 +114,14 @@ export function createSheet(options: SheetOptions): Sheet {
   }
 
   function open(): void {
-    if (shown) return;
+    if (shown) {
+      if (dismissing) {
+        closeCycle++;
+        dismissing = false;
+        settleIn();
+      }
+      return;
+    }
     shown = true;
     dismissing = false;
     opener = document.activeElement as HTMLElement | null;
@@ -143,6 +151,7 @@ export function createSheet(options: SheetOptions): Sheet {
   function close(): void {
     if (!shown || dismissing) return;
     dismissing = true;
+    const cycle = ++closeCycle;
     // Both surfaces dismiss in the +axis direction: a side sheet off the
     // right, a bottom sheet off the bottom. Same sign as the entry, so the
     // exit retraces the entry path.
@@ -156,7 +165,9 @@ export function createSheet(options: SheetOptions): Sheet {
       from: readAxis(panel, axis()),
       duration: 0.28,
       bounce: 0,
-    }).then(finishClose);
+    }).then(() => {
+      if (cycle === closeCycle) finishClose();
+    });
   }
 
   // --- drag to dismiss -----------------------------------------------------
@@ -173,12 +184,18 @@ export function createSheet(options: SheetOptions): Sheet {
 
   grab.addEventListener("pointerdown", (e) => {
     if ((e.target as HTMLElement).closest("[data-close]")) return;
+    const a = axis();
+    const position = readAxis(panel, a);
+    if (dismissing) {
+      closeCycle++;
+      dismissing = false;
+    }
+    setAxis(panel, a, position);
     dragging = true;
     activeId = e.pointerId;
     grab.setPointerCapture(e.pointerId);
-    const a = axis();
     startPointer = a === "x" ? e.clientX : e.clientY;
-    startPos = readAxis(panel, a);
+    startPos = position;
     lastPos = startPointer;
     lastTime = e.timeStamp;
     velocity = 0;
@@ -215,12 +232,15 @@ export function createSheet(options: SheetOptions): Sheet {
     const commit = Math.abs(clamped - max) < Math.abs(clamped - 0);
     if (commit) {
       dismissing = true;
+      const cycle = ++closeCycle;
       void animateSpring(panel, a, max, {
         from: current,
         velocity,
         duration: 0.4,
         bounce: 0.18,
-      }).then(finishClose);
+      }).then(() => {
+        if (cycle === closeCycle) finishClose();
+      });
     } else {
       void animateSpring(panel, a, 0, {
         from: current,

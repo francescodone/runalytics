@@ -26,8 +26,33 @@
           <div id="today-hero"></div>
         </section>
 
-        <div class="group">
-          <h2 class="group-head">Your week</h2>
+        <div class="group body-group">
+          <h2 class="group-head">Understand your signals</h2>
+          <section id="status" class="panel">
+            <header class="panel-head">
+              <h2>Training load</h2>
+            </header>
+            <div id="status-panel"></div>
+          </section>
+          <div class="body-pair">
+            <section id="risk" class="panel">
+              <header class="panel-head">
+                <h2>Injury risk</h2>
+              </header>
+              <div id="risk-panel" class="risk-body"></div>
+            </section>
+            <section id="recovery" class="panel">
+              <header class="panel-head">
+                <h2>Body &amp; recovery</h2>
+              </header>
+              <div id="recovery-panel"></div>
+              <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
+            </section>
+          </div>
+        </div>
+
+        <div class="group week-group">
+          <h2 class="group-head">Your training week</h2>
           <section id="week" class="panel">
             <header class="panel-head">
               <h2>This week</h2>
@@ -40,8 +65,8 @@
           </section>
         </div>
 
-        <div class="group">
-          <h2 class="group-head">Training trends</h2>
+        <div class="group trends-group">
+          <h2 class="group-head">Longer-term training</h2>
           <section id="volume" class="panel">
             <header class="panel-head">
               <h2>Weekly mileage</h2>
@@ -50,35 +75,12 @@
             <div id="volume-panel" class="bar-chart volume"></div>
             <p class="muted heatmap-legend" id="volume-legend" hidden></p>
           </section>
-          <section id="status" class="panel">
-            <header class="panel-head">
-              <h2>Training load</h2>
-            </header>
-            <div id="status-panel"></div>
-          </section>
           <section id="fitness" class="panel">
             <header class="panel-head">
               <h2>Fitness</h2>
               <span class="panel-meta">What you could race right now</span>
             </header>
             <div class="carousel"><div id="fitness-cards" class="cards"></div></div>
-          </section>
-        </div>
-
-        <div class="group">
-          <h2 class="group-head">Recovery &amp; risk</h2>
-          <section id="recovery" class="panel">
-            <header class="panel-head">
-              <h2>Recovery</h2>
-            </header>
-            <div id="recovery-panel"></div>
-            <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
-          </section>
-          <section id="risk" class="panel">
-            <header class="panel-head">
-              <h2>Injury risk</h2>
-            </header>
-            <div id="risk-panel" class="risk-body"></div>
           </section>
         </div>
 

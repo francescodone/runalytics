@@ -11,6 +11,7 @@
 
 import { tauri, fail } from "./ipc";
 import { icons } from "./icons";
+import { setBusy, withBusy } from "./feedback";
 import { fetchFlowState, type FlowState } from "./flow";
 
 export function setupComplete(state: FlowState): boolean {
@@ -63,13 +64,13 @@ export function renderSetup(
     const btn = panel.querySelector<HTMLButtonElement>("button")!;
     const status = panel.querySelector<HTMLElement>(".setup-status")!;
     btn.addEventListener("click", async () => {
-      btn.disabled = true;
+      const busy = setBusy(btn, "Waiting for sign-in…");
       status.textContent = "Opening your browser… finish the sign-in there.";
       try {
         await tauri.connectProvider("coros");
       } catch (e) {
         status.textContent = "";
-        btn.disabled = false;
+        busy.restore();
         fail(e);
         return;
       }
@@ -81,6 +82,7 @@ export function renderSetup(
           const st = await tauri.providerStatus();
           if (st.find((s) => s.provider === "coros")?.connected) {
             window.clearInterval(timer);
+            busy.restore();
             steps[0].done = true;
             onAdvance();
             render();
@@ -88,7 +90,7 @@ export function renderSetup(
             window.clearInterval(timer);
             status.textContent =
               "Still waiting on the sign-in. Finish it in the browser, then try again.";
-            btn.disabled = false;
+            busy.restore();
             btn.textContent = "Try again";
           }
         } catch {
@@ -107,17 +109,15 @@ export function renderSetup(
     const btn = panel.querySelector<HTMLButtonElement>("button")!;
     const status = panel.querySelector<HTMLElement>(".setup-status")!;
     btn.addEventListener("click", async () => {
-      btn.disabled = true;
       status.textContent = "Syncing…";
       try {
-        const r = await tauri.syncNow("coros");
+        const r = await withBusy(btn, "Syncing history…", () => tauri.syncNow("coros"));
         syncSummary = `${r.activitiesNew} new run${r.activitiesNew === 1 ? "" : "s"} · ${r.healthDays} days of health data`;
         steps[1].done = true;
         onAdvance();
         render();
       } catch (e) {
         status.textContent = "";
-        btn.disabled = false;
         fail(e);
       }
     });

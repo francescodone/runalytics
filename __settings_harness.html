@@ -17,9 +17,10 @@
         pmtilesPath: "~/maps/planet.pmtiles",
         lastProvider: "coros",
         theme: "system",
-        llmEnabled: false,
-        llmEndpoint: null,
-        llmModel: null,
+        palette: null,
+        llmEnabled: true,
+        llmEndpoint: "https://llm.example.com/v1",
+        llmModel: "gpt-4o-mini",
         thresholds: {
           ratioDecreasingHi: 0.5,
           ratioResumingHi: 0.8,
@@ -34,6 +35,10 @@
           paceStreak: 3,
         },
       };
+
+      // Stands in for the macOS keychain: the settings object never holds the
+      // key, only the fact that one is stored.
+      let llmHasKey = true;
 
       // In-memory publishing config for the Calendar subscription pane.
       const publishing = {
@@ -87,7 +92,19 @@
               // Deliberately no plan: the Setup pane should be sitting on step 3.
               return null;
             case "llm_status":
-              return { hasKey: false, endpoint: null, model: null };
+              return {
+                configured: settings.llmEnabled && !!settings.llmEndpoint,
+                hasKey: llmHasKey,
+                endpoint: settings.llmEndpoint,
+                model: settings.llmModel,
+              };
+            case "set_llm_api_key":
+              if (!String(args.key || "").trim()) throw new Error("the key is empty");
+              llmHasKey = true;
+              return;
+            case "clear_llm_api_key":
+              llmHasKey = false;
+              return;
             case "flow_state":
               return { connected: true, lastSync: new Date().toISOString(), plan: null, pushed: false };
             case "sync_status":

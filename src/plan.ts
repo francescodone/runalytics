@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
 import { scrollIntoViewMotion } from "./lib/motion";
+import { initGroupProgress, initScrollReveal } from "./lib/reveal";
 import { escapeHtml, openWorkout } from "./lib/workout-detail";
 import { qualityBand } from "./lib/plan-bands";
 import { requirePlanOrRedirect, initNavGate } from "./lib/navgate";
@@ -652,23 +653,19 @@ function renderPacingProposal(offer: PlanProposal | null): void {
     </div>`;
   el<HTMLButtonElement>("pacing-accept").addEventListener("click", async (ev) => {
     const btn = ev.currentTarget as HTMLButtonElement;
-    btn.disabled = true;
-    btn.textContent = "Applying…";
     try {
-      await tauri.applyProposal("coros", pacingOffer!.id);
+      await withBusy(btn, "Applying…", () => tauri.applyProposal("coros", pacingOffer!.id));
       pacingOffer = null;
       box.hidden = true;
       box.innerHTML = "";
       await refresh();
     } catch (err) {
       fail(err);
-      btn.disabled = false;
-      btn.textContent = "Accept adjustment";
     }
   });
-  el<HTMLButtonElement>("pacing-dismiss").addEventListener("click", async () => {
+  el<HTMLButtonElement>("pacing-dismiss").addEventListener("click", async (ev) => {
     try {
-      await tauri.dismissProposal(pacingOffer!.id, null);
+      await withBusy(ev.currentTarget as HTMLButtonElement, "Dismissing…", () => tauri.dismissProposal(pacingOffer!.id, null));
       pacingOffer = null;
       box.hidden = true;
       box.innerHTML = "";
@@ -701,6 +698,12 @@ async function withPlanSyncFeed<T>(
 
 async function main(): Promise<void> {
   initSyncIndicator();
+  // Same motion layer as the dashboard: the page's scroll rail (this page has
+  // no group headings, so the listener only drives the rail) and the panels'
+  // entrance held until they are scrolled to — the weeks table and the pacing
+  // panel live well below the form.
+  initGroupProgress();
+  initScrollReveal();
   // The kind decides which fields exist at all, so it is applied before
   // anything reads the form — and re-applied on every change.
   applyKind();
@@ -806,12 +809,15 @@ async function main(): Promise<void> {
   syncStepper();
 
   const form = el<HTMLFormElement>("create-plan");
+  if (!inTauri) form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = true;
   form.addEventListener("input", updatePlanPreview);
   form.addEventListener("change", updatePlanPreview);
   updatePlanPreview();
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    const btn = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    if (btn.disabled) return;
     setPlanError(null);
     const thresholdInput = el<HTMLInputElement>("plan-threshold");
     const threshold = parsePace(thresholdInput.value);
@@ -830,11 +836,9 @@ async function main(): Promise<void> {
       if (kind !== "maintenance") dateInput.focus();
       return;
     }
-    const btn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-    btn?.setAttribute("disabled", "");
     try {
       const mileageRaw = parseFloat(el<HTMLInputElement>("plan-mileage").value);
-      const [plan, workouts] = await tauri.createPlan({
+      const [plan, workouts] = await withBusy(btn, "Generating plan…", () => tauri.createPlan({
         distance: selectedDistance(),
         kind,
         targetDate: dateStr,
@@ -843,7 +847,7 @@ async function main(): Promise<void> {
         longrunDay: parseInt(el<HTMLSelectElement>("plan-longrun-day").value, 10),
         increase: el<HTMLSelectElement>("plan-increase").value as IncreaseMethod,
         currentWeeklyKm: isFinite(mileageRaw) && mileageRaw > 0 ? mileageRaw : null,
-      });
+      }));
       renderPlan(plan, workouts);
       // This may be the first plan the account has ever had — that is exactly
       // the moment the rest of the nav becomes real.
@@ -851,8 +855,6 @@ async function main(): Promise<void> {
       scrollIntoViewMotion(el("plan-view"), { block: "start" });
     } catch (e) {
       fail(e);
-    } finally {
-      btn?.removeAttribute("disabled");
     }
   });
 

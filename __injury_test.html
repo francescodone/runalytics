@@ -34,7 +34,7 @@
           if (cmd === "pain_entries") return DB.entries;
           if (cmd === "pending_proposal") return null;
           if (cmd === "pain_messages")
-            return DB.msgs.filter((m) => m.bodyPart === args.bodyPart);
+            return DB.msgs.filter((m) => m.entryId === args.entryId);
           if (cmd === "save_pain_entry") {
             const e = {
               id: "e" + DB.entries.length,
@@ -51,6 +51,7 @@
           }
           if (cmd === "delete_pain_entry") {
             DB.entries = DB.entries.filter((e) => e.id !== args.id);
+            DB.msgs = DB.msgs.filter((m) => m.entryId !== args.id);
             return null;
           }
           if (cmd === "resolve_pain") {
@@ -60,20 +61,23 @@
           }
           if (cmd === "mark_pain_followup") return null;
           if (cmd === "clear_pain_messages") {
-            DB.msgs = DB.msgs.filter((m) => m.bodyPart !== args.bodyPart);
+            DB.msgs = DB.msgs.filter((m) => m.entryId !== args.entryId);
             return null;
           }
           if (cmd === "ask_assistant") {
+            const entry = DB.entries.find((e) => e.id === args.entryId);
             const reply = {
               id: "m" + DB.msgs.length,
-              bodyPart: args.bodyPart,
+              bodyPart: entry ? entry.bodyPart : "other",
+              entryId: args.entryId,
               role: "assistant",
               content: "offline note",
               ts: new Date().toISOString(),
             };
             DB.msgs.push({
               id: "u" + DB.msgs.length,
-              bodyPart: args.bodyPart,
+              bodyPart: reply.bodyPart,
+              entryId: args.entryId,
               role: "user",
               content: args.question,
               ts: reply.ts,
@@ -97,7 +101,7 @@
       <a href="settings.html" class="nav-link">Settings</a>
     </nav>
     <main id="app">
-      <section id="log-pain">
+      <section id="log-pain" class="panel">
         <h2>Where does it hurt?</h2>
         <p class="muted">
           Click the spot on the body map, rate how bad it is, and say when it started.
@@ -125,27 +129,15 @@
         </div>
       </section>
 
-      <section id="proposal-section" hidden>
+      <section id="proposal-section" class="panel" hidden>
         <h2>Proposed plan change</h2>
         <div id="proposal-card" class="notice accent stack"></div>
       </section>
 
-      <section id="journal-section">
+      <section id="journal-section" class="panel">
         <h2>Pain journal</h2>
-        <div id="pain-list" class="pain-list"></div>
-      </section>
-
-      <section id="assistant-section">
-        <h2>Injury assistant</h2>
         <p class="muted" id="assistant-mode-note"></p>
-        <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
-        <div class="chat-input">
-          <input id="chat-question" type="text" placeholder="Ask about this spot…" disabled />
-          <button id="chat-send" class="primary" disabled>Ask</button>
-        </div>
-        <div class="actions">
-          <button id="chat-clear" class="secondary">Clear thread</button>
-        </div>
+        <div id="pain-list" class="pain-list"></div>
       </section>
     </main>
     <script type="module" src="/src/injury.ts"></script>

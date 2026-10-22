@@ -267,6 +267,23 @@ const MIGRATIONS: &[(u32, &str)] = &[
     DELETE FROM activity_scores;
     "#,
     ),
+    (
+        10,
+        r#"
+    -- The assistant thread moves from one conversation per body region to
+    -- one per pain entry, so each journal card carries its own chat. Legacy
+    -- region-keyed messages are adopted by the newest entry for that region
+    -- rather than dropped — the thread a runner already had must survive
+    -- the upgrade.
+    ALTER TABLE pain_messages ADD COLUMN entry_id TEXT;
+    UPDATE pain_messages SET entry_id = (
+        SELECT pe.id FROM pain_entries pe
+        WHERE pe.body_part = pain_messages.body_part
+        ORDER BY pe.started_on DESC, pe.created_ts DESC LIMIT 1
+    ) WHERE entry_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_pain_msg_entry ON pain_messages (entry_id);
+    "#,
+    ),
 ];
 
 /// `ALTER TABLE ... ADD COLUMN` for a column that a migration gained *after*
@@ -1270,8 +1287,28 @@ impl Store {
 
     pub fn delete_pain_entry(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        // The entry's chat belongs to it, so it goes with the entry —
+        // orphaned messages would be unreachable through any UI.
+        conn.execute("DELETE FROM pain_messages WHERE entry_id=?1", params![id])?;
         conn.execute("DELETE FROM pain_entries WHERE id=?1", params![id])?;
         Ok(())
+    }
+
+    /// The entry a thread belongs to — `ask_assistant` needs its body region
+    /// for the context it hands the model.
+    pub fn pain_entry_by_id(&self, id: &str) -> Result<Option<PainEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                &format!(
+                    "SELECT {cols} FROM pain_entries WHERE id=?1",
+                    cols = Self::PAIN_COLS
+                ),
+                params![id],
+                Self::pain_row,
+            )
+            .optional()?;
+        Ok(row)
     }
 
     /// Mark an episode as settled on `day` — the runner said "it's gone".
@@ -1454,29 +1491,28 @@ impl Store {
     pub fn insert_pain_message(&self, m: &PainMessage) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO pain_messages (id, body_part, role, content, ts)
-             VALUES (?1,?2,?3,?4,?5)",
-            params![m.id, m.body_part, m.role, m.content, m.ts.timestamp()],
+            "INSERT INTO pain_messages (id, body_part, entry_id, role, content, ts)
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                m.id,
+                m.body_part,
+                m.entry_id,
+                m.role,
+                m.content,
+                m.ts.timestamp()
+            ],
         )?;
         Ok(())
     }
 
-    /// Oldest first — chat reads top-down.
-    pub fn list_pain_messages(&self, body_part: &str) -> Result<Vec<PainMessage>> {
+    /// One entry's thread, oldest first — chat reads top-down.
+    pub fn list_pain_messages(&self, entry_id: &str) -> Result<Vec<PainMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, body_part, role, content, ts
-             FROM pain_messages WHERE body_part=?1 ORDER BY ts",
+            "SELECT id, body_part, entry_id, role, content, ts
+             FROM pain_messages WHERE entry_id=?1 ORDER BY ts",
         )?;
-        let rows = stmt.query_map(params![body_part], |r| {
-            Ok(PainMessage {
-                id: r.get(0)?,
-                body_part: r.get(1)?,
-                role: r.get(2)?,
-                content: r.get(3)?,
-                ts: ts_to_dt(r.get::<_, i64>(4)?),
-            })
-        })?;
+        let rows = stmt.query_map(params![entry_id], Self::pain_msg_row)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1484,13 +1520,24 @@ impl Store {
         Ok(out)
     }
 
-    pub fn clear_pain_messages(&self, body_part: &str) -> Result<()> {
+    pub fn clear_pain_messages(&self, entry_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "DELETE FROM pain_messages WHERE body_part=?1",
-            params![body_part],
+            "DELETE FROM pain_messages WHERE entry_id=?1",
+            params![entry_id],
         )?;
         Ok(())
+    }
+
+    fn pain_msg_row(r: &rusqlite::Row<'_>) -> std::result::Result<PainMessage, rusqlite::Error> {
+        Ok(PainMessage {
+            id: r.get(0)?,
+            body_part: r.get(1)?,
+            entry_id: r.get(2)?,
+            role: r.get(3)?,
+            content: r.get(4)?,
+            ts: ts_to_dt(r.get::<_, i64>(5)?),
+        })
     }
 
     // ---- plan proposals -------------------------------------------------------
@@ -2731,18 +2778,19 @@ mod tests {
         assert!(s.pending_proposal().unwrap().is_none());
         assert!(s.last_dismissed(&proposal.signature).unwrap().is_some());
 
-        // Messages persist per region, oldest first.
+        // Messages persist per entry, oldest first.
         for (role, content) in [("user", "does this need rest?"), ("assistant", "yes")] {
             s.insert_pain_message(&PainMessage {
                 id: uuid::Uuid::new_v4().to_string(),
                 body_part: "knee.left".into(),
+                entry_id: Some(entry.id.clone()),
                 role: role.into(),
                 content: content.into(),
                 ts: Utc::now(),
             })
             .unwrap();
         }
-        let msgs = s.list_pain_messages("knee.left").unwrap();
+        let msgs = s.list_pain_messages(&entry.id).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
 

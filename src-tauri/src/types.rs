@@ -660,12 +660,18 @@ pub struct PainEntry {
     pub followup_at: Option<DateTime<Utc>>,
 }
 
-/// One turn of the assistant thread for a body region.
+/// One turn of the assistant thread for one pain entry. `body_part` stays on
+/// the row because the model context and the legacy region-keyed threads are
+/// region-scoped; `entry_id` is the thread key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PainMessage {
     pub id: String,
     pub body_part: String,
+    /// The journal entry this turn belongs to. `serde(default)` keeps rows
+    /// written before per-entry threads existed deserialising.
+    #[serde(default)]
+    pub entry_id: Option<String>,
     /// "user" | "assistant".
     pub role: String,
     pub content: String,

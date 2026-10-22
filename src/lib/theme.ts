@@ -15,7 +15,7 @@
 // only ever a mirror — settings.json stays the source of truth.
 
 import { tauri } from "./ipc";
-import type { ThemeChoice } from "./types";
+import type { PaletteId, ThemeChoice } from "./types";
 
 /** The resolved scheme actually painted — which token set is active. */
 export type ResolvedTheme = "light" | "dark";
@@ -30,6 +30,45 @@ function readCache(): ThemeChoice | null {
     return CHOICES.includes(v as ThemeChoice) ? (v as ThemeChoice) : null;
   } catch {
     // Private mode or a disabled storage layer: fall through to the default.
+    return null;
+  }
+}
+
+/** Every palette the Settings picker offers, default first. `swatch` is the
+ * preview strip (canvas, primary, accent) in dark-scheme colours. */
+export const PALETTES: { id: PaletteId; name: string; blurb: string; swatch: [string, string, string] }[] = [
+  { id: "amethyst", name: "Amethyst Dusk", blurb: "The original violet twilight", swatch: ["#151321", "#7650dd", "#b6a7ff"] },
+  { id: "glacier", name: "Glacier Lake", blurb: "Cold, clear alpine blue", swatch: ["#0a1721", "#0077bc", "#6ebdff"] },
+  { id: "evergreen", name: "Evergreen Trail", blurb: "Deep forest and fresh moss", swatch: ["#0b1911", "#008557", "#6fcc9e"] },
+  { id: "sakura", name: "Sakura Bloom", blurb: "Cherry blossom at first light", swatch: ["#1f1016", "#c12c77", "#f195b9"] },
+  { id: "ember", name: "Desert Ember", blurb: "Warm copper of a sunset run", swatch: ["#1f110b", "#b84b00", "#f49d74"] },
+];
+
+const PALETTE_KEY = "runalytics.palette";
+
+function isPalette(v: unknown): v is PaletteId {
+  return PALETTES.some((p) => p.id === v);
+}
+
+/** Paint a palette and mirror it to the cache. The default carries no
+ * attribute, so the base token set in app.css applies untouched. */
+export function setPalette(id: PaletteId | null | undefined): PaletteId {
+  const palette = isPalette(id) ? id : "amethyst";
+  if (palette === "amethyst") delete document.documentElement.dataset.palette;
+  else document.documentElement.dataset.palette = palette;
+  try {
+    localStorage.setItem(PALETTE_KEY, palette);
+  } catch {
+    // Cache only; settings.json is reconciled on every load.
+  }
+  return palette;
+}
+
+function readPaletteCache(): PaletteId | null {
+  try {
+    const v = localStorage.getItem(PALETTE_KEY);
+    return isPalette(v) ? v : null;
+  } catch {
     return null;
   }
 }
@@ -79,6 +118,7 @@ export function setTheme(choice: ThemeChoice | null | undefined): ResolvedTheme 
 // time for the stylesheet's first match. With no cache yet (first launch) the
 // choice is "system" — exactly what the app did before this setting existed.
 document.documentElement.dataset.theme = resolveTheme(readCache());
+setPalette(readPaletteCache());
 
 /**
  * Reconcile with settings.json once it has loaded. Every page calls this after
@@ -87,6 +127,7 @@ document.documentElement.dataset.theme = resolveTheme(readCache());
  */
 export async function syncTheme(): Promise<ResolvedTheme> {
   const settings = await tauri.getSettings().catch(() => null);
+  if (settings) setPalette(settings.palette);
   return trackTheme(settings?.theme);
 }
 

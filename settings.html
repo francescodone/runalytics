@@ -47,7 +47,7 @@
         </aside>
 
         <div class="settings-content">
-          <section id="pane-setup" role="tabpanel" aria-label="Setup">
+          <section class="panel" id="pane-setup" role="tabpanel" aria-label="Setup">
             <h2>Setup</h2>
             <p class="section-intro">
               Three steps, in order: connect your watch, pull your history, then create a plan on
@@ -87,10 +87,10 @@
             </div>
           </section>
 
-          <section id="pane-appearance" role="tabpanel" aria-label="Appearance" hidden>
+          <section class="panel" id="pane-appearance" role="tabpanel" aria-label="Appearance" hidden>
             <h2>Appearance</h2>
             <p class="section-intro">
-              Pick a colour scheme, or let Runalytics follow macOS and change with it.
+              Pick a colour scheme and palette, or let Runalytics follow macOS and change with it.
             </p>
             <div class="setting-row">
               <div class="setting-label">
@@ -103,9 +103,16 @@
                 <button type="button" data-theme="dark" role="radio" aria-checked="false">Dark</button>
               </div>
             </div>
+            <div class="setting-row palette-row">
+              <div class="setting-label">
+                <strong>Palette</strong>
+                <span class="muted">Recolours buttons, charts and maps. Works in light and dark.</span>
+              </div>
+              <div class="palette-grid" id="palette-picker" role="radiogroup" aria-label="Palette"></div>
+            </div>
           </section>
 
-          <section id="pane-zones" role="tabpanel" aria-label="Training zones" hidden>
+          <section class="panel" id="pane-zones" role="tabpanel" aria-label="Training zones" hidden>
             <h2>Training zones</h2>
             <p class="section-intro">
               The boundaries behind the dashboard's training-status chart, recovery bands and
@@ -220,7 +227,7 @@
             </div>
           </section>
 
-          <section id="pane-calendar" role="tabpanel" aria-label="Calendar subscription" hidden>
+          <section class="panel" id="pane-calendar" role="tabpanel" aria-label="Calendar subscription" hidden>
             <h2>Calendar subscription</h2>
             <p class="section-intro">
               Your plan publishes as an <code>.ics</code> feed your calendar app can subscribe to,
@@ -234,8 +241,8 @@
               <button id="calendar-subscribe" type="button" class="secondary" disabled><span data-icon="calendar"></span> Subscribe</button>
             </div>
             <p id="publish-status" role="status">Loading publishing settings...</p>
-            <details>
-              <summary>HTTPS / WebDAV / GitHub gist publishing</summary>
+            <details class="disclosure">
+              <summary><span class="disclosure-copy"><strong>Publish to a calendar app</strong><small>HTTPS, WebDAV, or GitHub gist</small></span></summary>
               <form id="calendar-publishing-form" class="calendar-publishing-form">
                 <p class="muted">GitHub gist: upload URL <code>https://api.github.com/gists/&lt;id&gt;</code>, subscription URL <code>https://gist.githubusercontent.com/&lt;user&gt;/&lt;id&gt;/raw/runalytics.ics</code>, no username, token with gist scope.</p>
                 <label class="check-label"><input id="calendar-enabled" type="checkbox" /> Publish automatically</label>
@@ -255,7 +262,7 @@
             </div>
           </section>
 
-          <section id="pane-tiles" role="tabpanel" aria-label="Map tiles" hidden>
+          <section class="panel" id="pane-tiles" role="tabpanel" aria-label="Map tiles" hidden>
             <h2>Map tiles</h2>
             <p class="section-intro">
               The heatmap renders offline from an <code>.pmtiles</code> file. Drop one on disk and
@@ -270,7 +277,7 @@
             </div>
           </section>
 
-          <section id="pane-assistant" role="tabpanel" aria-label="Assistant" hidden>
+          <section class="panel" id="pane-assistant" role="tabpanel" aria-label="Assistant" hidden>
             <h2>Injury assistant</h2>
             <p class="section-intro">
               Optional. Point at any OpenAI-compatible chat endpoint and the Injuries page becomes
@@ -278,30 +285,58 @@
               still works and replies come from the built-in logger. The key is stored in the
               macOS keychain, never in a file.
             </p>
-            <label class="assistant-toggle">
-              <input id="llm-enabled" type="checkbox" />
-              Enable the assistant
-            </label>
-            <label>
-              Endpoint
-              <input id="llm-endpoint" type="text" placeholder="https://api.openai.com/v1" />
-            </label>
-            <label>
-              Model
-              <input id="llm-model" type="text" placeholder="gpt-4o-mini" />
-            </label>
-            <label>
-              API key
-              <input id="llm-key" type="password" placeholder="sk-…" autocomplete="off" />
-            </label>
-            <p id="llm-key-status" class="muted"></p>
-            <div class="actions">
-              <button id="llm-save">Save</button>
-              <button id="llm-clear-key" class="secondary">Remove key</button>
+
+            <!-- One assistant at a time. While one is configured this card is the
+                 whole pane and the add form does not exist, so there is no way to
+                 stack a second endpoint. Removing it reveals the form again. -->
+            <div id="assistant-card" class="assistant-card surface" hidden>
+              <div class="assistant-card-head">
+                <span class="sn-icon" data-icon="sparkles"></span>
+                <strong>Assistant</strong>
+                <span id="assistant-state" class="chip status ok">active</span>
+              </div>
+              <dl class="assistant-facts">
+                <dt>Endpoint</dt>
+                <dd id="assistant-endpoint" class="mono"></dd>
+                <dt>Model</dt>
+                <dd id="assistant-model" class="mono"></dd>
+                <dt>API key</dt>
+                <dd id="assistant-key" class="mono"></dd>
+              </dl>
+              <p class="hint">
+                The key lives in the macOS keychain and can't be read back out — to change it,
+                remove this assistant and add it again with the new key.
+              </p>
+              <div class="actions">
+                <button id="assistant-remove" class="danger">Remove assistant</button>
+              </div>
+            </div>
+
+            <div id="assistant-form" hidden>
+              <label>
+                Endpoint
+                <input id="llm-endpoint" type="text" placeholder="https://api.openai.com/v1" />
+              </label>
+              <label>
+                Model
+                <input id="llm-model" type="text" placeholder="gpt-4o-mini" />
+              </label>
+              <label>
+                API key
+                <input id="llm-key" type="password" placeholder="sk-…" autocomplete="off" />
+              </label>
+              <p class="hint">
+                The endpoint can be the base URL your provider documents
+                (<code>https://host/v1</code>) or its full chat route. A key is optional — local
+                endpoints like Ollama don't need one.
+              </p>
+              <div class="actions">
+                <button id="llm-save">Add assistant</button>
+              </div>
             </div>
           </section>
 
-          <section id="pane-about" role="tabpanel" aria-label="About" hidden>
+          <section class="panel" id="pane-about" role="tabpanel" aria-label="About" hidden>
             <h2>About</h2>
             <p class="muted">Runalytics 0.1.0 — training analytics for runners.</p>
             <div class="actions">

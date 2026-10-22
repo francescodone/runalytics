@@ -671,6 +671,9 @@ pub struct Settings {
     /// wins, which is also what the app did before the setting existed.
     #[serde(default)]
     pub theme: Option<String>,
+    /// Colour palette id ("amethyst", "glacier", ...). None means the default.
+    #[serde(default)]
+    pub palette: Option<String>,
     /// Injury assistant: an OpenAI-compatible chat endpoint. `#[serde(default)]`
     /// keeps existing settings.json files loading after these fields appeared.
     #[serde(default)]
@@ -1025,26 +1028,31 @@ pub async fn clear_llm_api_key() -> Result<()> {
     }
 }
 
-/// One turn of the assistant chat for a body region. The user message and the
-/// reply are both persisted so the thread survives reloads. With no endpoint
-/// configured the turn is answered locally — the journal stays usable.
+/// One turn of the assistant chat for one journal entry. The user message and
+/// the reply are both persisted so the thread survives reloads. With no
+/// endpoint configured the turn is answered locally — the journal stays usable.
 #[tauri::command]
 pub async fn ask_assistant(
     state: State<'_, AppState>,
-    body_part: String,
+    entry_id: String,
     question: String,
 ) -> Result<PainMessage> {
+    let entry = state
+        .store
+        .pain_entry_by_id(&entry_id)?
+        .ok_or_else(|| AppError::Other("this pain entry no longer exists".into()))?;
     let now = Utc::now();
     let user_msg = PainMessage {
         id: uuid::Uuid::new_v4().to_string(),
-        body_part: body_part.clone(),
+        body_part: entry.body_part.clone(),
+        entry_id: Some(entry_id.clone()),
         role: "user".into(),
         content: question.clone(),
         ts: now,
     };
     state.store.insert_pain_message(&user_msg)?;
 
-    let history = state.store.list_pain_messages(&body_part)?;
+    let history = state.store.list_pain_messages(&entry_id)?;
     let settings = state.settings.lock().unwrap().clone();
     let reply_text = if settings.llm_enabled {
         let endpoint = settings
@@ -1062,7 +1070,7 @@ pub async fn ask_assistant(
             .unwrap_or("gpt-4o-mini")
             .to_string();
         let key = llm_key_entry().ok().and_then(|e| e.get_password().ok());
-        let ctx = assistant::build_context(&state.store, &body_part, &settings.thresholds())?;
+        let ctx = assistant::build_context(&state.store, &entry.body_part, &settings.thresholds())?;
         // Drop the message we just stored from the history replay.
         let prior: Vec<PainMessage> = history
             .into_iter()
@@ -1070,12 +1078,18 @@ pub async fn ask_assistant(
             .collect();
         assistant::chat(&endpoint, &model, key.as_deref(), &ctx, &prior, &question).await?
     } else {
-        assistant::offline_note()
+        assistant::offline_note(
+            settings
+                .llm_endpoint
+                .as_deref()
+                .is_some_and(|e| !e.trim().is_empty()),
+        )
     };
 
     let reply = PainMessage {
         id: uuid::Uuid::new_v4().to_string(),
-        body_part,
+        body_part: entry.body_part,
+        entry_id: Some(entry_id),
         role: "assistant".into(),
         content: reply_text,
         ts: Utc::now(),
@@ -1087,12 +1101,12 @@ pub async fn ask_assistant(
 #[tauri::command]
 pub async fn pain_messages(
     state: State<'_, AppState>,
-    body_part: String,
+    entry_id: String,
 ) -> Result<Vec<PainMessage>> {
-    state.store.list_pain_messages(&body_part)
+    state.store.list_pain_messages(&entry_id)
 }
 
 #[tauri::command]
-pub async fn clear_pain_messages(state: State<'_, AppState>, body_part: String) -> Result<()> {
-    state.store.clear_pain_messages(&body_part)
+pub async fn clear_pain_messages(state: State<'_, AppState>, entry_id: String) -> Result<()> {
+    state.store.clear_pain_messages(&entry_id)
 }

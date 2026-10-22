@@ -115,8 +115,14 @@
           hasTrack: false,
         },
       ];
+      const painMode = new URLSearchParams(location.search).get("pain") === "1";
+      const painEntry = {
+        id: "FAKE-PAIN-ENTRY", bodyPart: "knee.right", intensity: 6,
+        startedOn: day(2).slice(0, 10), notes: "", createdAt: day(2),
+        resolvedOn: null, followupAt: null,
+      };
       const dashboard = {
-        scores: { trainingScore: 78, injuryRisk: 34, recoveryScore: 61, globalScore: 68, notes: [] },
+        scores: { trainingScore: 78, injuryRisk: painMode ? 65 : 34, recoveryScore: 61, globalScore: painMode ? 45 : 68, notes: [] },
         scoreHistory,
         fitness: {
           date: day(0), vo2max: 54.2, thresholdSecKm: 278,
@@ -155,8 +161,12 @@
           { label: "HRV trend", detail: "41 ms vs 52 ms baseline", contribution: 0.46 },
           { label: "Resting HR drift", detail: "52 bpm vs 50 bpm baseline", contribution: 0 },
           { label: "Recovery debt", detail: "71/100 recovery from sleep, HRV and resting HR", contribution: 0 },
+          ...(painMode ? [{ label: "Reported pain", detail: "right knee 6/10", contribution: 0.6 }] : []),
         ],
+        activePain: painMode ? painEntry : null,
+        pendingProposal: null,
       };
+      if (painMode) scoreHistory[scoreHistory.length - 1].risk = 65;
       window.__TAURI_INTERNALS__ = {
         invoke: async (cmd, args) => {
           if (cmd === "provider_status") return [{ provider: "coros", connected: true, lastSync: day(0), detail: "" }];
@@ -193,6 +203,7 @@
           // The dashboard's own `activities` stays runs-only, but all_activities
           // carries every sport — that is the pair the mileage split is tested on.
           if (cmd === "all_activities") return [...activities, ...cross];
+          if (cmd === "pain_entries") return painMode ? [painEntry] : [];
           if (cmd === "workouts_between") {
             // A plausible week: easy Mon, tempo Wed, easy Fri, long Sun —
             // keyed by local YYYY-MM-DD like the backend's plan_workouts.
@@ -266,8 +277,33 @@
           <div id="today-hero"></div>
         </section>
 
-        <div class="group">
-          <h2 class="group-head">Your week</h2>
+        <div class="group body-group">
+          <h2 class="group-head">Understand your signals</h2>
+          <section id="status" class="panel">
+            <header class="panel-head">
+              <h2>Training load</h2>
+            </header>
+            <div id="status-panel"></div>
+          </section>
+          <div class="body-pair">
+            <section id="risk" class="panel">
+              <header class="panel-head">
+                <h2>Injury risk</h2>
+              </header>
+              <div id="risk-panel" class="risk-body"></div>
+            </section>
+            <section id="recovery" class="panel">
+              <header class="panel-head">
+                <h2>Body &amp; recovery</h2>
+              </header>
+              <div id="recovery-panel"></div>
+              <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
+            </section>
+          </div>
+        </div>
+
+        <div class="group week-group">
+          <h2 class="group-head">Your training week</h2>
           <section id="week" class="panel">
             <header class="panel-head">
               <h2>This week</h2>
@@ -280,8 +316,8 @@
           </section>
         </div>
 
-        <div class="group">
-          <h2 class="group-head">Training trends</h2>
+        <div class="group trends-group">
+          <h2 class="group-head">Longer-term training</h2>
           <section id="volume" class="panel">
             <header class="panel-head">
               <h2>Weekly mileage</h2>
@@ -290,35 +326,12 @@
             <div id="volume-panel" class="bar-chart volume"></div>
             <p class="muted heatmap-legend" id="volume-legend" hidden></p>
           </section>
-          <section id="status" class="panel">
-            <header class="panel-head">
-              <h2>Training load</h2>
-            </header>
-            <div id="status-panel"></div>
-          </section>
           <section id="fitness" class="panel">
             <header class="panel-head">
               <h2>Fitness</h2>
               <span class="panel-meta">What you could race right now</span>
             </header>
             <div class="carousel"><div id="fitness-cards" class="cards"></div></div>
-          </section>
-        </div>
-
-        <div class="group">
-          <h2 class="group-head">Recovery &amp; risk</h2>
-          <section id="recovery" class="panel">
-            <header class="panel-head">
-              <h2>Recovery</h2>
-            </header>
-            <div id="recovery-panel"></div>
-            <div class="carousel"><div id="wearable-cards" class="cards signals"></div></div>
-          </section>
-          <section id="risk" class="panel">
-            <header class="panel-head">
-              <h2>Injury risk</h2>
-            </header>
-            <div id="risk-panel" class="risk-body"></div>
           </section>
         </div>
 

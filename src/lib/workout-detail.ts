@@ -1,5 +1,6 @@
 import { tauri, fmtKm, ymdLocal } from "./ipc";
 import { createModal, type Modal } from "./overlay";
+import { withBusy } from "./feedback";
 import type { CalendarEvent } from "./types";
 
 export function escapeHtml(value: string): string {
@@ -73,14 +74,13 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     form.addEventListener("submit", async (submit) => {
       submit.preventDefault();
       const button = form.querySelector<HTMLButtonElement>("button")!;
-      button.disabled = true;
+      if (button.disabled) return;
       status.textContent = "Updating calendar...";
       try {
-        await tauri.matchCalendarActivity(event.workoutId!, Number(select.value));
+        await withBusy(button, "Matching run…", () => tauri.matchCalendarActivity(event.workoutId!, Number(select.value)));
         window.dispatchEvent(new CustomEvent("runalytics:calendar-updated"));
         modal.close();
       } catch (error) { status.textContent = String(error); }
-      finally { button.disabled = false; }
     });
   } catch (error) { status.textContent = String(error); }
 }

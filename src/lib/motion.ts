@@ -31,6 +31,14 @@ export const SPRING = {
   momentum: { type: "spring", bounce: 0.18, duration: 0.4 } as const,
 } as const;
 
+const axisAnimations = new WeakMap<HTMLElement, Partial<Record<"x" | "y", { stop(): void }>>>();
+
+function stopAxis(el: HTMLElement, property: "x" | "y"): void {
+  const active = axisAnimations.get(el);
+  active?.[property]?.stop();
+  if (active) delete active[property];
+}
+
 /// Apple's momentum projection (from the *Designing Fluid Interfaces* sample):
 /// where a gesture is GOING, not where the finger stopped. `velocity` is px/s;
 /// `decelerationRate` ≈ 0.998 for normal scroll feel. 1000 px/s projects
@@ -86,26 +94,45 @@ export function animateSpring(
   // caller may have been writing the transform by hand during a drag, and we
   // must not rely on motion re-parsing that inline value to find its start.
   const from = opts.from ?? readAxis(el, property);
+  stopAxis(el, property);
   const controls = animate(el, { [property]: [from, target] }, {
     type: "spring",
     bounce: opts.bounce ?? 0,
     duration: opts.duration ?? 0.34,
     velocity: opts.velocity ?? 0,
   });
-  return controls.finished.then(() => undefined).catch(() => undefined);
+  let resolveStopped!: () => void;
+  const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });
+  const current = { stop: () => { controls.stop(); resolveStopped(); } };
+  const active = axisAnimations.get(el) ?? {};
+  active[property] = current;
+  axisAnimations.set(el, active);
+  return Promise.race([controls.finished.then(() => undefined).catch(() => undefined), stopped]).finally(() => {
+    if (active[property] === current) delete active[property];
+  });
 }
 
 /// Write a single-axis translate without disturbing the other axis, so a sheet
 /// sliding on X never fights a transform on Y.
 export function setAxis(el: HTMLElement, property: "x" | "y", value: number): void {
+  stopAxis(el, property);
   const px = `${Math.round(value * 100) / 100}px`;
   if (property === "x") el.style.transform = `translateX(${px})`;
   else el.style.transform = `translateY(${px})`;
 }
 
-/// Read the current translate on one axis from the element's inline transform.
-/// Falls back to 0 when nothing has been written yet.
+/// Read the current on-screen translate, including an in-flight spring, so
+/// grabbing a moving sheet starts exactly where it is rather than jumping.
 export function readAxis(el: HTMLElement, property: "x" | "y"): number {
+  const computed = getComputedStyle(el);
+  if (computed.transform !== "none") {
+    const matrix = new DOMMatrixReadOnly(computed.transform);
+    return property === "x" ? matrix.m41 : matrix.m42;
+  }
+  if (computed.translate !== "none") {
+    const [x, y = "0px"] = computed.translate.split(" ");
+    return parseFloat(property === "x" ? x : y) || 0;
+  }
   const m = el.style.transform.match(
     property === "x" ? /translateX\((-?[\d.]+)px\)/ : /translateY\((-?[\d.]+)px\)/,
   );
@@ -183,5 +210,12 @@ export function animateSlideIn(el: HTMLElement, from: "next" | "back"): Promise<
     { opacity: [0, 1], x: [offset, 0] },
     { duration: 0.3, ease: "easeOut" },
   );
+  return controls.finished.then(() => undefined).catch(() => undefined);
+}
+
+export function animatePaneChange(el: HTMLElement, from: "next" | "back"): Promise<void> {
+  const controls = prefersReducedMotion()
+    ? animate(el, { opacity: [0.85, 1] }, { duration: 0.12 })
+    : animate(el, { opacity: [0.65, 1], x: [from === "next" ? 12 : -12, 0] }, SPRING.settle);
   return controls.finished.then(() => undefined).catch(() => undefined);
 }

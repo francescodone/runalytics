@@ -45,14 +45,17 @@ function mount(): HTMLButtonElement | null {
 
 function paint(chip: HTMLButtonElement, syncing: boolean): void {
   chip.classList.toggle("syncing", syncing);
+  chip.classList.toggle("btn-busy", syncing);
   if (syncing) {
     chip.innerHTML = `${SPINNER}<span class="sync-chip-label">Syncing</span>`;
     chip.disabled = true;
     chip.setAttribute("aria-label", "Syncing your data");
+    chip.setAttribute("aria-busy", "true");
   } else {
     chip.innerHTML = `${icons.sync}<span class="sync-chip-label">Sync</span>`;
     chip.disabled = false;
     chip.removeAttribute("aria-label");
+    chip.removeAttribute("aria-busy");
   }
   chip.hidden = false;
 }
@@ -66,9 +69,11 @@ export function initSyncIndicator(): void {
   if (!chip) return;
 
   const setSyncing = (v: boolean) => paint(chip, v);
+  let changedSinceStatusRequest = false;
 
   chip.addEventListener("click", async () => {
-    chip.disabled = true;
+    changedSinceStatusRequest = true;
+    setSyncing(true);
     try {
       await tauri.syncNow("coros");
       // The sync://completed event paints the chip and refreshes the page.
@@ -82,11 +87,15 @@ export function initSyncIndicator(): void {
   // stays visible as the idle Sync button.
   void tauri
     .syncStatus()
-    .then(setSyncing)
-    .catch(() => setSyncing(false));
+    .then((status) => { if (!changedSinceStatusRequest) setSyncing(status); })
+    .catch(() => { if (!changedSinceStatusRequest) setSyncing(false); });
 
-  void listen("sync://started", () => setSyncing(true)).catch(() => undefined);
+  void listen("sync://started", () => {
+    changedSinceStatusRequest = true;
+    setSyncing(true);
+  }).catch(() => undefined);
   void listen<{ ok: boolean }>("sync://completed", () => {
+    changedSinceStatusRequest = true;
     setSyncing(false);
     window.dispatchEvent(new CustomEvent("runalytics:sync-completed"));
   }).catch(() => undefined);

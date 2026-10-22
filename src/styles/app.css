@@ -1,12 +1,8 @@
-/* Runalytics design system: paper/sheet layering, monochrome ink chrome,
-  emerald reserved for data. The chrome palette is the "paper" system —
-  a neutral canvas (--bg) under brighter sheets (--panel/--panel-2) under a
-  still-brighter fill (--fill) for control tracks. Chrome itself is ink:
-  primary actions and the active nav row are inverted ink pills, so colour
-  appears only where it carries meaning (charts, status, urgency).
-  Lines are hairline ink washes (alpha), not solid greys, so they sit on any
-  sheet without a per-scheme twin. Light/dark follow the saved appearance or
-  OS preference. */
+/* Runalytics design system: violet brand and data scales over layered
+  neutral surfaces. --bg, --panel, --panel-2 and --fill define the surface
+  hierarchy in both themes. Brand, chart, workout and status colours are
+  separate token families so reusable controls stay visually consistent.
+  Light and dark modes follow the saved appearance or OS preference. */
 
 /* Geist, vendored: the app's voice — a grotesque with tight-fit figures that
    keeps big metrics compact without a condensed cut. CSP is font-src 'self',
@@ -22,30 +18,27 @@
 :root {
   color-scheme: dark;
 
-  /* Paper → sheet → fill: the three-layer neutral stack. Sheets are pure
-     neutral (no blue or green cast) so the emerald data never competes with
-     the canvas it sits on. */
-  --bg: #0a0a0a;
-  --panel: #171717;
-  --panel-2: #1e1e1e;
-  --fill: #262626;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.15);
+  /* Canvas, raised surfaces and control fills share a violet-neutral base
+     so branded data remains distinct from the surrounding interface. */
+  --bg: #151321;
+  --panel: #211e30;
+  --panel-2: #2a263b;
+  --fill: #322e45;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.18);
 
-  --text: #e8e8e8;
-  --text-dim: #989898;
-  --text-faint: #828282;
+  --text: #f7f5ff;
+  --text-dim: #c3bfd2;
+  --text-faint: #aaa4ba;
 
-  /* Ink chrome: the inverted pair behind primary actions and the active nav
-     row. In the dark scheme ink is light (a white pill, dark text); on paper
-     it flips. This is the single "primary" of the interface — colour stays
-     out of the chrome so the data scale owns it. */
-  --primary: #e8e8e8;
-  --primary-text: #121212;
+  /* Primary actions use a contrast-tested violet fill and white text in
+     both themes. Status colours remain separate from navigation chrome. */
+  --primary: #7650dd;
+  --primary-text: #ffffff;
 
-  --accent: #34d399;
-  --accent-text: #04120c;
-  --accent-soft: rgba(52, 211, 153, 0.14);
+  --accent: #b6a7ff;
+  --accent-text: #24174f;
+  --accent-soft: rgba(143, 116, 255, 0.2);
 
   /* The urgency ramp: overdue → urgent → soon → done. Bright enough to sit
      as text on the dark sheets and as a dot on any surface. */
@@ -57,28 +50,46 @@
 
   /* ---- the chart scale -----------------------------------------------------
      Every data graphic (sparkline, gauge, meter, zone band, heatmap ramp) is
-     drawn from these five greens — no hue is used to carry meaning inside a
-     chart. One rule makes the ramp readable: the steps run in STRICT ORDER
-     along the quantity they measure, so a banded chart is always a dark→light
-     (or light→dark) ramp and neighbouring bands never repeat a step. A 3-step
+     drawn from these five violet steps — no hue is used to carry meaning
+     inside a chart. The steps run in STRICT ORDER along the quantity they
+     measure, so neighbouring bands never repeat a step. A 3-step
      chart (injury risk) uses 1→3, a 4-step one (recovery) 1→4, a 5-step one
      (load ratio) 1→5. --scale-1 is held above ~3:1 against its scheme's
      canvas so the weakest step still reads as a 2px line.
      The tone colours above stay for chrome (chips, notices, danger buttons),
      where red/amber still mean something outside a chart. */
-  --scale-1: #2e7d63;
-  --scale-2: #34a37b;
-  --scale-3: #34d399;
-  --scale-4: #6ee7b7;
-  --scale-5: #d1fae5;
+  --scale-1: #ac98df;
+  --scale-2: #bca9ed;
+  --scale-3: #cbb9fa;
+  --scale-4: #dacaff;
+  --scale-5: #eee5ff;
+  --brand-start: #5544e9;
+  --brand-mid: #6936e9;
+  --brand-end: #5324cd;
+  --hero-start: #5544e9;
+  --hero-mid: #6d3de9;
+  --hero-end: #7835e7;
+  --hero-center: #6038e9;
+  --hero-highlight: #e7d8ff;
+  --on-brand: #ffffff;
+  --brand-ink: #5634d9;
+  --workout-easy: #d6c6ff;
+  --workout-tempo: #c6affb;
+  --workout-intervals: #b595f4;
+  --workout-long: #e1d1ff;
+  --workout-race: #f0e9ff;
+  --map-heat-low: #7454b8;
+  --map-heat-mid: #6743c9;
+  --map-heat-high: #562fc7;
+  --map-heat-peak: #432295;
+  --map-outline: #24174f;
 
-  /* Content, controls, overlays, and compact status labels.
-     One concentric ladder: a control (10) sits inside a card (18) with a
-     16px inset, and an overlay (22) reads as the largest, closest surface. */
+  /* Concentric shape ladder: compact labels (8), controls (12), content
+     surfaces (20) and overlays (28). */
   --radius: 8px;
-  --radius-control: 10px;
-  --radius-lg: 18px;
-  --radius-overlay: 22px;
+  --radius-control: 12px;
+  --radius-lg: 20px;
+  --radius-overlay: 28px;
   --radius-pill: 999px;
 
   /* Three elevation roles, so a floating surface reads as floating no matter
@@ -87,8 +98,8 @@
      of every shadow below. */
   /* Soft and far: a floating sheet is lit from above by a 1px inset rim and
      casts one wide, deep, negative-spread shadow — no hard 6px smudge. */
-  --shadow-sm: 0 12px 30px -16px rgba(0, 0, 0, 0.7);
-  --shadow-md: 0 18px 40px -24px rgba(0, 0, 0, 0.75);
+  --shadow-sm: 0 10px 28px -18px rgba(5, 0, 24, 0.35);
+  --shadow-md: 0 20px 48px -25px rgba(5, 0, 24, 0.45);
   --shadow-lg: inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 30px 70px -30px rgba(0, 0, 0, 0.85);
   /* The lift under a small floating control (map controls, carousel discs).
@@ -109,8 +120,8 @@
   --space-7: 28px;
   --space-8: 40px;
   /* The page's own rhythm: sections apart, and the gutter around content. */
-  --stack: var(--space-7);
-  --gutter: var(--space-6);
+  --stack: 30px;
+  --gutter: 36px;
   /* Padding inside a content surface: --surface-pad for cards and tiles,
      --surface-pad-lg for the panels that hold other components. */
   --surface-pad: var(--space-5);
@@ -129,14 +140,19 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   /* Type scale. Body copy and controls sit on --text-md; labels step down
      once; metrics step up by size, never by ad-hoc pixel values. */
-  --text-xs: 11px;
-  --text-sm: 12px;
+  --text-xs: 12px;
+  --text-sm: 13px;
   --text-base: 13px;
   --text-md: 14px;
   --text-lg: 15px;
-  --text-xl: 16px;
+  --text-xl: 17px;
   --text-2xl: 20px;
   --text-3xl: 28px;
+  --type-page: clamp(26px, 2.5vw, 34px);
+  --type-page-mobile: 27px;
+  --type-feature: clamp(22px, 2.15vw, 31px);
+  --type-session: clamp(26px, 2.8vw, 38px);
+  --type-gauge: clamp(46px, 5vw, 62px);
   /* Metric sizes: one tile value, one card value, and the two hero numbers
      (gauge centre, readiness headline). */
   --metric-xs: 17px;
@@ -152,17 +168,18 @@
 
   /* One control height so a button, input, select and stepper cell all
      occupy the same vertical rhythm wherever they sit side by side. */
-  --control-h: 40px;
-  --control-h-sm: 32px;
+  --control-h: 44px;
+  --control-h-sm: 40px;
   --control-h-lg: 46px;
   --control-pad-x: var(--space-4);
   --control-pad-x-sm: var(--space-3);
   --control-pad-x-lg: var(--space-5);
-  --sidebar-w: 192px;
+  --sidebar-w: 208px;
   --toolbar-h: 64px;
   /* How far a control compresses under the finger — one value, so a pill,
      a stepper cell and a primary button all feel the same press. */
   --press-scale: 0.96;
+  --disabled-opacity: 0.46;
   /* Fill for the pointer pill of a segmented control. Derived from --text so
      it reads as a grey haze in either scheme; --glass-bg-2 would vanish on
      the light track, where the track and the fill are nearly the same tone. */
@@ -203,8 +220,8 @@
 
   /* Glass material for floating chrome (nav, sheet, toast, onboarding).
      Content surfaces use the lighter --glass-surface pair below. */
-  --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
-  --glass-bg-strong: color-mix(in srgb, var(--panel) 88%, transparent);
+  --glass-bg: var(--panel);
+  --glass-bg-strong: var(--panel);
   --glass-bg-2: color-mix(in srgb, var(--panel-2) 82%, transparent);
   --glass-blur: blur(20px) saturate(180%);
   /* Content-surface glass: cards, panels, tables. Lighter than the chrome
@@ -218,13 +235,12 @@
   /* Tinted glass for button fills (danger = red; primary is plain ink). */
   --glass-danger: var(--bad);
   /* Hairline top highlight that sells the raised surface on cards. */
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  /* The light behind the glass. Backdrop blur has nothing to diffuse over a
-     flat fill, so translucency alone would look identical to solid — these
-     low-alpha glows are what make every panel read as glass. */
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  /* Keep the canvas quiet so the brand gradient and data surfaces carry the
+     visual hierarchy without a competing ambient wash. */
   --ambient: none;
 
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 /* Registered custom properties are only needed for animated gradients;
@@ -243,27 +259,27 @@
   /* The same paper → sheet → fill stack, inverted: the canvas is a mid grey
      and the sheets climb toward white, so a card still reads as a raised
      sheet rather than disappearing into the page. */
-  --bg: #e6e6e6;
-  --panel: #fdfdfd;
-  --panel-2: #f3f3f3;
-  --fill: #f0f0f0;
-  --line: rgba(15, 15, 15, 0.09);
-  --line-strong: rgba(15, 15, 15, 0.17);
+  --bg: #f4f3f9;
+  --panel: #ffffff;
+  --panel-2: #f9f8fd;
+  --fill: #f2f0f9;
+  --line: rgba(47, 35, 95, 0.08);
+  --line-strong: rgba(47, 35, 95, 0.16);
 
-  --text: #0f0f0f;
+  --text: #201b32;
   /* Dim/faint are pinned to clear 4.5:1 against the PAPER canvas, not just
      the sheets — eyebrow labels sit directly on --bg, where Autocratico's
      own mid-grey (4.4:1) would be a step short for 11px text. */
-  --text-dim: #5c5c5c;
-  --text-faint: #666666;
+  --text-dim: #625d71;
+  --text-faint: #6f6b7c;
 
   /* Ink flips: on paper the primary action is a dark pill with light text. */
-  --primary: #0f0f0f;
-  --primary-text: #fafafa;
+  --primary: #6036df;
+  --primary-text: #ffffff;
 
-  --accent: #047857;
+  --accent: #6036df;
   --accent-text: #ffffff;
-  --accent-soft: rgba(4, 120, 87, 0.12);
+  --accent-soft: #eee9ff;
 
   /* Darkened for the pale canvas: the dark-scheme amber lands at ~2:1 on
      white and fails as text. Good and warn are pinned just above 4.5:1
@@ -274,36 +290,313 @@
   --bad: #cf3a2e;
   --bad-text: #ffffff;
 
-  /* The chart scale inverts its direction here: on paper the strongest step
-     is the DEEPEST green, not the brightest, and the weakest step has to stay
-     dark enough to clear 3:1 against a pale canvas. */
-  --scale-1: #4d8b74;
-  --scale-2: #2f9e78;
-  --scale-3: #047857;
-  --scale-4: #065f46;
-  --scale-5: #01201a;
+  /* On light surfaces the chart scale progresses from medium to deep violet;
+     even the lightest step keeps text and line contrast against white. */
+  --scale-1: #7557bb;
+  --scale-2: #6b4bbc;
+  --scale-3: #603dc1;
+  --scale-4: #512cb5;
+  --scale-5: #371687;
+  --workout-easy: #6751b4;
+  --workout-tempo: #6544bd;
+  --workout-intervals: #5934b6;
+  --workout-long: #6045b1;
+  --workout-race: #4923a1;
 
   /* Light-mode glass needs more opacity — white haze washes out text
      over bright content much faster than dark glass over dark. */
-  --glass-bg: color-mix(in srgb, var(--panel) 82%, transparent);
-  --glass-bg-strong: color-mix(in srgb, var(--panel) 92%, transparent);
+  --glass-bg: var(--panel);
+  --glass-bg-strong: var(--panel);
   --glass-bg-2: color-mix(in srgb, var(--panel-2) 88%, transparent);
   --glass-surface: var(--panel);
   --glass-surface-2: var(--panel-2);
   --glass-danger: var(--bad);
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  /* On paper the same glows read as stains rather than light, so they stay
-     below the dark-scheme values — but they still have to be strong enough
-     to see *through* the glass, or the panels look plain white. */
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  /* The light canvas also stays flat; elevation comes from the surface
+     shadows and violet accents instead. */
   --ambient: none;
 
   /* Soft and far, lightened: a black 0.85 shadow on paper reads as a bruise. */
-  --shadow-sm: 0 12px 30px -16px rgba(23, 23, 23, 0.35);
-  --shadow-md: 0 18px 40px -24px rgba(23, 23, 23, 0.4);
-  --shadow-lg: inset 0 1px 0 rgba(255, 255, 255, 0.6),
-    0 30px 70px -30px rgba(23, 23, 23, 0.35);
+  --shadow-sm: 0 12px 32px -20px rgba(55, 36, 120, 0.22);
+  --shadow-md: 0 24px 50px -28px rgba(55, 36, 120, 0.25);
+  --shadow-lg: 0 28px 72px -34px rgba(55, 36, 120, 0.3);
   --shadow-float: 0 2px 10px rgba(23, 23, 23, 0.22);
   --scrim: rgba(20, 20, 20, 0.4);
+}
+
+/* ---- palettes --------------------------------------------------------------
+   The violet above is "Amethyst Dusk", the default. Each alternative below is
+   the same token set hue-rotated in OKLCH (lightness kept), then nudged to the
+   same contrast floors, so every chart, chip and button reads identically.
+   Set by src/lib/theme.ts as [data-palette] on <html>; status tones
+   (--good/--warn/--bad) stay fixed because they carry meaning. */
+:root[data-palette="glacier"] {
+  --bg: #0a1721;
+  --panel: #132330;
+  --panel-2: #192b3c;
+  --fill: #203445;
+  --text: #f1f8ff;
+  --text-dim: #b6c4d3;
+  --text-faint: #9aaabc;
+  --primary: #0077bc;
+  --accent: #6ebdff;
+  --accent-text: #00263f;
+  --accent-soft: rgba(0, 152, 232, 0.2);
+  --scale-1: #74aae5;
+  --scale-2: #87baf3;
+  --scale-3: #99caff;
+  --scale-4: #b6d7ff;
+  --scale-5: #ddecff;
+  --brand-start: #00719b;
+  --brand-mid: #006ea7;
+  --brand-end: #005b87;
+  --hero-start: #00719b;
+  --hero-mid: #0071ad;
+  --hero-end: #006fb7;
+  --hero-center: #006d9f;
+  --hero-highlight: #cde2ff;
+  --brand-ink: #006592;
+  --workout-easy: #afd4ff;
+  --workout-tempo: #8dc2ff;
+  --workout-intervals: #69afff;
+  --workout-long: #c3ddff;
+  --workout-race: #e2eeff;
+  --map-heat-low: #006dbd;
+  --map-heat-mid: #0069a5;
+  --map-heat-high: #005d8c;
+  --map-heat-peak: #00456d;
+  --map-outline: #00263f;
+  --shadow-sm: 0 10px 28px -18px rgba(0, 5, 13, 0.35);
+  --shadow-md: 0 20px 48px -25px rgba(0, 5, 13, 0.45);
+}
+:root[data-palette="glacier"][data-theme="light"] {
+  --bg: #f0f5f9;
+  --panel: #ffffff;
+  --accent-text: #ffffff;
+  --panel-2: #f6f9fd;
+  --fill: #ecf2fa;
+  --line: rgba(0, 51, 81, 0.08);
+  --line-strong: rgba(0, 51, 81, 0.16);
+  --text: #0c2133;
+  --text-dim: #536273;
+  --text-faint: #626e7c;
+  --primary: #00699c;
+  --accent: #00699c;
+  --accent-soft: #e0efff;
+  --scale-1: #0070bf;
+  --scale-2: #0069ac;
+  --scale-3: #00639a;
+  --scale-4: #005683;
+  --scale-5: #003b5b;
+  --workout-easy: #006ba8;
+  --workout-tempo: #0065a2;
+  --workout-intervals: #005a8e;
+  --workout-long: #00629c;
+  --workout-race: #004a75;
+  --shadow-sm: 0 12px 32px -20px rgba(0, 59, 93, 0.22);
+  --shadow-md: 0 24px 50px -28px rgba(0, 59, 93, 0.25);
+  --shadow-lg: 0 28px 72px -34px rgba(0, 59, 93, 0.3);
+}
+:root[data-palette="evergreen"] {
+  --bg: #0b1911;
+  --panel: #13261c;
+  --panel-2: #192f24;
+  --fill: #20382c;
+  --text: #f0f9f4;
+  --text-dim: #b5c7be;
+  --text-faint: #97aea4;
+  --primary: #008557;
+  --accent: #6fcc9e;
+  --accent-text: #002c18;
+  --accent-soft: rgba(0, 171, 107, 0.2);
+  --scale-1: #68b999;
+  --scale-2: #7dc8a9;
+  --scale-3: #90d7b9;
+  --scale-4: #a9e3cc;
+  --scale-5: #d6f2e7;
+  --brand-start: #007d31;
+  --brand-mid: #007c49;
+  --brand-end: #006737;
+  --hero-start: #007d31;
+  --hero-mid: #007f4d;
+  --hero-end: #007f57;
+  --hero-center: #007a40;
+  --hero-highlight: #c0ebdc;
+  --brand-ink: #007138;
+  --workout-easy: #a3e0c7;
+  --workout-tempo: #7cd2b1;
+  --workout-intervals: #48c29a;
+  --workout-long: #b5e7d5;
+  --workout-race: #dcf3ea;
+  --map-heat-low: #007f5b;
+  --map-heat-mid: #00774b;
+  --map-heat-high: #00693b;
+  --map-heat-peak: #004f2e;
+  --map-outline: #002c18;
+  --shadow-sm: 0 10px 28px -18px rgba(0, 6, 2, 0.35);
+  --shadow-md: 0 20px 48px -25px rgba(0, 6, 2, 0.45);
+}
+:root[data-palette="evergreen"][data-theme="light"] {
+  --bg: #f0f6f3;
+  --panel: #ffffff;
+  --accent-text: #ffffff;
+  --panel-2: #f5faf8;
+  --fill: #ebf4f0;
+  --line: rgba(0, 58, 33, 0.08);
+  --line-strong: rgba(0, 58, 33, 0.16);
+  --text: #0b251a;
+  --text-dim: #51665d;
+  --text-faint: #5e7068;
+  --primary: #007642;
+  --accent: #007642;
+  --accent-soft: #ddf3e8;
+  --scale-1: #007f59;
+  --scale-2: #007851;
+  --scale-3: #007045;
+  --scale-4: #006138;
+  --scale-5: #004324;
+  --workout-easy: #00774c;
+  --workout-tempo: #00734b;
+  --workout-intervals: #006640;
+  --workout-long: #006f47;
+  --workout-race: #005532;
+  --shadow-sm: 0 12px 32px -20px rgba(0, 68, 38, 0.22);
+  --shadow-md: 0 24px 50px -28px rgba(0, 68, 38, 0.25);
+  --shadow-lg: 0 28px 72px -34px rgba(0, 68, 38, 0.3);
+}
+:root[data-palette="sakura"] {
+  --bg: #1f1016;
+  --panel: #2d1a21;
+  --panel-2: #38222a;
+  --fill: #422932;
+  --text: #fff3f6;
+  --text-dim: #d1bcc1;
+  --text-faint: #baa0a6;
+  --primary: #c12c77;
+  --accent: #f195b9;
+  --accent-text: #420828;
+  --accent-soft: rgba(225, 84, 153, 0.2);
+  --scale-1: #d98ba2;
+  --scale-2: #e89db2;
+  --scale-3: #f6aec1;
+  --scale-4: #fdc1cf;
+  --scale-5: #ffe1e7;
+  --brand-start: #b40087;
+  --brand-mid: #b80075;
+  --brand-end: #980065;
+  --hero-start: #b40087;
+  --hero-mid: #be0077;
+  --hero-end: #c1006b;
+  --hero-center: #b4007a;
+  --hero-highlight: #ffd3da;
+  --brand-ink: #a60073;
+  --workout-easy: #fcbccc;
+  --workout-tempo: #f6a2b8;
+  --workout-intervals: #f48ba7;
+  --workout-long: #ffcad4;
+  --workout-race: #ffe6eb;
+  --map-heat-low: #aa4068;
+  --map-heat-mid: #ad1e6a;
+  --map-heat-high: #9d0065;
+  --map-heat-peak: #780049;
+  --map-outline: #420828;
+  --shadow-sm: 0 10px 28px -18px rgba(15, 0, 5, 0.35);
+  --shadow-md: 0 20px 48px -25px rgba(15, 0, 5, 0.45);
+}
+:root[data-palette="sakura"][data-theme="light"] {
+  --bg: #f9f2f4;
+  --panel: #ffffff;
+  --accent-text: #ffffff;
+  --panel-2: #fdf7f9;
+  --fill: #f9eef1;
+  --line: rgba(82, 21, 52, 0.08);
+  --line-strong: rgba(82, 21, 52, 0.16);
+  --text: #2f161f;
+  --text-dim: #705a5f;
+  --text-faint: #7b686d;
+  --primary: #af0073;
+  --accent: #af0073;
+  --accent-soft: #fee5eb;
+  --scale-1: #ac436b;
+  --scale-2: #a83167;
+  --scale-3: #a41665;
+  --scale-4: #91005b;
+  --scale-5: #660040;
+  --workout-easy: #a13b6a;
+  --workout-tempo: #a52665;
+  --workout-intervals: #9a065c;
+  --workout-long: #9b2b62;
+  --workout-race: #81004e;
+  --shadow-sm: 0 12px 32px -20px rgba(100, 12, 63, 0.22);
+  --shadow-md: 0 24px 50px -28px rgba(100, 12, 63, 0.25);
+  --shadow-lg: 0 28px 72px -34px rgba(100, 12, 63, 0.3);
+}
+:root[data-palette="ember"] {
+  --bg: #1f110b;
+  --panel: #2e1c14;
+  --panel-2: #39241a;
+  --fill: #422c21;
+  --text: #fef4ef;
+  --text-dim: #d0beb4;
+  --text-faint: #b8a397;
+  --primary: #b84b00;
+  --accent: #f49d74;
+  --accent-text: #411300;
+  --accent-soft: rgba(233, 94, 14, 0.2);
+  --scale-1: #d7946c;
+  --scale-2: #e6a57f;
+  --scale-3: #f3b591;
+  --scale-4: #fac8a9;
+  --scale-5: #fde5d5;
+  --brand-start: #bb2600;
+  --brand-mid: #ad3e00;
+  --brand-end: #932e00;
+  --hero-start: #bb2600;
+  --hero-mid: #b14200;
+  --hero-end: #ab4a00;
+  --hero-center: #b03600;
+  --hero-highlight: #fcd8bf;
+  --brand-ink: #a42f00;
+  --workout-easy: #fac3a3;
+  --workout-tempo: #f3ab7f;
+  --workout-intervals: #ee965b;
+  --workout-long: #fbd0b4;
+  --workout-race: #fde9db;
+  --map-heat-low: #a84d00;
+  --map-heat-mid: #a44000;
+  --map-heat-high: #953200;
+  --map-heat-peak: #6f2700;
+  --map-outline: #411300;
+  --shadow-sm: 0 10px 28px -18px rgba(13, 1, 0, 0.35);
+  --shadow-md: 0 20px 48px -25px rgba(13, 1, 0, 0.45);
+}
+:root[data-palette="ember"][data-theme="light"] {
+  --bg: #f9f3f0;
+  --panel: #ffffff;
+  --accent-text: #ffffff;
+  --panel-2: #fdf8f5;
+  --fill: #f8f0eb;
+  --line: rgba(84, 27, 0, 0.08);
+  --line-strong: rgba(84, 27, 0, 0.16);
+  --text: #2f190d;
+  --text-dim: #6f5c51;
+  --text-faint: #7a6960;
+  --primary: #a83800;
+  --accent: #a83800;
+  --accent-soft: #fde8dc;
+  --scale-1: #ad4e00;
+  --scale-2: #a34500;
+  --scale-3: #9b3b00;
+  --scale-4: #892f00;
+  --scale-5: #601e00;
+  --workout-easy: #a54305;
+  --workout-tempo: #9e4000;
+  --workout-intervals: #8e3600;
+  --workout-long: #993d00;
+  --workout-race: #772a00;
+  --shadow-sm: 0 12px 32px -20px rgba(97, 31, 0, 0.22);
+  --shadow-md: 0 24px 50px -28px rgba(97, 31, 0, 0.25);
+  --shadow-lg: 0 28px 72px -34px rgba(97, 31, 0, 0.3);
 }
 
 /* Users who ask for less transparency get solid materials everywhere;
@@ -545,9 +838,8 @@ nav {
   transform: scale(var(--press-scale));
 }
 
-/* The active row is the inverted ink pill — the same material as a primary
-   button. Chrome stays monochrome so the green scale stays the only place
-   colour carries meaning. */
+/* The active navigation row follows the shared brand contrast pair; the
+   violet sidebar gives it a white surface rather than another saturated fill. */
 .nav-link.active {
   color: var(--primary-text);
   background: var(--primary);
@@ -837,7 +1129,7 @@ main {
   }
 
   .nav-destinations {
-    display: none;
+    display: grid;
     position: absolute;
     top: calc(var(--toolbar-h) + var(--space-2));
     inset-inline: var(--gutter);
@@ -849,10 +1141,22 @@ main {
     max-height: 65dvh;
     overflow-y: auto;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-8px) scale(0.985);
+    transform-origin: top right;
+    transition: opacity var(--dur-fast) var(--ease-out),
+      transform var(--dur-pop) var(--ease-out),
+      visibility 0s linear var(--dur-fast);
   }
 
   #nav[data-open="true"] .nav-destinations {
-    display: grid;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition-delay: 0s;
   }
 
   .nav-link[href="settings.html"] {
@@ -1255,27 +1559,16 @@ form {
 }
 
 /* ---- dashboard: one scrollable page ----
-   The tabs and the range switch are gone: the page answers the runner's
-   questions top-to-bottom (ready? → what today? → this week → recovery →
-   load → risk → fitness → runs) and every window is fixed and labelled
-   where it renders, so a number can never change meaning silently. */
+   Load, injury risk and body state lead the decision; today's session and
+   the training week follow. Every window is fixed and labelled where it
+   renders, so a number cannot change meaning between visits. */
 #dash {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
   --chart-height: 180px;
   --chart-height-compact: 96px;
-  --chart-surface: var(--panel);
   --chart-rule: color-mix(in srgb, var(--text) 12%, transparent);
-}
-
-#dash .panel,
-#dash #today.hero {
-  background: var(--chart-surface);
-  padding: var(--surface-pad-lg);
-  border: 0;
-  border-radius: var(--radius-lg);
-  box-shadow: 0 1px 0 var(--chart-rule), 0 -1px 0 var(--chart-rule);
 }
 
 #dash .group {
@@ -1433,10 +1726,13 @@ form {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding-block: var(--space-6);
+  gap: 19px;
+  padding: 23px 25px;
   min-width: 0;
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel-head {
@@ -1505,6 +1801,97 @@ form {
 .group > .panel:nth-child(n + 5) {
   animation-delay: calc(var(--stagger) * 3);
 }
+
+/* ---- dashboard motion: reveal, pinned heads, scroll rail ----
+   All of it is armed by lib/reveal.ts: the reveal states only exist once
+   #dash carries .reveal-ready, so a page without the module (or with the
+   observer unsupported) never hides a panel. Colours stay in the ink ramp —
+   the violet scale belongs to the data alone. */
+
+/* Panels below the fold hold their entrance until reached. The load-time
+   `rise` animation is replaced by a transition so the same hook works for
+   panels already on screen and panels scrolled to later. #dash is the
+   dashboard's scope; on pages without it (Plan) the module arms #app. */
+#dash.reveal-ready .panel,
+#app.reveal-ready .panel {
+  transition: opacity var(--transition-enter), transform var(--transition-enter);
+}
+
+#dash.reveal-ready .panel:not(.revealed),
+#app.reveal-ready .panel:not(.revealed) {
+  animation: none;
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* The group heading rides the top of the viewport while its family of
+   panels passes underneath. The .pinned class — set by JS, since a sticky
+   rule cannot say WHEN it is stuck — switches on the glass material so the
+   heading reads as a surface the panels slide under, not text over texture. */
+#dash .group > .group-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+#dash .group > .group-head.pinned {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+/* The heading's tail rule doubles as the group's scroll progress: --group-progress
+   (0→1, driven by JS) fills the hairline with ink as the family scrolls past.
+   Scoped to #dash so other pages' group heads keep the plain rule. */
+#dash .group > .group-head::after {
+  content: "";
+  background: linear-gradient(
+    90deg,
+    var(--text-dim) calc(var(--group-progress, 0) * 100%),
+    var(--line) 0
+  );
+}
+
+/* The page's own scroll rail: a hairline across the top of the window.
+   transform-driven from JS (scaleX), so it stays on the compositor. */
+#page-progress {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-w);
+  right: 0;
+  height: 2px;
+  background: var(--text-dim);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  z-index: 21;
+  pointer-events: none;
+}
+
+/* Atmospheric grain: a fixed feTurbulence wash over the whole window —
+   inline data URI (CSP: img-src data:), so nothing leaves the app. Faint
+   enough to read as texture in the paper, not a filter over it. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (max-width: 900px) {
+  /* No sidebar, and the toolbar is fixed at the top: the rail spans the
+     full width and the heads pin below the toolbar, not under it. */
+  #page-progress {
+    left: 0;
+  }
+
+  #dash .group > .group-head {
+    top: var(--toolbar-h);
+  }
+}
+
 /* ---- today hero: readiness + the day's action, one surface ----
    The hero is the same panel material as everything below it, split into two
    columns by a hairline rather than two separate boxes — readiness on the
@@ -1645,7 +2032,13 @@ form {
   left: 0;
   right: 0;
   border-radius: 0;
-  background: color-mix(in srgb, var(--scale-3) 55%, transparent);
+  /* A faint top-to-bottom sheen instead of a flat fill — the same "lit from
+     above" cue as --shadow-sm, carried down into the one chart material. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--scale-4) 60%, transparent),
+    color-mix(in oklab, var(--scale-2) 55%, transparent)
+  );
   animation: grow-up var(--dur-fill) var(--ease-out) var(--delay-fill) backwards;
   transform-origin: bottom;
 }
@@ -1654,7 +2047,7 @@ form {
    written" — so they share the saturated fill. */
 .bar-col.now .bar-fill,
 .bar-col.done .bar-fill {
-  background: var(--scale-3);
+  background: linear-gradient(180deg, var(--scale-4), var(--scale-2));
 }
 
 /* The planned distance, drawn over the actual fill — the honest comparison:
@@ -2125,7 +2518,10 @@ form {
 }
 
 .readiness-score {
-  font-size: var(--metric-display);
+  /* Fluid display type: the hero figure scales with the window between the
+     sizes where it reads as a headline and where it crowds the split. */
+  position: relative;
+  font-size: var(--type-gauge);
   font-weight: 800;
   letter-spacing: -0.035em;
   line-height: 1;
@@ -2133,9 +2529,31 @@ form {
   color: var(--accent);
 }
 
-/* The hero number is the headline of the readiness panel, and the three cards
-   under it are drawn on the green scale — an amber figure above green charts
-   reads as a second, contradicting colour system. */
+/* A quiet halo in the hero number's own colour — currentColor so it tracks
+   the good/warn/bad swap below without a second rule. Sits behind the digits
+   only (inset keeps it inside the number's own box, not the whole panel),
+   so the eye lands on the score before it reads the verdict beside it. */
+.readiness-score::before {
+  content: "";
+  position: absolute;
+  inset: -55% -25%;
+  z-index: -1;
+  background: radial-gradient(
+    circle at 30% 45%,
+    color-mix(in oklab, currentColor 20%, transparent),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .readiness-score::before {
+    display: none;
+  }
+}
+
+/* Readiness tones use nearby steps from the shared data ramp instead of
+   introducing a second hue into the score and chart pairing. */
 .readiness.good .readiness-score { color: var(--scale-4); }
 .readiness.warn .readiness-score { color: var(--scale-2); }
 .readiness.bad .readiness-score { color: var(--scale-1); }
@@ -2533,6 +2951,7 @@ th {
   background: var(--glass-surface-2);
 }
 
+tbody tr { transition: background-color var(--transition-control); }
 tbody tr:hover {
   background: var(--glass-surface-2);
 }
@@ -2566,6 +2985,32 @@ tbody tr:last-child td {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* A plan block is up to sixteen rows, so the column labels ride along while
+   the table scrolls — the same pinned-head idea as the dashboard's group
+   headings, applied to the one long table on the page. The header cells are
+   already an opaque tinted track, so no extra material is needed; the inset
+   shadow stands in for the collapsed border, which sticky cells tend to
+   leave behind when they detach. The global `table` rule sets overflow,
+   which would make the table its own (unscrollable) scroll container and
+   pin the head to nothing — the head needs the page as its scrollport. */
+#weeks-table {
+  overflow: visible;
+}
+
+#weeks-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+@media (max-width: 900px) {
+  /* Below the fixed toolbar, not under it. */
+  #weeks-table thead th {
+    top: var(--toolbar-h);
+  }
+}
+
 .week-sessions {
   display: grid;
   gap: 0;
@@ -2577,6 +3022,32 @@ tbody tr:last-child td {
    rhythm. */
 .week-sessions .agenda-row {
   min-height: 40px;
+}
+
+/* On a phone the sessions column is barely wider than the row's own kind
+   label plus the (nowrap) distance read-out, so the 1fr title column
+   collapses to a single character per line. The row wraps instead: kind and
+   meta keep the first line, the title takes the second at full width.
+   Placed by hand — with the title spanning, auto-placement would drop the
+   meta into a column that resolves to nothing. */
+@media (max-width: 900px) {
+  .week-sessions .agenda-row {
+    grid-template-columns: auto 1fr;
+    row-gap: 2px;
+  }
+
+  .week-sessions .agenda-kind {
+    grid-area: 1 / 1;
+  }
+
+  .week-sessions .agenda-meta {
+    grid-area: 1 / 2;
+    justify-self: end;
+  }
+
+  .week-sessions .agenda-title {
+    grid-area: 2 / 1 / 3 / 3;
+  }
 }
 
 /* ---- map ---- */
@@ -2789,31 +3260,30 @@ input[type="radio"] {
 }
 
 /* ---- selects ----
-   Native chrome is dropped (appearance:none) and replaced by an inline-SVG
-   chevron; everything else is inherited from the field material above. */
+   Native chrome is replaced by a chevron drawn from the shared text token,
+   so the same control follows light and dark schemes without an image twin. */
 select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23989898' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
   background-repeat: no-repeat;
-  background-position: right var(--space-4) center;
-  background-size: 12px 8px;
+  background-position: right 21px center, right 15px center;
+  background-size: 6px 6px;
   padding-right: 38px;
   cursor: pointer;
 }
 
-/* Light scheme: the chevron darkens to stay visible on the light fill. */
-:root[data-theme="light"] select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23696969' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+/* A disabled field loses its affordance as well as its pointer cursor. */
+select:disabled {
+  background-image: none;
 }
 
 /* ---- buttons ----
-   Global material: every button is an ink pill. The primary action is the
-   inverted pair (--primary fill, --primary-text label) — the same monochrome
-   statement as the active nav row — so colour stays out of the chrome and
-   the green scale keeps the data voice exclusive. Variants (secondary,
-   danger) only swap the fill and sizes only swap the box — shape and motion
-   are inherited from this one rule.
+   Global material: primary actions use the --primary / --primary-text pair;
+   secondary and danger variants only change the fill. Shape, type and press
+   feedback come from this shared control rule rather than page-specific
+   button styles.
 
    The material is a class (.btn) as well as the `button` element, because a
    call to action that goes to another page is a LINK, not a button — and a
@@ -2867,8 +3337,8 @@ button:active,
   transition-duration: var(--dur-press);
 }
 
-button:disabled,
-button:disabled:hover {
+button:disabled:not(.btn-busy),
+button:disabled:not(.btn-busy):hover {
   background: var(--glass-bg-2);
   color: var(--text-faint);
   border-color: var(--line);
@@ -2876,6 +3346,7 @@ button:disabled:hover {
   cursor: not-allowed;
   transform: none;
   filter: none;
+  opacity: var(--disabled-opacity);
 }
 
 /* A button mid-action (plan push/abort): disabled so it can't be re-tapped,
@@ -2885,10 +3356,21 @@ button:disabled:hover {
 button.btn-busy,
 button.btn-busy:disabled,
 button.btn-busy:disabled:hover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  background: var(--accent-soft);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: none;
+  opacity: 1;
+  filter: none;
+  transform: none;
   cursor: progress;
 }
+button.btn-busy span { min-width: 0; overflow-wrap: anywhere; }
 
 /* A save that has landed: a brief green confirmation before the label
    reverts. Kept distinct from .btn-busy (which is still working) so the two
@@ -2907,11 +3389,10 @@ button.btn-saved:disabled:hover {
   margin-right: var(--space-2);
   animation: spin var(--dur-draw) linear infinite;
 }
+.btn-busy .btn-spinner { flex: none; margin-right: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn-spinner {
-    animation-duration: calc(var(--dur-draw) * 2);
-  }
+  .btn-spinner { animation: none; }
 }
 
 button.secondary {
@@ -3026,9 +3507,8 @@ button.lg,
 /* Identifier chips (the COROS tool list) read as code, not prose. */
 .chip.mono { font-family: var(--font-mono); font-weight: 500; }
 
-/* …but a chip used as a chart's value read-out follows the chart's green
-   scale instead. The ACWR row is one object — bar and caption — and a red
-   word beside a green bar reads as two different verdicts. */
+/* A chip used as a chart read-out follows the violet data ramp, so its
+   caption and adjacent bar share the same visual scale. */
 .load-bar-val.chip.good { color: var(--scale-4); border-color: color-mix(in srgb, var(--scale-4) 55%, var(--line)); }
 .load-bar-val.chip.warn { color: var(--scale-2); border-color: color-mix(in srgb, var(--scale-2) 55%, var(--line)); }
 .load-bar-val.chip.bad { color: var(--scale-1); border-color: color-mix(in srgb, var(--scale-1) 55%, var(--line)); }
@@ -3050,15 +3530,15 @@ button.lg,
 /* Each kind's colour as a variable too, so a finished session can wear the
    same tone as a fill (below) without a second table of colours to drift. */
 .chip-easy {
-  --chip-tone: color-mix(in srgb, var(--good) 70%, var(--text));
+  --chip-tone: var(--workout-easy);
   color: var(--chip-tone);
 }
 .chip-tempo {
-  --chip-tone: var(--warn);
+  --chip-tone: var(--workout-tempo);
   color: var(--chip-tone);
 }
 .chip-intervals {
-  --chip-tone: var(--bad);
+  --chip-tone: var(--workout-intervals);
   color: var(--chip-tone);
 }
 /* Two spellings, one kind: the calendar's event_kind() emits "longRun",
@@ -3067,41 +3547,29 @@ button.lg,
    chip colour while the calendar's were green. */
 .chip-longRun,
 .chip-longrun {
-  --chip-tone: var(--good);
+  --chip-tone: var(--workout-long);
   color: var(--chip-tone);
 }
 /* Race keeps its own violet, outside the good/warn/bad training-tone family:
    race day is not a load verdict, and an outlined chip keeps "filled = banked"
    the only fill story in the calendar. */
 .chip-race {
-  --chip-tone: #c4b5fd;
+  --chip-tone: var(--workout-race);
   color: var(--chip-tone);
   border-color: color-mix(in srgb, var(--chip-tone) 55%, var(--line));
-}
-:root[data-theme="light"] .chip-race {
-  --chip-tone: #6d28d9;
 }
 /* A run with no planned session behind it: there is no kind to inherit, so it
    keeps the plain running tone. */
 .chip-completed {
-  --chip-tone: var(--good);
+  --chip-tone: var(--workout-easy);
   color: var(--chip-tone);
 }
 
-/* A finished session keeps its kind's colour and swaps the outline for a
-   fill: outlined means "still to run", filled means "banked". Before this,
-   every completed run was painted the plain running green, which is exactly
-   the long-run colour — a done interval looked like a long run. The ink is
-   the accent's own text colour, the scheme's contrast partner for a
-   saturated fill.
-   --chip-fill-shade lets a scheme deepen the fill without touching the
-   outline colour: on paper the amber and mid-green tones land at 4.3:1
-   against white ink, just under the 4.5:1 floor for text this size, so the
-   light scheme mixes the fill a shade darker (5.3:1) while the dark scheme,
-   where the tones are bright and the ink near-black (6.9:1 at the worst),
-   keeps them verbatim. */
+/* Completed sessions keep their kind's violet tone and use a fill instead
+   of an outline. --chip-fill-shade darkens the light theme's fill against
+   white text; the dark theme keeps the light violet fill and dark ink. */
 .chip-done {
-  --chip-bg: color-mix(in srgb, var(--chip-tone, var(--good)) var(--chip-fill-shade, 100%), #000);
+  --chip-bg: color-mix(in srgb, var(--chip-tone, var(--workout-easy)) var(--chip-fill-shade, 100%), var(--text));
   background: var(--chip-bg);
   border-color: transparent;
   color: var(--accent-text);
@@ -3201,30 +3669,55 @@ fieldset.plan-field legend {
   color: var(--text-faint);
 }
 
-/* The threshold explainer is collapsed by default: it is for whoever does not
-   know what threshold pace is, and it would push the form down for everyone
-   else. The pace table inside it is filled live from the field above. */
-.threshold-explainer {
+/* The same disclosure surface holds optional training guidance and advanced
+   calendar publishing settings, keeping both available without crowding the
+   primary task. */
+.disclosure {
   display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel-2);
+  transition: border-color var(--transition-control), box-shadow var(--transition-control);
 }
-
-.threshold-explainer summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text-dim);
-  min-height: var(--control-h);
+.disclosure:hover { border-color: var(--line-strong); }
+.disclosure[open] { border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); }
+.disclosure summary {
   display: flex;
   align-items: center;
-}
-
-.threshold-explainer summary:hover {
+  gap: var(--space-4);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid transparent;
+  list-style: none;
+  cursor: pointer;
   color: var(--text);
+  transition: background-color var(--transition-control), border-color var(--transition-control);
 }
-
-.threshold-explainer p {
-  max-width: 74ch;
-  text-wrap: pretty;
+.disclosure summary::-webkit-details-marker { display: none; }
+.disclosure summary:hover { background: var(--fill); }
+.disclosure[open] summary { border-bottom-color: var(--line); }
+.disclosure-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.disclosure-copy strong { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.02em; line-height: 1.35; }
+.disclosure-copy small { color: var(--text-dim); font-size: var(--text-sm); font-weight: 400; line-height: 1.4; }
+.disclosure summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  margin-right: var(--space-1);
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--dur-med) var(--ease-out);
 }
+.disclosure[open] summary::after { transform: rotate(225deg); }
+.threshold-explainer > p,
+.threshold-explainer > .pace-table { margin-inline: var(--space-5); }
+.threshold-explainer > p:first-of-type { margin-top: var(--space-4); }
+.threshold-explainer > p:last-child { margin-bottom: var(--space-5); }
+.threshold-explainer p { max-width: 74ch; text-wrap: pretty; }
 
 .pace-table {
   list-style: none;
@@ -3248,6 +3741,10 @@ fieldset.plan-field legend {
 .pace-table li span:last-child {
   font-family: var(--font-mono);
   color: var(--text);
+}
+@media (max-width: 560px) {
+  .pace-table li { display: grid; gap: 2px; }
+  .pace-table li span:last-child { font-size: var(--text-sm); }
 }
 
 /* Distance pills — press feedback lands on pointer-down, selection fills
@@ -3289,8 +3786,8 @@ fieldset.plan-field legend {
      same 600 weight. */
   font-weight: 600;
   letter-spacing: 0;
-  transition-property: background, color, border-color, transform;
-  transition-duration: var(--dur-fast);
+  transition-property: background-color, color, border-color, transform;
+  transition-duration: var(--dur-med), var(--dur-med), var(--dur-med), var(--dur-fast);
   transition-timing-function: var(--spring);
 }
 
@@ -3839,7 +4336,10 @@ fieldset.plan-field legend {
 
 .carousel-btn svg {
   pointer-events: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
+.carousel-btn.prev:hover svg { transform: translateX(-2px); }
+.carousel-btn.next:hover svg { transform: translateX(2px); }
 
 .carousel-btn.prev { left: 6px; }
 .carousel-btn.next { right: 6px; }
@@ -3878,27 +4378,33 @@ fieldset.plan-field legend {
    The dot itself is a centred background image inside a larger transparent
    hit area, so the target isn't a 6px speck. */
 .carousel-dots button {
+  display: grid;
+  place-items: center;
   width: var(--dots-h);
   height: var(--dots-h);
   min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--dot-color, var(--text-faint)) 3px, transparent 3.5px);
+  background: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  transition-property: background, transform;
-  transition-duration: var(--dur-fast), var(--dur-fast);
-  transition-timing-function: var(--spring);
 }
-
+.carousel-dots button::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: background-color var(--transition-control), transform var(--transition-control);
+}
 .carousel-dots button:hover {
-  --dot-color: var(--text);
   transform: none;
   filter: none;
   box-shadow: none;
 }
+.carousel-dots button:hover::after { background: var(--text); transform: scale(1.2); }
 
 .carousel-dots button:active {
   transform: scale(var(--press-scale));
@@ -3906,8 +4412,9 @@ fieldset.plan-field legend {
   box-shadow: inset 0 0 0 rgba(0, 0, 0, 0);
 }
 
-.carousel-dots button[aria-current="true"] {
-  --dot-color: var(--accent);
+.carousel-dots button[aria-current="true"]::after {
+  background: var(--accent);
+  transform: scale(1.45);
 }
 
 /* ---- training load meters (inside the status verdict) ---- */
@@ -3961,7 +4468,7 @@ fieldset.plan-field legend {
    One line drawn across horizontal zones, shared by three panels: training
    status (acute ÷ chronic ratio), recovery score, and injury risk. The bands
    are the whole point: the eye reads which zone the line is in before it
-   reads any number. All three walk the same green scale in strict order from
+   reads any number. All three walk the same violet scale in strict order from
    the chart's bottom edge up, so one visual language covers every banded
    question — "too much?", "how recovered?", "how risky?". */
 .band-body {
@@ -4413,12 +4920,55 @@ fieldset.plan-field legend {
 .workout-detail-status:empty { display: none; }
 .calendar-publishing-form { display: grid; gap: var(--space-3); max-width: 680px; margin-block: var(--space-4); }
 .calendar-publishing-form label { display: grid; gap: var(--space-1); }
-.calendar-publishing-form .check-label { display: flex; align-items: center; gap: var(--space-2); }
+.calendar-publishing-form .check-label { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); min-height: var(--control-h); }
 .calendar-publishing-form input { min-width: 0; width: 100%; }
-.calendar-publishing-form input[type="checkbox"] { width: auto; }
-.calendar-subscription { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-.calendar-subscription input { flex: 1 1 260px; min-width: 0; }
+.calendar-publishing-form input[type="checkbox"] { width: auto; flex: none; }
+.calendar-publishing-form p,
+.calendar-publishing-form code { overflow-wrap: anywhere; }
+.disclosure .calendar-publishing-form {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: none;
+  margin: 0;
+  padding: var(--space-5);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.calendar-subscription {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+  box-shadow: var(--glass-rim);
+  transition: border-color var(--transition-control), box-shadow var(--transition-control);
+}
+.calendar-subscription:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.calendar-subscription input {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--line);
+  background: var(--panel);
+  text-overflow: ellipsis;
+}
+.calendar-subscription button { white-space: nowrap; }
+.calendar-subscription button:disabled { opacity: var(--disabled-opacity); background: var(--panel); color: var(--text-dim); }
 #ics-path, #publish-status { overflow-wrap: anywhere; }
+#publish-status { margin: 0; color: var(--text-dim); font-size: var(--text-sm); }
+#publish-status.error { color: var(--bad); }
+@media (max-width: 760px) {
+  .calendar-subscription { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .calendar-subscription input { grid-column: 1 / -1; }
+  .calendar-subscription button { width: 100%; }
+  .calendar-subscription button.btn-busy { padding-inline: var(--space-2); gap: var(--space-1); white-space: normal; }
+}
 
 /* The agenda is the narrow-window twin of the month grid: the same events,
    grouped into a day-by-day list. Seven columns of session text crowd below
@@ -4583,8 +5133,7 @@ fieldset.plan-field legend {
 }
 
 @media (max-width: 560px) {
-  #cal-grid,
-  #cal-legend {
+  #cal-grid {
     display: none;
   }
 
@@ -4709,6 +5258,51 @@ fieldset.plan-field legend {
   gap: 3px;
   min-width: 0;
 }
+
+/* Palette picker: the grid takes its own full-width line under the label. */
+.palette-row { align-items: flex-start; }
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: var(--space-3);
+  flex: 1 1 100%;
+}
+.palette-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-height: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-control), box-shadow var(--transition-control),
+    transform var(--transition-control);
+}
+.palette-option:hover { border-color: var(--accent); }
+.palette-option:active { transform: scale(var(--press-scale)); }
+.palette-option.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.palette-option strong { font-size: var(--text-md); font-weight: 600; }
+.palette-option .muted { font-size: var(--text-xs); line-height: 1.35; }
+.palette-swatch {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  margin-bottom: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.palette-swatch i { flex: 1; }
+.palette-swatch i:first-child { flex: 1.4; }
 
 /* Narrow windows: the category list becomes a horizontal scroller above the
    pane, which is what System Settings does on a phone-width window. */
@@ -5200,10 +5794,10 @@ fieldset.plan-field legend {
 /* ---- injury view ------------------------------------------------------- */
 
 .bodymap {
-  /* Emerald-tinted muscles so the map reads as part of the app rather than
-     a grey diagram; the accent carries the selected/hover state. */
-  --muscle-fill: color-mix(in srgb, var(--accent) 14%, #dfe6e2);
-  --muscle-outline: color-mix(in srgb, var(--accent) 30%, #bccbc4);
+  /* Violet-tinted muscles inherit the current surface and accent tokens;
+     selected regions keep the same highlight as other app controls. */
+  --muscle-fill: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  --muscle-outline: color-mix(in srgb, var(--accent) 30%, var(--text-faint));
   --muscle-active: var(--accent);
   max-width: 440px;
   margin: 0 auto;
@@ -5213,6 +5807,9 @@ fieldset.plan-field legend {
   height: auto;
   display: block;
 }
+.bodymap-heat-light { stop-color: var(--scale-4); }
+.bodymap-heat-mid { stop-color: var(--scale-3); }
+.bodymap-heat-deep { stop-color: var(--scale-2); }
 .bodymap-caption {
   fill: var(--text-faint);
   font-size: var(--label-size);
@@ -5274,6 +5871,22 @@ fieldset.plan-field legend {
   fill-opacity: 1;
   stroke: var(--muscle-active);
   stroke-width: 1.5;
+  /* The map is re-rendered on every pick, so a fresh animation replays by
+     itself — the spot the runner just chose confirms the choice with a
+     short bloom rather than only a colour change. Green is fine here: the
+     map is data. */
+  animation: region-lock var(--dur-pop) var(--ease-out);
+}
+
+@keyframes region-lock {
+  from {
+    stroke-width: 5;
+    fill-opacity: 0.35;
+  }
+  60% {
+    stroke-width: 1;
+    fill-opacity: 1;
+  }
 }
 .bodymap-region:focus-visible {
   outline: none;
@@ -5390,7 +6003,7 @@ fieldset.plan-field legend {
    The band is the range the session prescribed; the marker is the pace held
    over the reps. Pace runs left = faster, so a row reads "too fast · in range
    · too slow" in the order you would say it. The band is a chart surface, so it
-   follows the green scale (a verdict chip beside a chart must not contradict
+   follows the violet scale (a verdict chip beside a chart must not contradict
    it); the marker is the runner's own number and stays neutral text colour. */
 .pacing-status {
   margin: 0;
@@ -5441,6 +6054,10 @@ fieldset.plan-field legend {
   bottom: -1px;
   border-radius: 0;
   background: color-mix(in srgb, var(--scale-3) 45%, transparent);
+  /* The range draws in from its fast end — the same fill-in vocabulary as
+     every other bar in the app — before the marker lands on it. */
+  transform-origin: 0 50%;
+  animation: fill-in var(--dur-fill) var(--ease-out) var(--delay-fill) backwards;
 }
 .pacing-marker {
   position: absolute;
@@ -5450,6 +6067,9 @@ fieldset.plan-field legend {
   margin-left: -1.5px;
   border-radius: 0;
   background: var(--text);
+  /* Lands after the band has drawn: the pace reads as a result placed on
+     the range, not a second thing competing with it. */
+  animation: fade var(--dur-med) var(--ease-out) calc(var(--delay-fill) + var(--dur-fill) * 0.7) backwards;
 }
 .pacing-verdict {
   font-weight: 600;
@@ -5492,6 +6112,19 @@ fieldset.plan-field legend {
   flex-direction: column;
   gap: var(--space-3);
 }
+/* The journal reads as a list of episodes, so the first read cascades them
+   in on the shared cadence. injury.ts marks the cards only on that first
+   render — a resolve/delete/save re-render builds plain cards, so the
+   entrance never replays for rows the runner was already reading. */
+.pain-card.pain-enter {
+  animation: rise var(--transition-enter) backwards;
+}
+
+.pain-card.pain-enter:nth-child(2) { animation-delay: calc(var(--stagger) * 1); }
+.pain-card.pain-enter:nth-child(3) { animation-delay: calc(var(--stagger) * 2); }
+.pain-card.pain-enter:nth-child(4) { animation-delay: calc(var(--stagger) * 3); }
+.pain-card.pain-enter:nth-child(n + 5) { animation-delay: calc(var(--stagger) * 4); }
+
 .pain-card {
   padding: var(--space-3) var(--space-4);
 }
@@ -5522,61 +6155,121 @@ fieldset.plan-field legend {
 /* .pain-actions is only a hook for the journal's own buttons; the row itself
    is the shared .actions atom. */
 
-/* Assistant settings toggle */
-.assistant-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-weight: 600;
-}
-
-/* Assistant chat */
-.chat-thread {
+/* The configured assistant, shown read-only: a head row with its state, then
+   the facts the runner set. The key row is a mask, never the secret. */
+.assistant-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-height: 340px;
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: var(--space-4);
 }
-.chat-msg {
-  max-width: 82%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
-  font-size: var(--text-md);
-  line-height: 1.45;
+
+/* The `display` above outranks the UA `[hidden] { display: none }`, so the
+   hidden state has to be re-asserted or the card shows beside the form. */
+.assistant-card[hidden] {
+  display: none;
 }
-.chat-msg p {
-  margin: var(--space-1) 0 0;
-  white-space: pre-wrap;
-}
-.chat-msg.user {
-  align-self: flex-end;
-  background: var(--accent-soft);
-  color: var(--text);
-}
-.chat-msg.assistant {
-  align-self: flex-start;
-  background: var(--glass-surface-2);
-  color: var(--text);
-}
-.chat-who {
-  font-size: var(--label-size);
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text-faint);
-}
-.chat-input {
+
+.assistant-card-head {
   display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xl);
 }
-.chat-input input {
-  flex: 1;
+
+.assistant-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  align-items: baseline;
+}
+
+.assistant-facts dt {
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.assistant-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The add form only exists while no assistant is configured, so it needs no
+   awareness of the card's state. */
+#assistant-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+#assistant-form[hidden] {
+  display: none;
+}
+
+#assistant-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+#assistant-form input {
+  width: 100%;
+}
+
+/* Assistant chat */
+.chat-header { display: flex; align-items: center; gap: var(--space-3); padding-bottom: var(--space-4); border-bottom: 1px solid var(--line); }
+.chat-mark { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xl); }
+.chat-heading { display: flex; flex-direction: column; flex: 1; gap: 2px; min-width: 0; }
+.chat-heading strong { font-size: var(--text-md); line-height: 1.25; }
+.chat-heading small { color: var(--text-dim); font-size: var(--text-sm); line-height: 1.4; }
+.chat-mode { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text-dim); background: var(--panel); font-size: var(--text-xs); font-weight: 600; }
+.chat-thread { display: flex; flex-direction: column; gap: var(--space-3); max-height: 340px; min-height: 100px; overflow-y: auto; overscroll-behavior-y: contain; padding: var(--space-4) var(--space-1) var(--space-4) 0; scrollbar-color: var(--line-strong) transparent; }
+.chat-msg { max-width: min(82%, 560px); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); font-size: var(--text-md); line-height: 1.5; }
+.chat-msg p { margin: var(--space-1) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-msg.user { align-self: flex-end; border-bottom-right-radius: var(--space-1); background: var(--primary); color: var(--primary-text); }
+.chat-msg.assistant { align-self: flex-start; border: 1px solid var(--line); border-bottom-left-radius: var(--space-1); background: var(--panel); color: var(--text); }
+.chat-who { font-size: var(--text-xs); font-weight: 600; color: var(--text-dim); }
+.chat-msg.user .chat-who { color: color-mix(in srgb, var(--primary-text) 80%, transparent); }
+.chat-empty { align-self: stretch; padding: var(--space-5); border: 1px dashed var(--line-strong); border-radius: var(--radius-control); background: var(--panel); }
+.chat-empty p { margin: 0 0 var(--space-3); color: var(--text-dim); font-size: var(--text-md); }
+.chat-suggestions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.chat-suggestion { min-height: 40px; padding: var(--space-2) var(--space-3); color: var(--accent); font-size: var(--text-sm); line-height: 1.35; white-space: normal; text-align: left; }
+.chat-empty-message { align-self: center; margin: auto; color: var(--text-dim); font-size: var(--text-md); }
+.chat-loading-indicator { align-self: center; width: 18px; height: 18px; margin: auto auto 0; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin var(--dur-draw) linear infinite; }
+.chat-retry { align-self: center; }
+.chat-clearing { display: flex; align-items: center; gap: var(--space-2); color: var(--text-dim); font-size: var(--text-sm); }
+.chat-clearing::before { content: ""; flex: none; width: 14px; height: 14px; border: 2px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin var(--dur-draw) linear infinite; }
+.chat-thinking { display: inline-flex; gap: 4px; margin-top: var(--space-2); }
+.chat-thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: chat-pulse 0.9s ease-in-out infinite alternate; }
+.chat-thinking i:nth-child(2) { animation-delay: 0.15s; }
+.chat-thinking i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chat-pulse { from { opacity: 0.4; transform: translateY(0); } to { opacity: 1; transform: translateY(-3px); } }
+.chat-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--panel); box-shadow: none; transition: border-color var(--transition-control), box-shadow var(--transition-control); }
+.chat-composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chat-composer textarea { width: 100%; min-width: 0; min-height: 62px; max-height: 160px; padding: var(--space-2) var(--space-3); border: 0; background: transparent; box-shadow: none; resize: none; }
+.chat-composer textarea:hover, .chat-composer textarea:focus { border-color: transparent; }
+.chat-composer textarea:focus-visible { outline: none; }
+.chat-composer button { min-width: 68px; }
+.chat-feedback { margin: var(--space-2) 0 0; padding: var(--space-3); border-radius: var(--radius-control); background: color-mix(in srgb, var(--bad) 9%, var(--panel)); color: var(--bad); font-size: var(--text-sm); line-height: 1.5; }
+.chat-feedback[hidden] { display: none; }
+.chat-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.chat-hint { color: var(--text-faint); font-size: var(--text-xs); }
+
+/* Per-entry chat remains collapsed in the journal until asked for; its
+   surface uses the same spacing, type and action materials as the rest of the
+   app, while the message thread stays the foreground. */
+.entry-chat { margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel-2); }
+.entry-chat[hidden] { display: none; }
+.entry-chat .chat-thread { max-height: 340px; }
+.entry-chat .chat-clear { min-height: 40px; padding: 0 var(--space-2); border: 0; background: transparent; box-shadow: none; color: var(--text-dim); font-size: var(--text-sm); }
+.entry-chat .chat-clear:hover { background: transparent; color: var(--text); }
+.entry-chat .chat-clear.is-confirming, .entry-chat .chat-clear.is-confirming:hover { color: var(--bad); }
+@media (max-width: 560px) {
+  .entry-chat { padding: var(--space-3); }
+  .chat-msg { max-width: 92%; }
+  .chat-mode { font-size: var(--text-xs); }
+  .chat-hint { order: 0; width: 100%; }
+  .chat-clear { order: 1; margin-left: auto; }
 }
 
 /* Calendar pain markers: a small dot beside the day number, painted with the
@@ -5589,12 +6282,6 @@ fieldset.plan-field legend {
   border-radius: 50%;
   background: currentColor;
 }
-/* In the legend the same dot sits inline with the text instead. */
-#cal-legend .cal-pain {
-  margin: 0 2px;
-  vertical-align: middle;
-}
-
 /* Dashboard pain banner (top of the Today tab) is the shared .notice
    atom in its bad flavour; only the action pair is added here. */
 .pain-banner-actions {
@@ -5638,4 +6325,469 @@ fieldset.plan-field legend {
   .pain-body { grid-template-columns: 1fr; }
   .pain-form { grid-template-columns: 1fr; }
   .chat-msg { max-width: 95%; }
+}
+
+html { background: var(--bg); }
+body { font-size: var(--text-lg); line-height: 1.5; }
+body::after { display: none; }
+
+#nav {
+  gap: 0;
+  padding: 30px 14px 22px;
+  background: linear-gradient(155deg, var(--brand-start), var(--brand-mid) 52%, var(--brand-end));
+  border: 0;
+  color: var(--on-brand);
+  box-shadow: 8px 0 34px -22px color-mix(in srgb, var(--brand-end) 45%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#nav .brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 2px 9px 37px;
+  color: var(--on-brand);
+  font-size: var(--text-xl);
+  letter-spacing: -0.045em;
+}
+
+#nav .brand::before {
+  content: "R";
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--radius-control);
+  background: var(--on-brand);
+  color: var(--brand-ink);
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  font-style: italic;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--brand-end) 20%, transparent);
+}
+
+.nav-destinations { gap: 7px; }
+.nav-link {
+  min-height: 46px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  color: color-mix(in srgb, var(--on-brand) 82%, transparent);
+  font-size: var(--text-md);
+  font-weight: 550;
+}
+.nav-icon { color: inherit; font-size: var(--text-2xl); }
+.nav-link:hover { background: color-mix(in srgb, var(--on-brand) 13%, transparent); color: var(--on-brand); }
+.nav-link.active,
+.nav-link.active:hover {
+  background: var(--on-brand);
+  color: var(--brand-ink);
+  box-shadow: 0 8px 24px -12px color-mix(in srgb, var(--brand-end) 50%, transparent);
+}
+.nav-link.active .nav-icon { color: var(--brand-ink); }
+.nav-link[href="settings.html"] { margin-top: 25px; }
+#nav #sync-chip {
+  background: color-mix(in srgb, var(--on-brand) 12%, transparent);
+  border-color: color-mix(in srgb, var(--on-brand) 20%, transparent);
+  color: var(--on-brand);
+  min-height: var(--control-h);
+}
+#nav #sync-chip .sync-chip-label { color: inherit; }
+#nav #sync-chip:hover { background: color-mix(in srgb, var(--on-brand) 22%, transparent); color: var(--on-brand); }
+#nav #sync-chip.syncing { color: var(--on-brand); }
+
+main {
+  max-width: 1480px;
+  gap: 26px;
+  padding: 42px var(--gutter) 80px;
+}
+.page-header {
+  align-items: center;
+  gap: 20px;
+  padding: 2px 0 10px;
+}
+.page-intro { min-width: 0; }
+.page-header h1 {
+  font-size: var(--type-page);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+.page-intro p { margin: 8px 0 0; color: var(--text-dim); font-size: var(--text-md); }
+.page-actions { display: flex; align-items: center; gap: 16px; }
+.page-header time { font-size: var(--text-sm); white-space: nowrap; }
+.header-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border-radius: var(--radius-control);
+  background: var(--primary);
+  color: var(--primary-text);
+  text-decoration: none;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: transform var(--transition-control), opacity var(--transition-control);
+}
+.header-action:hover { opacity: 0.85; }
+.header-action:active { transform: scale(var(--press-scale)); }
+.header-action svg { width: 17px; height: 17px; }
+
+#dash { display: flex; flex-direction: column; gap: 28px; }
+#dash[hidden] { display: none; }
+#today.hero,
+#today.hero > #today-hero,
+.today-hero { display: block; }
+#dash #today.hero {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.today-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.8fr);
+  gap: 16px;
+}
+.decision-lead {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 258px;
+  padding: clamp(24px, 3vw, 40px);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--hero-start), var(--hero-mid) 70%, var(--hero-end));
+  box-shadow: var(--shadow-sm);
+  color: var(--on-brand);
+  overflow: hidden;
+}
+.decision-lead::after {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  top: -115px;
+  right: -95px;
+  border: 1px solid color-mix(in srgb, var(--on-brand) 20%, transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 36px color-mix(in srgb, var(--on-brand) 4%, transparent);
+  pointer-events: none;
+}
+.decision-lead.tone-warn { box-shadow: inset 4px 0 0 var(--warn), var(--shadow-sm); }
+.decision-lead.tone-bad { box-shadow: inset 4px 0 0 var(--bad), var(--shadow-sm); }
+.decision-lead .eyebrow { color: color-mix(in srgb, var(--on-brand) 80%, transparent); }
+.decision-lead h2 { margin: 0; max-width: 22ch; color: var(--on-brand); font-size: clamp(28px, 2.8vw, 38px); line-height: 1.1; letter-spacing: -0.05em; }
+.decision-lead p { margin: 0; max-width: 54ch; color: color-mix(in srgb, var(--on-brand) 88%, transparent); font-size: var(--text-md); line-height: 1.55; }
+.decision-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin-top: auto; padding-top: var(--space-4); border-top: 1px solid color-mix(in srgb, var(--on-brand) 18%, transparent); color: color-mix(in srgb, var(--on-brand) 82%, transparent); font-size: var(--text-sm); }
+.decision-meta span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.decision-meta strong { color: var(--on-brand); font-variant-numeric: tabular-nums; }
+.decision-review { color: var(--on-brand); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.decision-review:hover { color: var(--hero-highlight); }
+.dashboard-pillars { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.pillar { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; min-height: 165px; padding: var(--space-5); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-sm); color: var(--text); text-decoration: none; transition: transform var(--transition-control), border-color var(--transition-control), box-shadow var(--transition-control); }
+.pillar:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: var(--shadow-md); }
+.pillar:active { transform: scale(var(--press-scale)); }
+.pillar.tone-warn { border-top-color: var(--warn); }
+.pillar.tone-bad { border-top-color: var(--bad); }
+.pillar.tone-neutral { border-top-color: var(--line-strong); }
+.pillar-name { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-dim); font-size: var(--text-sm); font-weight: 600; }
+.pillar-name svg { flex: none; width: 18px; height: 18px; color: var(--accent); }
+.pillar strong { margin-top: var(--space-2); font-size: clamp(26px, 2.5vw, 34px); font-weight: 700; line-height: 1.05; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+.pillar-state { font-size: var(--text-md); font-weight: 600; }
+.pillar small { margin-top: auto; color: var(--text-dim); font-size: var(--text-sm); line-height: 1.45; text-wrap: pretty; }
+.body-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-4); }
+.body-pair > .panel { min-width: 0; }
+#status, #risk, #recovery, #week { scroll-margin-top: calc(var(--toolbar-h) + var(--space-4)); }
+.today-hero .readiness,
+.today-action,
+.hero-brief {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.today-hero .readiness {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: clamp(20px, 3vw, 44px);
+  min-height: 258px;
+  padding: clamp(24px, 3vw, 40px);
+  background: linear-gradient(135deg, var(--hero-start), var(--hero-mid) 70%, var(--hero-end));
+  color: var(--on-brand);
+  overflow: hidden;
+}
+.today-hero .readiness::after {
+  content: "";
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  right: -118px;
+  top: -156px;
+  border: 1px solid color-mix(in srgb, var(--on-brand) 18%, transparent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 40px color-mix(in srgb, var(--on-brand) 2.5%, transparent), 0 0 0 92px color-mix(in srgb, var(--on-brand) 2%, transparent);
+  pointer-events: none;
+}
+.readiness .readiness-score,
+.readiness.good .readiness-score,
+.readiness.warn .readiness-score,
+.readiness.bad .readiness-score {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: clamp(134px, 12vw, 172px);
+  height: clamp(134px, 12vw, 172px);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--hero-center) 75%, transparent 77% 100%), conic-gradient(var(--hero-highlight) calc(var(--readiness, 0) * 1%), color-mix(in srgb, var(--on-brand) 22%, transparent) 0);
+  color: var(--on-brand);
+  font-size: var(--type-gauge);
+  letter-spacing: -0.065em;
+}
+.readiness-score::before { display: none; }
+.readiness .eyebrow { color: color-mix(in srgb, var(--on-brand) 78%, transparent); font-size: var(--text-md); }
+.readiness-text { gap: 8px; position: relative; z-index: 1; }
+.readiness-verdict { max-width: 17ch; font-size: var(--type-feature); line-height: 1.16; letter-spacing: -0.04em; }
+.readiness .hero-chips { margin-top: 8px; gap: 7px; }
+.readiness .hero-chip {
+  padding: 5px 10px;
+  border-radius: var(--radius-control);
+  color: var(--on-brand);
+  background: color-mix(in srgb, var(--on-brand) 14%, transparent);
+  font-size: var(--text-xs);
+  font-weight: 550;
+}
+.readiness .hero-chip i { background: var(--hero-highlight); }
+
+.today-action {
+  justify-content: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 258px;
+  padding: 28px clamp(24px, 3vw, 40px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.today-action .eyebrow { color: var(--accent); font-weight: 650; }
+.today-session { font-size: var(--type-session); letter-spacing: -0.05em; line-height: 1.12; }
+.today-session .workout-link { font: inherit; letter-spacing: inherit; }
+.today-session .workout-link.workout-done { color: var(--text); }
+.today-action .hero-chips { gap: 8px; margin-top: 7px; }
+.today-action .hero-chip { padding: 7px 10px; border-radius: var(--radius-control); background: var(--fill); font-size: var(--text-xs); }
+.today-action .hero-chip svg { color: var(--accent); }
+.today-plan-link { display: inline-flex; align-items: center; align-self: flex-start; min-height: var(--control-h); margin-top: auto; color: var(--accent); font-size: var(--text-md); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; transition: color var(--transition-control); }
+.today-plan-link:hover { color: var(--scale-5); }
+.hero-brief {
+  grid-column: 1 / -1;
+  max-width: none;
+  padding: 15px 21px;
+  background: var(--accent-soft);
+  border: 0;
+  box-shadow: none;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.group { gap: 14px; }
+.group-head,
+#dash .group > .group-head {
+  position: static;
+  padding: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+#dash .group > .group-head::after { background: var(--line-strong); }
+.group > .panel:nth-child(n) { animation-delay: 0s; }
+.panel-head { align-items: center; }
+.panel-head h2 { font-size: var(--text-lg); font-weight: 650; letter-spacing: -0.02em; }
+.panel-meta { font-size: var(--text-sm); }
+#dash #week-tiles { padding-top: 14px; border-top: 1px solid var(--line); }
+#dash #week-tiles .tile { padding: 8px 12px; border-right: 1px solid var(--line); }
+#dash #week-tiles .tile:last-child { border-right: 0; }
+.tile b, .card-value { letter-spacing: -0.04em; }
+.meter, .bar-fill { border-radius: 7px; }
+.bar-chart.week { height: 185px; }
+.bar-chart.volume { height: 176px; }
+.bar-plot { gap: 12px; }
+.bar-fill { left: 22%; right: 22%; }
+.bar-col.now .bar-fill, .bar-col.done .bar-fill { background: linear-gradient(180deg, var(--scale-2), var(--scale-4)); }
+.bar-chart.volume .bar-col.now .bar-track { border-radius: 10px; }
+.card, .stat-card, .badge-card, .empty-state, form { box-shadow: var(--shadow-sm); }
+.card.signal { background: var(--panel-2); }
+#recent { margin-top: 2px; }
+#page-progress { background: var(--accent); }
+
+@media (max-width: 1180px) {
+  .today-hero { grid-template-columns: minmax(0, 1fr); }
+  .decision-lead, .today-action { min-height: 215px; }
+  .dashboard-pillars { grid-column: auto; order: 2; }
+  .today-action { order: 3; }
+  .hero-brief { order: 4; }
+}
+
+@media (max-width: 900px) {
+  :root { --gutter: 24px; --stack: 26px; }
+  #nav { flex-direction: row; align-items: center; padding: 8px var(--gutter); border-bottom: 0; }
+  #nav .brand { padding: 0; }
+  #nav .nav-toggle { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 15%, transparent); border-color: color-mix(in srgb, var(--on-brand) 20%, transparent); }
+  #nav .nav-toggle:hover { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 25%, transparent); }
+  #nav[data-open="true"] .nav-destinations { display: grid; }
+  #nav .nav-destinations { background: var(--brand-mid); border: 1px solid color-mix(in srgb, var(--on-brand) 18%, transparent); }
+  #nav .nav-link[href="settings.html"] { margin-top: 0; }
+  main { padding-top: 32px; }
+  #dash .group > .group-head { top: 0; }
+}
+
+@media (max-width: 760px) {
+  .dashboard-pillars { grid-template-columns: minmax(0, 1fr); }
+  .pillar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px var(--space-3); min-height: 0; padding: var(--space-4); }
+  .pillar-name { grid-area: 1 / 1; }
+  .pillar strong { grid-area: 1 / 2 / 3; align-self: center; margin: 0; font-size: var(--metric); text-align: right; }
+  .pillar-state { grid-area: 2 / 1; }
+  .pillar small { grid-column: 1 / -1; margin-top: var(--space-1); }
+  #dash #week-tiles .tile { border-right: 0; }
+}
+
+@media (max-width: 560px) {
+  :root { --gutter: 16px; --stack: 22px; }
+  main { gap: 20px; padding-top: 25px; }
+  .page-header { align-items: flex-start; }
+  .page-actions { width: 100%; justify-content: space-between; }
+  .page-header h1 { font-size: var(--type-page-mobile); }
+  .page-header time { font-size: var(--text-xs); }
+  .decision-lead { min-height: 230px; padding: var(--space-6); }
+  .decision-lead h2 { font-size: var(--text-3xl); }
+  .today-action { padding: 26px; min-height: 180px; }
+  .panel { padding: 20px; }
+  .bar-plot { gap: 5px; }
+  .bar-fill { left: 12%; right: 12%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header-action { transition: none; }
+}
+
+.nav-link {
+  transition: background-color var(--transition-control), color var(--transition-control), transform var(--transition-control);
+}
+.nav-link:hover .nav-icon { transform: translateX(2px); }
+.nav-icon { transition: transform var(--transition-control); }
+.settings-nav-list button {
+  transition: background-color var(--transition-control), color var(--transition-control), transform var(--transition-control);
+}
+.header-action:hover,
+.actions > button:not(:disabled):hover,
+.plan-submit button:not(:disabled):hover,
+a.btn:hover { transform: translateY(-2px); }
+.header-action:active,
+a.btn:active { transform: scale(var(--press-scale)); }
+
+.settings-content > .panel { animation: none; }
+.settings-content > .panel:not([hidden]) { padding: 26px; }
+.settings-content .surface,
+.settings-content form,
+.settings-content #setup-wizard {
+  background: var(--panel-2);
+  box-shadow: none;
+}
+.settings-content .setting-row {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel-2);
+  transition: border-color var(--transition-control), box-shadow var(--transition-control);
+}
+.settings-content .setting-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+#nav #sync-chip svg,
+.cal-nav button svg { transition: transform var(--transition-control); }
+#nav #sync-chip:not(.syncing):hover svg { transform: rotate(30deg); }
+#cal-prev:not(:disabled):hover svg { transform: translateX(-2px); }
+#cal-next:not(:disabled):hover svg { transform: translateX(2px); }
+@media (hover: hover) {
+  .workout-chip:not(:active):hover { transform: translateY(-1px); }
+}
+.settings-nav-list {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+#calendar .empty-state,
+#streak-stats .empty-state,
+#pain-list .empty-state {
+  padding: 32px 22px;
+  border-radius: var(--radius-control);
+  background: var(--panel-2);
+  box-shadow: none;
+}
+#calendar .empty-state h3,
+#streak-stats .empty-state h3,
+#pain-list .empty-state h3 { font-size: var(--text-xl); }
+#calendar .empty-state p,
+#streak-stats .empty-state p,
+#pain-list .empty-state p { font-size: var(--text-md); line-height: 1.55; }
+#calendar .cal-nav button:disabled {
+  opacity: var(--disabled-opacity);
+  background: var(--fill);
+  cursor: not-allowed;
+}
+#streak-stats:has(.empty-state) { display: block; }
+#streaks .heatmap-row[hidden],
+#badges[hidden] { display: none; }
+
+@media (max-width: 1200px) {
+  .body-pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .pain-form { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #nav .nav-destinations { transition-delay: 0s; }
+}
+
+@media (max-width: 560px) {
+  .settings-content > .panel:not([hidden]) { padding: 20px; }
+  .settings-content .setting-row { padding: 14px; }
+  #plan-weeks { min-width: 0; max-width: 100%; }
+  #weeks-table, #weeks-table tbody { display: block; width: 100%; }
+  #weeks-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  #weeks-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 8px;
+    width: 100%;
+    border-bottom: 1px solid var(--line);
+  }
+  #weeks-table tbody td { display: block; min-width: 0; padding: 11px 8px; border: 0; }
+  #weeks-table tbody td:nth-child(2) { text-align: right; }
+  #weeks-table tbody td:nth-child(3) {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding-top: 0;
+    padding-bottom: 14px;
+  }
+  #weeks-table .week-sessions { width: 100%; }
+  #weeks-table .workout-chip { min-height: 38px; }
 }

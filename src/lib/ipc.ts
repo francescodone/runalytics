@@ -127,12 +127,12 @@ export const tauri = {
   llmStatus: () => call<LlmStatus>("llm_status"),
   setLlmApiKey: (key: string) => call<void>("set_llm_api_key", { key }),
   clearLlmApiKey: () => call<void>("clear_llm_api_key"),
-  askAssistant: (bodyPart: string, question: string) =>
-    call<PainMessage>("ask_assistant", { bodyPart, question }),
-  painMessages: (bodyPart: string) =>
-    call<PainMessage[]>("pain_messages", { bodyPart }),
-  clearPainMessages: (bodyPart: string) =>
-    call<void>("clear_pain_messages", { bodyPart }),
+  askAssistant: (entryId: string, question: string) =>
+    call<PainMessage>("ask_assistant", { entryId, question }),
+  painMessages: (entryId: string) =>
+    call<PainMessage[]>("pain_messages", { entryId }),
+  clearPainMessages: (entryId: string) =>
+    call<void>("clear_pain_messages", { entryId }),
 };
 
 export function fmtPace(sKm: number | null | undefined): string {

@@ -10,6 +10,14 @@ if (nav && main) {
   const links = [...nav.querySelectorAll<HTMLAnchorElement>(".nav-link")];
   const activeLink = links.find((link) => link.classList.contains("active"));
   const title = activeLink?.textContent?.trim() ?? "Runalytics";
+  const descriptions: Record<string, string> = {
+    Dashboard: "Load, injury risk and body signals in one place.",
+    Plan: "Build a training plan that moves with you.",
+    Calendar: "Every session, all in one place.",
+    Injuries: "Keep track of how your body feels.",
+    Achievements: "See how far you've come.",
+    Settings: "Make Runalytics yours.",
+  };
   const navIcons: Record<string, string> = {
     "index.html": icons.chart,
     "plan.html": icons.flag,
@@ -64,15 +72,28 @@ if (nav && main) {
   header.className = "page-header";
   const heading = document.createElement("h1");
   heading.textContent = title;
-  header.append(heading);
+  const intro = document.createElement("div");
+  intro.className = "page-intro";
+  const description = document.createElement("p");
+  description.textContent = descriptions[title] ?? "Your running, in focus.";
+  intro.append(heading, description);
+  header.append(intro);
   if (activeLink?.getAttribute("href") === "index.html") {
+    heading.textContent = "Your training";
+    const actions = document.createElement("div");
+    actions.className = "page-actions";
     const date = document.createElement("time");
     const today = new Date();
     date.dateTime = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     date.textContent = today.toLocaleDateString(undefined, {
       weekday: "long", month: "long", day: "numeric",
     });
-    header.append(date);
+    const planLink = document.createElement("a");
+    planLink.className = "header-action";
+    planLink.href = "plan.html";
+    planLink.innerHTML = `${icons.plus}<span>Training plan</span>`;
+    actions.append(date, planLink);
+    header.append(actions);
   }
   main.prepend(header);
 }

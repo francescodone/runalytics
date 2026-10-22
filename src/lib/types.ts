@@ -362,11 +362,15 @@ export interface SyncReport {
 
 export type ThemeChoice = "system" | "light" | "dark";
 
+export type PaletteId = "amethyst" | "glacier" | "evergreen" | "sakura" | "ember";
+
 export interface Settings {
   pmtilesPath: string | null;
   lastProvider: ProviderKind | null;
   /// "system" | "light" | "dark". Null behaves as "system".
   theme: ThemeChoice | null;
+  /// Colour palette id; null means the default (Amethyst Dusk).
+  palette?: PaletteId | null;
   /// Injury assistant: an OpenAI-compatible chat endpoint.
   llmEnabled: boolean;
   llmEndpoint: string | null;
@@ -394,10 +398,12 @@ export interface PainEntry {
   followupAt: string | null;
 }
 
-/// One turn of the assistant thread for a body region.
+/// One turn of the assistant thread for one pain entry.
 export interface PainMessage {
   id: string;
   bodyPart: string;
+  /// The journal entry whose chat this turn belongs to.
+  entryId: string | null;
   role: "user" | "assistant";
   content: string;
   ts: string;

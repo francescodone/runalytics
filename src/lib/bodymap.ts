@@ -139,7 +139,7 @@ function regionGroup(shape: Shape): string {
 }
 
 const BODY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="285 0 555 752" class="bodymap-svg" role="group" aria-label="Muscle map - click where it hurts">
-  <defs><radialGradient id="bodymap-heat" cx="48%" cy="48%" r="65%"><stop offset="0" stop-color="#6ee7b7"/><stop offset="0.55" stop-color="#34d399"/><stop offset="1" stop-color="#059669"/></radialGradient></defs>
+  <defs><radialGradient id="bodymap-heat" cx="48%" cy="48%" r="65%"><stop class="bodymap-heat-light" offset="0"/><stop class="bodymap-heat-mid" offset="0.55"/><stop class="bodymap-heat-deep" offset="1"/></radialGradient></defs>
   <g data-view="front"><g class="bodymap-deco-outline">${outline(false)}</g>${FRONT_SHAPES.map(regionGroup).join("")}</g>
   <g data-view="back" transform="translate(273 0)"><g class="bodymap-deco-outline">${outline(true)}</g>${BACK_SHAPES.map(regionGroup).join("")}</g>
   <text x="426" y="748" class="bodymap-caption">Front</text><text x="699" y="748" class="bodymap-caption">Back</text>

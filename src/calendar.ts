@@ -110,8 +110,6 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   // render, so the selected month can never disagree between the two layouts.
   renderAgenda(year, month, last.getDate(), byDay, painByDay);
 
-  renderLegend();
-
   // A month change slides the surface in from the direction you moved — the
   // grid and agenda travel together as one surface. First paint doesn't slide.
   if (dir !== "none") {
@@ -159,22 +157,6 @@ function renderAgenda(
   el("cal-agenda").innerHTML = rows.length
     ? rows.join("")
     : `<p class="muted">No sessions scheduled this month.</p>`;
-}
-
-/// What the coloured labels mean, right under the grid — the workout kinds
-/// are jargon on first read, and the pain dot needs explaining too.
-function renderLegend(): void {
-  let legend = document.getElementById("cal-legend");
-  if (!legend) {
-    legend = document.createElement("p");
-    legend.id = "cal-legend";
-    legend.className = "muted heatmap-legend";
-    el("cal-grid").after(legend);
-  }
-  const kinds = ["easy", "tempo", "intervals", "longRun", "race"]
-    .map((k) => `<span class="chip chip-${k}">${KIND_LABEL[k]}</span>`)
-    .join(" ");
-  legend.innerHTML = kinds;
 }
 
 function initDragAndDrop(): void {
@@ -249,8 +231,11 @@ async function main(): Promise<void> {
     await renderMonth();
   } catch (e) {
     if (!inTauri) {
-      el("cal-grid").innerHTML =
-        `<div class="empty-state"><p>Runalytics needs the desktop app for data — run \`npm run tauri dev\` and open the Calendar there.</p></div>`;
+      const message = `<div class="empty-state"><h3>Open your training calendar on your Mac</h3><p>Sessions appear here when Runalytics is connected to your watch in the desktop app.</p></div>`;
+      el("cal-grid").innerHTML = message;
+      el("cal-agenda").innerHTML = message;
+      el<HTMLButtonElement>("cal-prev").disabled = true;
+      el<HTMLButtonElement>("cal-next").disabled = true;
     } else {
       fail(e);
     }

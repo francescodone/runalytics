@@ -20,10 +20,13 @@ import { initCarousels } from "./lib/carousel";
 import { onboardingPending, startOnboarding } from "./lib/onboarding";
 import { initSegmented } from "./lib/segmented";
 import { initSyncIndicator } from "./lib/sync";
+import { withBusy } from "./lib/feedback";
+import { countUp, initGroupProgress, initScrollReveal } from "./lib/reveal";
 import { openWorkout } from "./lib/workout-detail";
 import { createSheet } from "./lib/overlay";
 import type { Sheet } from "./lib/overlay";
 import { crossPhrase, crossTraining, isRun, runKm } from "./lib/sport";
+import { regionLabel } from "./lib/bodymap";
 import type { CrossTraining } from "./lib/sport";
 // Side-effect import: paints the saved colour scheme before first paint.
 import "./lib/theme";
@@ -37,6 +40,7 @@ import type {
   HeatPoint,
   LoadPoint,
   LoadRecommendation,
+  PainEntry,
   PlanWorkout,
   RiskFactor,
   Settings,
@@ -61,26 +65,22 @@ interface DashExtras {
   allActivities: Activity[];
   weekPlan: PlanWorkout[];
   plan: TrainingPlan | null;
+  activePain: PainEntry[];
+  lastSync: string | null;
 }
 
 // ---- today hero ------------------------------------------------------------
-// The dashboard opens with the two answers a runner actually wants: how
-// ready am I, and what should I do today. The readiness number keeps its
-// three inputs as labelled chips (never a fourth number to mentally
-// combine), and the right side carries the plan: today's session, the
-// streak, and the race countdown.
-
-function readinessVerdict(v: number): string {
-  return v >= 70
-    ? "Primed — good day to push."
-    : v >= 45
-      ? "Steady — a solid training day."
-      : "Low — go easy or take the rest.";
-}
+// The dashboard opens with a training decision grounded in load, injury risk
+// and recovery. Readiness is supporting context; today's plan stays beside
+// the decision, and the three linked signals lead into their detailed panels.
 
 function scoreTone(v: number, invert = false): "good" | "warn" | "bad" {
   const t = invert ? 100 - v : v;
   return t >= 70 ? "good" : t >= 45 ? "warn" : "bad";
+}
+
+function safeTone(value: string): "good" | "warn" | "bad" {
+  return value === "good" || value === "bad" ? value : "warn";
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -122,6 +122,13 @@ function daysUntil(iso: string): number {
   return Math.round(ms / 86_400_000);
 }
 
+function hasRecentHealth(health: HealthDaily[]): boolean {
+  return health.some((day) => {
+    const age = daysUntil(day.date);
+    return age >= -2 && age <= 0;
+  });
+}
+
 /// Cross-training with the days it took up, for sentences. The figures come
 /// from lib/sport.ts, where each sport carries only its own numbers.
 function crossDays(c: CrossTraining): string {
@@ -136,32 +143,25 @@ function crossShort(c: CrossTraining): string {
   return s.hasDistance && s.km >= 1 ? s.km.toFixed(0) : `${s.hours.toFixed(1)} h`;
 }
 
-/// Coach's brief: plain language answering "how am I, how did last week go,
-/// and how hard can I push this week". Every clause comes from a decision the
-/// backend already made (readiness, recovery band, status tone, build cycle) —
-/// the prose only connects them, so it can never disagree with the panels.
+function plannedRunKm(workouts: PlanWorkout[]): number {
+  return workouts.reduce((sum, w) => sum + (w.kind === "rest" ? 0 : Math.max(0, w.distanceM ?? 0)), 0) / 1000;
+}
+
+/// The brief adds last week's training and this week's plan progress to the
+/// body and load signals already stated in the decision and summary cards.
+/// Running mileage and training-load units never share a target.
 function coachBrief(data: DashboardPayload, extras: DashExtras): string {
   if (!extras.allActivities.length) {
     return "Nothing has synced yet — connect your watch and this page fills in with how you're doing and how to train.";
   }
-  const { scores } = data;
   const st = data.trainingStatus;
   const rec = data.loadRecommendation;
-  const band = data.recoveryBand;
+  const risk = data.scores.injuryRisk;
 
-  // How you are today. The readiness verdict is "Primed — good day to push."
-  // style; the brief only wants the leading word.
-  const risk = scores.injuryRisk;
-  const riskNote =
-    risk <= 30
-      ? "injury risk is low"
-      : risk <= 55
-        ? `injury risk is moderate (${risk}%)`
-        : `injury risk is high (${risk}%)`;
-  const mood = readinessVerdict(scores.globalScore).split(" ")[0].toLowerCase();
-  const body = `You're ${mood}; recovery ${scores.recoveryScore}/100${band ? ` (${band.label.toLowerCase()})` : ""}, ${riskNote}.`;
+  // The decision and summary cards already explain today's body signals; this
+  // brief adds training history without repeating the same three scores.
 
-  // How last week went, against the same target the mileage chart draws.
+  // Last week's running and other training stay in their own units.
   const monday = mondayThisWeek();
   const lastFrom = new Date(monday);
   lastFrom.setDate(lastFrom.getDate() - 7);
@@ -182,32 +182,74 @@ function coachBrief(data: DashboardPayload, extras: DashExtras): string {
   const lastCross = crossTraining(lastWeek);
   const last =
     lastKm > 0
-      ? `Last week: ${lastKm.toFixed(1)} km over ${lastDays} run day${lastDays === 1 ? "" : "s"}${
-          rec
-            ? `, ${lastKm >= rec.target * 0.95 ? "on target" : `${(rec.target - lastKm).toFixed(1)} km below target`}`
-            : ""
-        }${lastCross ? `; ${crossDays(lastCross)}` : ""}.`
+      ? `Last week: ${lastKm.toFixed(1)} km over ${lastDays} run day${lastDays === 1 ? "" : "s"}${lastCross ? `; ${crossDays(lastCross)}` : ""}.`
       : `Last week: no runs${lastCross ? `; ${crossDays(lastCross)}` : ""}.`;
 
-  // How this week can go: the plan's target, what's banked, and one piece of
-  // advice — the tone check order matters, the down week and high risk
-  // override any "push" reading the load status might give.
+  // This week's mileage comes from runs; the load target is a different unit
+  // and stays in the Training load panel. Pain takes precedence over a push.
   const banked = runKm(
-    extras.allActivities.filter((a) => a.startTime.slice(0, 10) >= ymd(monday)),
+    extras.allActivities.filter((a) => a.startTime.slice(0, 10) >= ymd(monday) && a.startTime.slice(0, 10) <= ymd(new Date())),
   );
+  const planned = plannedRunKm(extras.weekPlan);
+  const progress = planned > 0 ? `${banked.toFixed(1)} of ${planned.toFixed(1)} km planned` : `${banked.toFixed(1)} km run`;
   let week: string;
-  if (rec?.downWeek) {
-    week = `Down week ${rec.weekInCycle}/${rec.cycleLength}: ${rec.target.toFixed(0)} km target, ${banked.toFixed(1)} km banked.`;
+  if (extras.activePain.length) {
+    week = `This week: ${progress}. Pain is still logged; review the plan before adding intensity.`;
   } else if (risk > 55) {
-    week = `Keep this week easy; skip extra speed and long-run pushes.`;
+    week = `This week: ${progress}. Risk is elevated; keep the effort easy.`;
+  } else if (rec?.downWeek) {
+    week = `Down week ${rec.weekInCycle}/${rec.cycleLength}: ${progress}. Keep the lighter week intentional.`;
   } else if (st?.tone === "bad") {
-    week = `Keep the easy days easy${rec ? `; ${rec.target.toFixed(0)} km target, ${banked.toFixed(1)} km banked` : ""}.`;
-  } else if (st?.tone === "warn" || scores.recoveryScore < 50) {
-    week = `Stick to the plan${rec ? `; ${rec.target.toFixed(0)} km target, ${banked.toFixed(1)} km banked` : ""}.`;
+    week = `This week: ${progress}. Keep the easy days easy.`;
+  } else if (st?.tone === "warn" || data.scores.recoveryScore < 50) {
+    week = `This week: ${progress}. Stick to the planned effort.`;
   } else {
-    week = `Room to push: a hard session or two fits this week${rec ? `; ${rec.target.toFixed(0)} km target, ${banked.toFixed(1)} km banked` : ""}.`;
+    week = `This week: ${progress}. Follow the planned sessions.`;
   }
-  return `${body} ${last} ${week}`;
+  return `${last} ${week}`;
+}
+
+function trainingDecision(data: DashboardPayload, extras: DashExtras): { title: string; detail: string; tone: "good" | "warn" | "bad" } {
+  const pain = extras.activePain.reduce<PainEntry | null>((worst, entry) =>
+    !worst || entry.intensity > worst.intensity ? entry : worst, null);
+  if (pain) {
+    const count = extras.activePain.length;
+    return {
+      title: "Listen to the signals.",
+      detail: `${count} open pain ${count === 1 ? "entry" : "entries"}, including ${regionLabel(pain.bodyPart)} at ${pain.intensity}/10. Review your plan before adding intensity.`,
+      tone: pain.intensity >= 7 || data.scores.injuryRisk > 55 ? "bad" : "warn",
+    };
+  }
+  if (data.scores.injuryRisk > 55) return {
+    title: "Keep effort controlled today.",
+    detail: "Injury risk is elevated. Check what is contributing before adding intensity.",
+    tone: "bad",
+  };
+  if (data.health.length && (data.recoveryBand?.tone === "bad" || data.scores.recoveryScore < 45)) return {
+    title: "Give recovery some room.",
+    detail: "Your body signals are low today. Check the recovery trend alongside the training load.",
+    tone: "warn",
+  };
+  if (data.trainingStatus?.tone === "bad") return {
+    title: "Ease off the load.",
+    detail: "Recent training load is outside its productive range. Review the trend before pushing harder.",
+    tone: "warn",
+  };
+  if (data.loadRecommendation?.downWeek) return {
+    title: "A lighter week by design.",
+    detail: "Your plan has a down week. Use the lighter load to give your body space to recover.",
+    tone: "good",
+  };
+  if (!data.load && !data.health.length) return {
+    title: "Still learning your baseline.",
+    detail: "More runs and wearable data will bring load, risk, and recovery into focus.",
+    tone: "warn",
+  };
+  return {
+    title: data.scores.globalScore >= 70 && data.scores.injuryRisk <= 30 ? "Good ground to build on." : "Build steadily from here.",
+    detail: "Read your load, injury risk, and recovery together before changing today's effort.",
+    tone: "good",
+  };
 }
 
 function openPlannedWorkout(event: MouseEvent): void {
@@ -218,7 +260,7 @@ function openPlannedWorkout(event: MouseEvent): void {
 function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
   el("today-hero").onclick = openPlannedWorkout;
   const { scores } = data;
-  const tone = scoreTone(scores.globalScore);
+  const decision = trainingDecision(data, extras);
   const todayKey = ymd(new Date());
   const todays = extras.weekPlan.filter((w) => w.date === todayKey);
   const session = todays.length
@@ -227,7 +269,7 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
           const label = KIND_LABEL[w.kind] ?? w.kind;
           const dist = w.distanceM ? ` · ${(w.distanceM / 1000).toFixed(1)} km` : "";
           const dur = w.durationMin ? ` · ${Math.round(w.durationMin)} min` : "";
-          return `<button type="button" class="workout-link${w.done ? " workout-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}">${label}${dist}${dur}</button>`;
+          return `<button type="button" class="workout-link${w.done ? " workout-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${escapeHtml(w.date)}">${escapeHtml(label)}${dist}${dur}</button>`;
         })
         .join(" + ")
     : null;
@@ -236,41 +278,72 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
   const streak = currentStreak(extras.allActivities);
   const plan = extras.plan;
   const raceIn = plan ? daysUntil(plan.targetDate) : null;
-  const lastSync = data.health.length
-    ? data.health
-        .map((h) => h.date)
-        .sort()
-        [data.health.length - 1]
-    : null;
+  const ratio = data.load?.ratio ?? data.trainingStatus?.ratio ?? null;
+  const latestHealth = data.health.reduce<HealthDaily | null>((latest, day) =>
+    !latest || day.date > latest.date ? day : latest, null);
+  const bodySignals = [
+    latestHealth?.sleepScore != null ? `Sleep ${latestHealth.sleepScore}/100` : null,
+    latestHealth?.hrvAvg != null ? `HRV ${Math.round(latestHealth.hrvAvg)} ms` : null,
+    latestHealth?.restingHr != null ? `Resting HR ${latestHealth.restingHr} bpm` : null,
+  ].filter((value) => value != null).slice(0, 2).join(" · ") || "No recent wearable signals";
+  const topFactor = [...data.riskFactors].sort((a, b) => b.contribution - a.contribution)[0];
+  const riskDetail = extras.activePain.length
+    ? `${extras.activePain.length} unresolved pain ${extras.activePain.length === 1 ? "entry" : "entries"} logged`
+    : topFactor && topFactor.contribution >= RISK_QUIET
+      ? `Strongest signal: ${topFactor.label}`
+      : "No strong risk factors right now";
+  const riskLabel = scores.injuryRisk <= 30 ? "Low" : scores.injuryRisk <= 55 ? "Moderate" : "High";
+  const loadDetail = data.load?.shortTerm != null && data.load?.longTerm != null
+    ? `7-day load ${data.load.shortTerm.toFixed(0)} · usual ${data.load.longTerm.toFixed(0)}`
+    : "More runs needed for a load trend";
   el("today-hero").innerHTML = `
     <div class="today-hero">
-      <div class="readiness ${tone}">
-        <div class="readiness-score">${scores.globalScore}</div>
-        <div class="readiness-text">
-          <div class="eyebrow">Readiness</div>
-          <div class="readiness-verdict">${readinessVerdict(scores.globalScore)}</div>
-          <div class="hero-chips">
-            <span class="hero-chip tone-${scoreTone(scores.trainingScore)}"><i></i>Training ${scores.trainingScore}</span>
-            <span class="hero-chip tone-${scoreTone(scores.recoveryScore)}"><i></i>Recovery ${scores.recoveryScore}${data.recoveryBand ? ` · ${data.recoveryBand.label}` : ""}</span>
-            <span class="hero-chip tone-${scoreTone(scores.injuryRisk, true)}"><i></i>Injury risk ${scores.injuryRisk}</span>
-          </div>
+      <div class="decision-lead tone-${decision.tone}">
+        <div class="eyebrow">Today's training picture</div>
+        <h2>${escapeHtml(decision.title)}</h2>
+        <p>${escapeHtml(decision.detail)}</p>
+        <div class="decision-meta">
+          <span>Readiness <strong class="count-up" data-count-to="${scores.globalScore}">${scores.globalScore}</strong>/100</span>
+          ${extras.lastSync ? `<span>${icons.sync} Last synced ${fmtDate(extras.lastSync)}</span>` : ""}
+          ${extras.activePain.length ? `<a class="decision-review" href="injury.html">Review pain journal</a>` : ""}
         </div>
       </div>
       <div class="today-action">
-        <div class="eyebrow">Today</div>
+        <div class="eyebrow">Today's session</div>
         <div class="today-session">${session ?? "No session planned"}</div>
         <div class="hero-chips">
           <span class="hero-chip" title="Consecutive active days">${icons.flame} ${streak}-day streak</span>
-          ${
-            plan && raceIn != null && raceIn >= 0
-              ? `<span class="hero-chip">${icons.flag} ${plan.distance} in ${raceIn} day${raceIn === 1 ? "" : "s"}</span>`
-              : ""
-          }
-          ${lastSync ? `<span class="hero-chip">${icons.sync} synced ${fmtDate(lastSync)}</span>` : ""}
+          ${plan && raceIn != null && raceIn >= 0
+            ? `<span class="hero-chip">${icons.flag} ${escapeHtml(plan.distance)} in ${raceIn} day${raceIn === 1 ? "" : "s"}</span>`
+            : ""}
         </div>
+        <a class="today-plan-link" href="#week">See this week</a>
       </div>
-      <p class="hero-brief">${coachBrief(data, extras)}</p>
+      <div class="dashboard-pillars" aria-label="Training signals">
+        <a class="pillar tone-${ratio != null ? safeTone(data.trainingStatus?.tone ?? "warn") : "neutral"}" href="#status">
+          <span class="pillar-name">${icons.chart} Training load</span>
+          <strong>${ratio != null ? `${ratio.toFixed(2)}×` : "—"}</strong>
+          <span class="pillar-state">${escapeHtml(data.trainingStatus?.label ?? "No trend yet")}</span>
+          <small>${loadDetail}</small>
+        </a>
+        <a class="pillar tone-${scoreTone(scores.injuryRisk, true)}" href="#risk">
+          <span class="pillar-name">${icons.heart} Injury risk</span>
+          <strong>${scores.injuryRisk}%</strong>
+          <span class="pillar-state">${riskLabel}</span>
+          <small>${escapeHtml(riskDetail)}</small>
+        </a>
+        <a class="pillar tone-${latestHealth ? scoreTone(scores.recoveryScore) : "neutral"}" href="#recovery">
+          <span class="pillar-name">${icons.moon} Body state</span>
+          <strong>${latestHealth ? `${scores.recoveryScore}/100` : "—"}</strong>
+          <span class="pillar-state">${escapeHtml(latestHealth ? data.recoveryBand?.label ?? "Recovery trend" : "Sync wearable data")}</span>
+          <small>${escapeHtml(bodySignals)}</small>
+        </a>
+      </div>
+      <p class="hero-brief">${escapeHtml(coachBrief(data, extras))}</p>
     </div>`;
+  // The readiness count is decoration: the final value is already in the DOM
+  // so reduced motion still shows the actual score.
+  countUp(el("today-hero"));
 }
 
 // Apple Weather-style mini chart: a smooth curve (Catmull-Rom → cubic
@@ -641,7 +714,7 @@ function renderWeek(extras: DashExtras): void {
               // collide into one unreadable cluster.
               d.actualKm ? d.actualKm.toFixed(1) : "—"
             }${
-              d.cross ? `<small class="cross" title="${crossDays(d.cross)} — not running">${icons.dumbbell} ${crossShort(d.cross)}</small>` : ""
+              d.cross ? `<small class="cross" title="${escapeHtml(crossDays(d.cross))} — not running">${icons.dumbbell} ${crossShort(d.cross)}</small>` : ""
             }</span>`,
         )
         .join("")}
@@ -670,7 +743,7 @@ function renderWeek(extras: DashExtras): void {
     // Credit the other training rather than hiding it — but in its own unit,
     // so it can never be misread as mileage the plan should have counted.
     weekCross
-      ? `<div class="tile center cross-tile" title="${crossDays(weekCross)} — not included in the run total"><b>${icons.dumbbell} ${crossPhrase(weekCross)}</b><span>cross-training</span></div>`
+      ? `<div class="tile center cross-tile" title="${escapeHtml(crossDays(weekCross))} — not included in the run total"><b>${icons.dumbbell} ${escapeHtml(crossPhrase(weekCross))}</b><span>cross-training</span></div>`
       : "",
     pace ? `<div class="tile center"><b>${fmtPace(pace.avgPaceSKm)}</b><span>latest pace</span></div>` : "",
   ].join("");
@@ -745,17 +818,15 @@ function renderWeekPlan(extras: DashExtras): void {
   el("week-plan").innerHTML = rows.join("");
 }
 
-/// Weekly mileage against the plan's build cycle: the last 8 complete weeks
-/// plus the in-progress one, with the target as a dashed line. This replaces
-/// the old three-metre load panel — the same question ("is this week sane?")
-/// answered in the unit runners actually think in.
+/// Weekly running mileage over the last eight weeks. The dashed target is
+/// this week's planned run distance, never the training-load target: load
+/// units and kilometres cannot be compared on the same axis.
 function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void {
   const monday = mondayThisWeek();
   const weeks: {
     label: string;
     km: number;
     cross: CrossTraining | null;
-    target: number | null;
     current: boolean;
   }[] = [];
   for (let i = 7; i >= 0; i--) {
@@ -768,24 +839,22 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
     const inWeek = extras.allActivities.filter(
       (a) => a.startTime.slice(0, 10) >= fromKey && a.startTime.slice(0, 10) <= toKey,
     );
-    // The bar is running mileage — the only quantity the target line and the
-    // plan's build cycle are expressed in. Cross-training is flagged, never
-    // stacked on top, so a week of 0 km with a bike flag reads as "a week of
-    // cycling", not "a week of nothing" or "a week of 90 km".
+    // The bar is running mileage; cross-training is flagged, never stacked
+    // on top, so a week of cycling cannot become a week of running mileage.
     weeks.push({
       label: `${from.getDate()}/${from.getMonth() + 1}`,
       km: runKm(inWeek),
       cross: crossTraining(inWeek),
-      target: rec?.target ?? null,
       current: i === 0,
     });
   }
-  const maxKm = Math.max(1, ...weeks.map((w) => w.km), rec?.target ?? 0);
+  const planned = plannedRunKm(extras.weekPlan);
+  const maxKm = Math.max(1, ...weeks.map((w) => w.km), planned);
   crossLegend("volume-legend", weeks.some((w) => w.cross != null));
-  const targetPct = rec ? ((rec.target / maxKm) * 100).toFixed(1) : null;
-  el("volume-meta").textContent = rec
-    ? `${rec.downWeek ? `Down week ${rec.weekInCycle}/${rec.cycleLength}` : `Build week ${rec.weekInCycle}/${rec.cycleLength}`} · target ${rec.target.toFixed(0)} km`
-    : "Last 8 weeks";
+  const targetPct = planned > 0 ? ((planned / maxKm) * 100).toFixed(1) : null;
+  el("volume-meta").textContent = planned > 0
+    ? `${rec?.downWeek ? "Down week · " : ""}${planned.toFixed(1)} km planned this week`
+    : "Last 8 weeks · no mileage plan";
   el("volume-panel").innerHTML = `
     <div class="bar-plot">
       ${targetPct ? `<span class="bar-line" style="bottom:${targetPct}%" title="This week's target"></span>` : ""}
@@ -802,7 +871,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
         .map(
           (w) =>
             `<span class="bar-label${w.current ? " now" : ""}" title="Week of ${w.label}${
-              w.cross ? ` — ${crossDays(w.cross)} (not run)` : ""
+              w.cross ? ` — ${escapeHtml(crossDays(w.cross))} (not run)` : ""
             }">${w.km ? w.km.toFixed(0) : "—"}${
               w.cross ? `<i class="cross-flag">${icons.dumbbell}</i>` : ""
             }<small>${w.label}</small></span>`,
@@ -833,10 +902,10 @@ function riskFactorBars(factors: RiskFactor[], tagQuietRows: boolean): string {
       // When every row is quiet the panel says it once, above the list — six
       // "quiet" tags under one sentence would be the same fact shouted twice.
       const tag = quiet && tagQuietRows;
-      return `<div class="risk-bar${quiet ? " quiet" : ""}" title="${f.detail}">
-        <span class="risk-bar-label">${f.label}</span>
+      return `<div class="risk-bar${quiet ? " quiet" : ""}" title="${escapeHtml(f.detail)}">
+        <span class="risk-bar-label">${escapeHtml(f.label)}</span>
         <span class="meter${quiet ? " muted" : ""}" style="--value:${v.toFixed(3)}"><i></i></span>
-        <span class="risk-bar-detail">${f.detail}${
+        <span class="risk-bar-detail">${escapeHtml(f.detail)}${
           tag ? `<i class="risk-row-quiet">${icons.check}quiet</i>` : ""
         }</span>
       </div>`;
@@ -1067,10 +1136,10 @@ function renderStatusPanel(data: DashboardPayload): void {
         ${targetRow(data.loadRecommendation, load.shortTerm ?? 0)}
       </div>`
     : "";
-  panel.innerHTML = `<div class="band-body signal tone-${st.tone}">
+  panel.innerHTML = `<div class="band-body signal tone-${safeTone(st.tone)}">
     <div class="band-verdict">
-      <div class="card-value band-value"><span class="live-value">${st.label}</span></div>
-      <div class="score-hint band-reason">${st.reason}</div>
+      <div class="card-value band-value"><span class="live-value">${escapeHtml(st.label)}</span></div>
+      <div class="score-hint band-reason">${escapeHtml(st.reason)}</div>
       ${meters}
     </div>
     <div class="band-chart">
@@ -1107,9 +1176,9 @@ function renderRecoveryPanel(data: DashboardPayload): void {
   ]
     .map(([c, l]) => `<span class="zone-key"><i class="${c}"></i>${l}</span>`)
     .join("");
-  panel.innerHTML = `<div class="band-body signal tone-${band.tone}">
+  panel.innerHTML = `<div class="band-body signal tone-${safeTone(band.tone)}">
     <div class="band-verdict">
-      <div class="card-value band-value"><span class="live-value">${band.label}</span></div>
+      <div class="card-value band-value"><span class="live-value">${escapeHtml(band.label)}</span></div>
       <div class="score-hint band-reason">Recovery ${data.scores.recoveryScore}/100 from sleep quality, resting HR and HRV.</div>
     </div>
     <div class="band-chart">
@@ -1164,9 +1233,9 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   tbody.innerHTML = activities
     .map(
       (a) => `<tr data-id="${a.id}" tabindex="0" role="button" title="Open details"
-        aria-label="${a.sport} on ${fmtDate(a.startTime)}, open details">
+        aria-label="${escapeHtml(a.sport)} on ${fmtDate(a.startTime)}, open details">
         <td>${fmtDate(a.startTime)}</td>
-        <td>${a.sport}</td>
+        <td>${escapeHtml(a.sport)}</td>
         <td>${fmtKm(a.distanceM)}</td>
         <td>${fmtDuration(a.durationS)}</td>
         <td>${a.avgHr ?? "—"}</td>
@@ -1181,6 +1250,9 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   // overflow show their paging buttons. (showDataSections re-measures once
   // #dash becomes visible, since rows in a hidden container measure zero.)
   initCarousels();
+  // Panels below the fold keep their entrance (and their charts' fill-in
+  // animations) until the runner actually scrolls to them.
+  initScrollReveal();
 }
 
 function card(label: string, value: string, hint = ""): string {
@@ -1189,50 +1261,38 @@ function card(label: string, value: string, hint = ""): string {
   }</div>`;
 }
 
-/// The ask, right where training decisions get made: unresolved pain plus,
-/// when one exists, the pending plan-change offer with Accept right here.
-/// Accepting applies the edits; the full review lives on the Injuries page.
+/// The pending plan-change offer sits above the training decision until it is
+/// reviewed. Reported pain without an offer is already visible in the lead
+/// decision and risk signal, with a direct route to the journal.
 function renderPainBanner(data: DashboardPayload): void {
   const banner = el("pain-banner");
-  const pain = data.activePain;
   const offer = data.pendingProposal;
-  if (!pain && !offer) {
+  if (!offer) {
     banner.hidden = true;
     banner.innerHTML = "";
     return;
   }
   banner.hidden = false;
-  banner.classList.toggle("has-proposal", offer != null);
-  const label = (key: string) =>
-    key.split(".").reverse().join(" ").replace(/_/g, " ");
-  const painText = pain
-    ? `${label(pain.bodyPart)} hurting at ${pain.intensity}/10 since ${fmtDate(pain.startedOn)}`
-    : `${label(offer!.bodyPart)} is still in your journal`;
+  banner.classList.add("has-proposal");
   banner.innerHTML = `
-    <p>${painText}${offer ? ` — <strong>${offer.summary}</strong>` : ""}</p>
+    <p><strong>Plan change ready.</strong> ${escapeHtml(offer.summary)}</p>
     <span class="pain-banner-actions">
-      <button id="pain-review" class="secondary">Review</button>
-      ${offer ? `<button id="pain-accept" class="primary">Accept change</button>` : ""}
+      <button id="pain-review" class="secondary">Review change</button>
+      <button id="pain-accept" class="primary">Accept change</button>
     </span>`;
   el<HTMLButtonElement>("pain-review").addEventListener("click", () => {
     window.location.href = "injury.html";
   });
-  if (offer) {
-    el<HTMLButtonElement>("pain-accept").addEventListener("click", async (ev) => {
-      const btn = ev.currentTarget as HTMLButtonElement;
-      btn.disabled = true;
-      btn.textContent = "Applying…";
-      try {
-        await tauri.applyProposal("coros", offer.id);
-        banner.hidden = true;
-        banner.innerHTML = "";
-      } catch (err) {
-        fail(err);
-        btn.disabled = false;
-        btn.textContent = "Accept change";
-      }
-    });
-  }
+  el<HTMLButtonElement>("pain-accept").addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget as HTMLButtonElement;
+    try {
+      await withBusy(btn, "Applying…", () => tauri.applyProposal("coros", offer.id));
+      banner.hidden = true;
+      banner.innerHTML = "";
+    } catch (err) {
+      fail(err);
+    }
+  });
 }
 
 function timeHms(s: number): string {
@@ -1242,6 +1302,41 @@ function timeHms(s: number): string {
   return h > 0
     ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
     : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function mapColor(token: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+}
+
+function heatmapColors(): maplibregl.ExpressionSpecification {
+  return [
+    "interpolate", ["linear"], ["heatmap-density"],
+    0, "rgba(0,0,0,0)",
+    0.25, mapColor("--map-heat-low"),
+    0.55, mapColor("--map-heat-mid"),
+    0.8, mapColor("--map-heat-high"),
+    1, mapColor("--map-heat-peak"),
+  ];
+}
+
+function followMapTheme(map: maplibregl.Map): void {
+  const update = () => {
+    if (!map.isStyleLoaded()) return;
+    map.setPaintProperty("bg", "background-color", mapColor("--bg"));
+    if (map.getLayer("heat")) map.setPaintProperty("heat", "heatmap-color", heatmapColors());
+    if (map.getLayer("track-glow")) map.setPaintProperty("track-glow", "line-color", mapColor("--map-outline"));
+    if (map.getLayer("track-line")) map.setPaintProperty("track-line", "line-color", mapColor("--scale-3"));
+    if (map.getLayer("track-ends")) {
+      map.setPaintProperty("track-ends", "circle-color", [
+        "match", ["get", "kind"], "start", mapColor("--scale-2"), "finish", mapColor("--scale-5"), mapColor("--scale-4"),
+      ]);
+      map.setPaintProperty("track-ends", "circle-stroke-color", mapColor("--map-outline"));
+    }
+  };
+  const observer = new MutationObserver(update);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-palette"] });
+  map.on("load", update);
+  map.on("remove", () => observer.disconnect());
 }
 
 /// Basemap style for the configured pmtiles archive (offline) or OSM raster
@@ -1268,7 +1363,7 @@ function buildMapStyle(settings: Settings): maplibregl.StyleSpecification {
         },
       },
       layers: [
-        { id: "bg", type: "background", paint: { "background-color": "#0a0a0a" } },
+        { id: "bg", type: "background", paint: { "background-color": mapColor("--bg") } },
         { id: "basemap", type: "raster", source: "basemap" },
       ],
     };
@@ -1284,7 +1379,7 @@ function buildMapStyle(settings: Settings): maplibregl.StyleSpecification {
       },
     },
     layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#0a0a0a" } },
+      { id: "bg", type: "background", paint: { "background-color": mapColor("--bg") } },
       { id: "osm", type: "raster", source: "osm" },
     ],
   };
@@ -1359,6 +1454,7 @@ async function initMap(points: HeatPoint[], settings: Settings): Promise<void> {
     zoom: 11,
   });
   map.addControl(mapControls(() => map.fitBounds(bounds, { padding: 40, maxZoom: 13 })));
+  followMapTheme(map);
 
   map.on("load", () => {
     const fc = {
@@ -1378,16 +1474,7 @@ async function initMap(points: HeatPoint[], settings: Settings): Promise<void> {
         "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0.2, 1, 1],
         "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 8, 0.6, 14, 2],
         "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 8, 6, 14, 22],
-        "heatmap-color": [
-          "interpolate",
-          ["linear"],
-          ["heatmap-density"],
-          0, "rgba(0,0,0,0)",
-          0.25, "rgba(16,110,80,0.55)",
-          0.55, "rgba(52,211,153,0.75)",
-          0.8, "rgba(110,231,183,0.88)",
-          1, "rgba(209,250,229,0.95)",
-        ],
+        "heatmap-color": heatmapColors(),
         "heatmap-opacity": 0.85,
       },
     });
@@ -1515,6 +1602,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
     zoom: 12,
   });
   sheetMap.addControl(mapControls(() => sheetMap?.fitBounds(bounds, { padding: 36, maxZoom: 16 })));
+  followMapTheme(sheetMap);
   sheetMap.on("load", () => {
     if (!sheetMap) return;
     // Start / finish markers carry a `kind` property so the circle layer can
@@ -1548,7 +1636,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
       source: "track",
       filter: ["==", ["get", "kind"], "line"],
       paint: {
-        "line-color": "#0a0a0a",
+        "line-color": mapColor("--map-outline"),
         "line-width": 6,
         "line-opacity": 0.55,
       },
@@ -1559,7 +1647,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
       source: "track",
       filter: ["==", ["get", "kind"], "line"],
       paint: {
-        "line-color": "#34d399",
+        "line-color": mapColor("--scale-3"),
         "line-width": 2.5,
         "line-opacity": 0.95,
       },
@@ -1571,19 +1659,18 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
       filter: ["!=", ["get", "kind"], "line"],
       paint: {
         "circle-radius": 5,
-        // Start and finish are separated by depth within the green scale rather
-        // than hue: the origin sits back as deep green, the destination comes
-        // forward as the palest mint (the top stop of the heatmap ramp).
+        // Start and finish use opposite ends of the shared violet data ramp,
+        // keeping the route legible without introducing another meaning by hue.
         "circle-color": [
           "match",
           ["get", "kind"],
           "start",
-          "#059669",
+          mapColor("--scale-2"),
           "finish",
-          "#d1fae5",
-          "#6ee7b7",
+          mapColor("--scale-5"),
+          mapColor("--scale-4"),
         ],
-        "circle-stroke-color": "#0a0a0a",
+        "circle-stroke-color": mapColor("--map-outline"),
         "circle-stroke-width": 1.5,
       },
     });
@@ -1679,15 +1766,11 @@ function renderEmptyState(step: string): void {
   if (syncBtn) {
     syncBtn.addEventListener("click", async () => {
       const btn = syncBtn as HTMLButtonElement;
-      btn.disabled = true;
-      btn.textContent = "Syncing…";
       try {
-        await tauri.syncNow("coros");
+        await withBusy(btn, "Syncing…", () => tauri.syncNow("coros"));
         // sync://completed re-loads the app data through the page listener.
       } catch (e) {
         fail(e);
-        btn.disabled = false;
-        btn.textContent = cta.label;
       }
     });
   }
@@ -1716,6 +1799,10 @@ function maybeInitMap(): void {
 async function main(): Promise<void> {
   initSyncIndicator();
   initSegmented();
+  // The page's own scroll rail (a hairline at the top of the window) plus
+  // the pinned group headings — both read one scroll listener, so they are
+  // armed together. The rail element is created by initGroupProgress.
+  initGroupProgress();
   // The startup auto-sync usually finishes after the first render — when it
   // does, pull fresh data so the dashboard reflects it without a reload.
   window.addEventListener("runalytics:sync-completed", () => {
@@ -1765,19 +1852,27 @@ async function loadAppData(given?: FlowState): Promise<void> {
     const monday = mondayThisWeek();
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
-    const [data, points, settings, allActivities, planPair, weekPlan] = await Promise.all([
+    const [data, points, settings, allActivities, planPair, weekPlan, painEntries] = await Promise.all([
       tauri.dashboard(currentRange),
       tauri.heatPoints(),
       tauri.getSettings(),
       tauri.allActivities().catch(() => [] as Activity[]),
       tauri.currentPlan().catch(() => null),
       tauri.workoutsBetween(ymd(monday), ymd(sunday)).catch(() => [] as PlanWorkout[]),
+      tauri.painEntries().catch(() => [] as PainEntry[]),
     ]);
     if (data.activities.length === 0 && data.load == null && data.fitness == null) {
       renderEmptyState(step);
       return;
     }
-    const extras: DashExtras = { allActivities, weekPlan, plan: planPair?.[0] ?? null };
+    const activePain = painEntries.filter((entry) => !entry.resolvedOn);
+    const extras: DashExtras = {
+      allActivities,
+      weekPlan,
+      plan: planPair?.[0] ?? null,
+      activePain: activePain.length ? activePain : data.activePain ? [data.activePain] : [],
+      lastSync: flow.lastSync,
+    };
     showDataSections();
     renderDashboard(data, extras);
     // #dash is visible now — the map container can measure itself.

@@ -1,6 +1,7 @@
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauri, el, fail, inTauri } from "./ipc";
 import type { CalendarPublishing } from "./types";
+import { withBusy } from "./feedback";
 
 /// The Calendar subscription pane, hosted by Settings (it configures the
 /// feed, it is not part of the month view). initPublishing() is a no-op on
@@ -34,55 +35,66 @@ function showPublishing(config: CalendarPublishing): void {
 /// happens on sync, on calendar edits, and through the Refresh button below.
 async function refreshPublishing(publish: boolean): Promise<void> {
   const button = el<HTMLButtonElement>("ics-regenerate");
-  button.disabled = true;
   try {
-    if (publish) await tauri.publishCalendar();
-    el("ics-path").textContent = await tauri.icsPath();
-    showPublishing(await tauri.calendarPublishing());
+    await withBusy(button, publish ? "Refreshing calendar…" : "Loading calendar…", async () => {
+      if (publish) await tauri.publishCalendar();
+      el("ics-path").textContent = await tauri.icsPath();
+      showPublishing(await tauri.calendarPublishing());
+    });
   } catch (e) {
     if (!inTauri) {
       el("ics-path").textContent = "Available in the desktop app.";
       el("publish-status").textContent = "Publishing is available in the desktop app.";
     }
     else el("publish-status").textContent = String(e);
-  } finally { button.disabled = false; }
+  } finally {
+    if (!inTauri) button.disabled = true;
+  }
 }
 
 export function initPublishing(): void {
   if (!document.getElementById("calendar-publishing-form")) return;
+  if (!inTauri) {
+    el<HTMLButtonElement>("calendar-save").disabled = true;
+    el<HTMLButtonElement>("ics-reveal").disabled = true;
+  }
   el("calendar-publishing-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = el<HTMLButtonElement>("calendar-save");
-    button.disabled = true;
+    if (button.disabled) return;
     el("publish-status").textContent = "Saving calendar settings...";
     const password = el<HTMLInputElement>("calendar-password");
     const clear = el<HTMLInputElement>("calendar-clear-password");
     try {
-      const config: CalendarPublishing = {
-        enabled: el<HTMLInputElement>("calendar-enabled").checked,
-        uploadUrl: el<HTMLInputElement>("calendar-upload-url").value.trim(),
-        subscriptionUrl: el<HTMLInputElement>("calendar-read-url").value.trim(),
-        username: el<HTMLInputElement>("calendar-username").value.trim(),
-        hasPassword: false, lastPublished: null, lastError: null,
-      };
-      const secret = clear.checked ? "" : password.value || null;
-      showPublishing(await tauri.saveCalendarPublishing(config, secret));
-      password.value = "";
-      clear.checked = false;
+      await withBusy(button, "Saving settings…", async () => {
+        const config: CalendarPublishing = {
+          enabled: el<HTMLInputElement>("calendar-enabled").checked,
+          uploadUrl: el<HTMLInputElement>("calendar-upload-url").value.trim(),
+          subscriptionUrl: el<HTMLInputElement>("calendar-read-url").value.trim(),
+          username: el<HTMLInputElement>("calendar-username").value.trim(),
+          hasPassword: false, lastPublished: null, lastError: null,
+        };
+        const secret = clear.checked ? "" : password.value || null;
+        showPublishing(await tauri.saveCalendarPublishing(config, secret));
+        password.value = "";
+        clear.checked = false;
+      });
     } catch (error) { el("publish-status").textContent = String(error); }
-    finally { button.disabled = false; }
   });
   el("calendar-copy").addEventListener("click", async () => {
-    if (!publishing?.subscriptionUrl) return;
+    const url = publishing?.subscriptionUrl;
+    if (!url) return;
     try {
-      await navigator.clipboard.writeText(publishing.subscriptionUrl);
+      await withBusy(el<HTMLButtonElement>("calendar-copy"), "Copying…", () => navigator.clipboard.writeText(url));
       el("publish-status").textContent = "Subscription URL copied.";
     } catch { el("publish-status").textContent = "Clipboard unavailable. Select the subscription URL to copy it."; }
   });
-  el("calendar-subscribe").addEventListener("click", () => {
-    if (publishing?.subscriptionUrl) {
-      void openUrl(publishing.subscriptionUrl.replace(/^https:/, "webcal:")).catch(fail);
-    }
+  el("calendar-subscribe").addEventListener("click", async () => {
+    const url = publishing?.subscriptionUrl;
+    if (!url) return;
+    try {
+      await withBusy(el<HTMLButtonElement>("calendar-subscribe"), "Opening…", () => openUrl(url.replace(/^https:/, "webcal:")));
+    } catch (e) { fail(e); }
   });
   el("ics-regenerate").addEventListener("click", () => void refreshPublishing(true));
   el("ics-reveal").addEventListener("click", async () => {
@@ -93,12 +105,16 @@ export function initPublishing(): void {
       return;
     }
     try {
-      await revealItemInDir(path);
-    } catch {
-      // Fall back to showing the folder in a browser-style listing is not
-      // possible; open the parent directory path as a last resort.
-      await openUrl(`file://${path.split("/").slice(0, -1).join("/")}`).catch(fail);
-    }
+      await withBusy(el<HTMLButtonElement>("ics-reveal"), "Opening Finder…", async () => {
+        try {
+          await revealItemInDir(path);
+        } catch {
+          // Fall back to showing the folder in a browser-style listing is not
+          // possible; open the parent directory path as a last resort.
+          await openUrl(`file://${path.split("/").slice(0, -1).join("/")}`);
+        }
+      });
+    } catch (e) { fail(e); }
   });
   // A sync republishes the feed, so the published timestamp on the pane goes
   // stale the moment one lands anywhere in the app.

@@ -212,7 +212,9 @@ async function refresh(): Promise<void> {
   } catch (e) {
     if (!inTauri) {
       el("streak-stats").innerHTML =
-        '<p class="muted">Streaks and badges appear once your data is synced from the desktop app.</p>';
+        '<div class="empty-state"><h3>Your milestones live in the desktop app</h3><p>Open Runalytics on your Mac and sync your watch to see streaks, training history, and badges.</p></div>';
+      el("streaks").querySelector<HTMLElement>(".heatmap-row")!.hidden = true;
+      el("badges").hidden = true;
       return;
     }
     fail(e);

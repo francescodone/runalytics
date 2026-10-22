@@ -20,9 +20,30 @@ use crate::proposal::region_label;
 use crate::store::Store;
 use crate::types::*;
 
+/// Complete a base URL into the chat route. Providers document their base
+/// (`https://host/v1`), but the request is posted straight at the chat
+/// endpoint, so a base saved verbatim would 404 with an opaque upstream
+/// error. Only the shapes that unambiguously mean "my OpenAI-compatible base"
+/// are extended; anything else is the user's explicit choice and is kept.
+fn complete_chat_path(url: &mut reqwest::Url) {
+    let path = url.path().trim_end_matches('/').to_string();
+    if path.ends_with("/chat/completions") {
+        return;
+    }
+    let base = match path.as_str() {
+        "" | "/" => "/v1/chat/completions".to_string(),
+        p if p.ends_with("/v1") || p.ends_with("/api") || p.ends_with("/openai") => {
+            format!("{p}/chat/completions")
+        }
+        _ => return,
+    };
+    url.set_path(&base);
+}
+
 /// The chat endpoint must be https, or http only on loopback (local models).
+/// A base URL is normalised to its `/chat/completions` route.
 pub fn validate_endpoint(raw: &str) -> Result<String> {
-    let url = reqwest::Url::parse(raw)
+    let mut url = reqwest::Url::parse(raw)
         .map_err(|e| AppError::Other(format!("endpoint is not a valid URL: {e}")))?;
     match url.scheme() {
         "https" => {}
@@ -40,6 +61,7 @@ pub fn validate_endpoint(raw: &str) -> Result<String> {
             )))
         }
     }
+    complete_chat_path(&mut url);
     Ok(url.to_string())
 }
 
@@ -216,14 +238,23 @@ pub async fn chat(
     Ok(content)
 }
 
-/// The canned reply used when no endpoint is configured — the journal still
-/// works as a plain logger, and the thread shows why the chat is inert.
-pub fn offline_note() -> String {
-    "The assistant is off — no endpoint is configured. Your pain journal still \
-     works as a plain log, and the app still offers plan changes based on what \
-     you record. Set an endpoint under Settings → Assistant to start a \
-     conversation."
-        .into()
+/// The canned reply used when the chat cannot run — the journal still works as
+/// a plain logger, and the thread shows why the chat is inert. The two causes
+/// need different fixes, so they must not share one message: an endpoint that
+/// is set but switched off needs the toggle, not a new endpoint.
+pub fn offline_note(endpoint_set: bool) -> String {
+    if endpoint_set {
+        "The assistant is switched off. An endpoint is configured, so tick \
+         \u{201c}Enable the assistant\u{201d} under Settings \u{2192} Assistant to start a \
+         conversation. Your pain journal keeps logging either way."
+            .into()
+    } else {
+        "The assistant is off — no endpoint is configured. Your pain journal still \
+         works as a plain log, and the app still offers plan changes based on what \
+         you record. Set an endpoint under Settings \u{2192} Assistant to start a \
+         conversation."
+            .into()
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +269,39 @@ mod tests {
         assert!(validate_endpoint("http://example.com/v1/chat/completions").is_err());
         assert!(validate_endpoint("ftp://localhost/x").is_err());
         assert!(validate_endpoint("not a url").is_err());
+    }
+
+    /// A saved base URL must reach the chat route: pasting `.../v1` and getting
+    /// an upstream 404 reads as "the key is wrong", which sends the runner off
+    /// debugging the wrong thing.
+    #[test]
+    fn base_urls_are_completed_to_the_chat_route() {
+        assert_eq!(
+            validate_endpoint("https://gw.example.com/v1").unwrap(),
+            "https://gw.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            validate_endpoint("https://gw.example.com/v1/").unwrap(),
+            "https://gw.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            validate_endpoint("https://gw.example.com/api").unwrap(),
+            "https://gw.example.com/api/chat/completions"
+        );
+        assert_eq!(
+            validate_endpoint("https://gw.example.com").unwrap(),
+            "https://gw.example.com/v1/chat/completions"
+        );
+        // Already a chat endpoint: untouched, no doubled suffix.
+        assert_eq!(
+            validate_endpoint("https://openrouter.ai/api/v1/chat/completions").unwrap(),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        // A non-standard route is the user's explicit choice and stays as typed.
+        assert_eq!(
+            validate_endpoint("http://localhost:1234/aliases/my-model").unwrap(),
+            "http://localhost:1234/aliases/my-model"
+        );
     }
 
     /// The OpenAI-shaped reply must yield the message text; a malformed body
