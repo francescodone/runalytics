@@ -132,6 +132,20 @@ because endpoint-security agents (e.g. CrowdStrike Falcon) hold the
 interstitial mount busy and make `bundle_dmg.sh` fail with
 `hdiutil: create failed - Resource busy`.
 
+### Cutting a release
+
+```sh
+./scripts/bump_version.sh 0.2.0   # update all five version declarations
+./scripts/release.sh v0.2.0       # commit + tag + build + gh release
+```
+
+`bump_version.sh` rewrites package.json, package-lock.json,
+`src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, then verifies
+every field. `release.sh` commits the bump, tags and pushes, runs
+`npm run tauri build` + `make_dmg.sh`, and publishes the DMG as a GitHub
+release via `gh` (requires the `gh` CLI). Pass `--dry-run` to
+`release.sh` to preview the steps without committing or publishing.
+
 ## Architecture
 
 | Piece | Where | Notes |
