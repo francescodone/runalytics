@@ -134,6 +134,17 @@ interstitial mount busy and make `bundle_dmg.sh` fail with
 
 ### Cutting a release
 
+One command, CI does the build — bumps the version, commits, tags, and
+pushes; `.github/workflows/release.yml` then builds both Apple-silicon and
+Intel DMGs and creates a **draft** release (publish it from the Releases
+page once both jobs are green):
+
+```sh
+./scripts/tag_release.sh 0.2.0
+```
+
+Or build and publish from your machine:
+
 ```sh
 ./scripts/bump_version.sh 0.2.0   # update all five version declarations
 ./scripts/release.sh v0.2.0       # commit + tag + build + gh release
@@ -143,23 +154,13 @@ interstitial mount busy and make `bundle_dmg.sh` fail with
 `src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, then verifies
 every field. `release.sh` commits the bump, tags and pushes, runs
 `npm run tauri build` + `make_dmg.sh`, and publishes the DMG as a GitHub
-release via `gh` (requires the `gh` CLI). Pass `--dry-run` to
-`release.sh` to preview the steps without committing or publishing.
+release via `gh` (requires the `gh` CLI). Pass `--dry-run` to either
+script to preview the steps without committing or publishing.
 
-Or let CI do it: push the tag and `.github/workflows/release.yml` builds
-both Apple-silicon and Intel targets via `tauri-apps/tauri-action`, builds
-each DMG with `make_dmg.sh`, and creates a **draft** release — publish it
-from the Releases page once both jobs are green.
-
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-No signing secret is needed: Runalytics has no in-app updater, so the DMG
-is the only release artifact. Note the two paths publish the same tag —
-if CI created the release, don't also run `release.sh` for that version
-(or delete the CI draft with `gh release delete v0.2.0 -y` first).
+The two paths publish the same tag — if CI created the release, don't
+also run `release.sh` for that version (or delete the CI draft with
+`gh release delete v0.2.0 -y` first). No signing secret is needed:
+Runalytics has no in-app updater, so the DMG is the only release artifact.
 
 ## Architecture
 
