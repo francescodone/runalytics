@@ -59,7 +59,7 @@ pub fn workout_notes(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
     if !details.steps.is_empty() {
         notes.push_str("\n\nPlan:");
         for step in &details.steps {
-            let _ = write!(notes, "\n  - {}", lap_line(step));
+            let _ = write!(notes, "\n  • {}", lap_line(step));
         }
     }
     let _ = write!(notes, "\n\nWhy: {}", details.purpose);

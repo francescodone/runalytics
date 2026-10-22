@@ -122,13 +122,6 @@ function daysUntil(iso: string): number {
   return Math.round(ms / 86_400_000);
 }
 
-function hasRecentHealth(health: HealthDaily[]): boolean {
-  return health.some((day) => {
-    const age = daysUntil(day.date);
-    return age >= -2 && age <= 0;
-  });
-}
-
 /// Cross-training with the days it took up, for sentences. The figures come
 /// from lib/sport.ts, where each sport carries only its own numbers.
 function crossDays(c: CrossTraining): string {
