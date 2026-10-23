@@ -3515,6 +3515,7 @@ dependencies = [
 name = "runalytics"
 version = "0.8.0"
 dependencies = [
+ "apple-native-keyring-store",
  "async-trait",
  "chrono",
  "embedded-io-adapters",
