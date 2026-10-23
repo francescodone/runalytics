@@ -29,6 +29,19 @@ if [[ ! -d "$APP" ]]; then
   exit 1
 fi
 
+# Gatekeeper refuses a quarantined bundle whose signature does not seal its
+# resources ("code has no resources but signature indicates they must be
+# present"), which is exactly what an unsigned bundler output looks like on
+# another machine. Never publish a DMG around a bundle that fails this check.
+# If this fails, bundle.macOS.signingIdentity in tauri.conf.json is missing.
+VERIFY_LOG="$(mktemp)"
+if ! codesign --verify --deep --strict "$APP" 2>"$VERIFY_LOG"; then
+  echo "error: $APP is not properly code-signed:" >&2
+  cat "$VERIFY_LOG" >&2
+  exit 1
+fi
+rm -f "$VERIFY_LOG"
+
 mkdir -p "$BUNDLE_DIR/dmg"
 rm -f "$DMG"
 
@@ -36,6 +49,11 @@ rm -f "$DMG"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/"
+# Drop any extended attributes (quarantine, provenance, resource forks) that
+# may have crept into the built bundle, so the DMG ships only bundle content.
+# makehybrid still stamps empty HFS+ FinderInfo on the volume, which is
+# normal on-disk metadata and does not affect the signature or Gatekeeper.
+xattr -cr "$STAGE/Runalytics.app"
 ln -s /Applications "$STAGE/Applications"
 
 hdiutil makehybrid -quiet -o "$DMG" -hfs -hfs-volume-name "Runalytics" "$STAGE"

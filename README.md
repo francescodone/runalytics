@@ -160,7 +160,13 @@ script to preview the steps without committing or publishing.
 The two paths publish the same tag — if CI created the release, don't
 also run `release.sh` for that version (or delete the CI draft with
 `gh release delete v0.2.0 -y` first). No signing secret is needed:
-Runalytics has no in-app updater, so the DMG is the only release artifact.
+the app is ad-hoc-signed (`bundle.macOS.signingIdentity: "-"` in
+`tauri.conf.json`), which seals the bundle so macOS opens it, but it is
+not notarised — on first launch macOS warns the developer is
+"unidentified", so users install with right-click → Open (once per
+version). `make_dmg.sh` refuses to build a DMG around a bundle whose
+signature does not verify, so an unsigned build fails the release
+instead of shipping a "damaged" app.
 
 ## Architecture
 

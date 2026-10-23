@@ -13,7 +13,9 @@ name: Release
 #
 # Both Apple-silicon and Intel bundles are built. There is no updater key:
 # Runalytics has no in-app updater, so the DMG is the only artifact. The app
-# is ad-hoc-signed, so first launch needs Privacy & Security -> Open Anyway.
+# is ad-hoc-signed via bundle.macOS.signingIdentity in tauri.conf.json (the
+# bundler must seal the bundle, or Gatekeeper calls it damaged on other
+# machines); it is not notarised, so first launch needs right-click -> Open.
 
 on:
   push:
