@@ -399,7 +399,9 @@ fn github_headers(request: reqwest::RequestBuilder, token: &str) -> reqwest::Req
 async fn find_gist(client: &reqwest::Client, token: &str, code: &str) -> Result<Option<String>> {
     let want = format!("{MARKER}{code}");
     for page in 1..=3u32 {
-        let url = format!("https://api.github.com/user/gists?per_page=100&page={page}");
+        // Plain /gists is "the authenticated user's gists" when sent with a
+        // token — there is no /user/gists route, and GitHub answers 404.
+        let url = format!("https://api.github.com/gists?per_page=100&page={page}");
         let response = github_headers(client.get(&url), token)
             .send()
             .await
