@@ -4815,11 +4815,19 @@ fieldset.plan-field legend {
   filter: none;
 }
 
-/* Rescheduling: this week's planned chips can be dragged to another day of
-   the same week; the valid days light up while a chip is in flight. */
-.workout-chip.movable { cursor: grab; }
+/* Rescheduling: any planned session can be dragged to a new day from today to
+   race day; the days it may land on light up while a chip is in flight. */
+.workout-chip.movable {
+  cursor: grab;
+  /* WebKit will happily start a text selection, or an image drag, the moment
+     a pointer travels across a chip mid-gesture. The gesture is ours. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
 .workout-chip.dragging { opacity: 0.45; cursor: grabbing; }
-#cal-grid.is-dragging .cal-this-week {
+#cal-grid.is-dragging { cursor: grabbing; user-select: none; }
+#cal-grid.is-dragging .cal-droppable {
   outline: 1px dashed var(--line-strong);
   outline-offset: -3px;
 }
@@ -4827,6 +4835,18 @@ fieldset.plan-field legend {
   outline: 2px solid var(--accent);
   outline-offset: -3px;
   background: var(--glass-bg-2);
+}
+
+/* The chip travels as a fixed clone: the pointer is over the cell under it,
+   so the copy must never intercept the hit-test that picks the drop target. */
+.chip-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.35));
 }
 
 /* Today: the one cell in the month that isn't just a date. The day number

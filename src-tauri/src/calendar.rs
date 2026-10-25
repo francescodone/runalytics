@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Duration, Local, NaiveDate};
 use serde::Serialize;
 
 use crate::error::{AppError, Result};
@@ -269,10 +269,6 @@ pub fn match_activity(store: &Store, workout_id: &str, activity_id: i64) -> Resu
     store.complete_calendar_workout(workout_id, activity.id, &workout_notes(workout, &plan))
 }
 
-fn monday_of(date: NaiveDate) -> NaiveDate {
-    date - Duration::days(date.weekday().num_days_from_monday() as i64)
-}
-
 /// Snapshot the runner's load ratio and injury risk for every run activity
 /// that does not have one yet, evaluated as of the day it was banked. This
 /// is the calendar's half of "update the injury risk after every new done
@@ -353,28 +349,23 @@ fn score_lines(
     lines
 }
 
-/// Reschedule a planned, not-yet-run session to another day of the current
-/// week. Staying inside the week keeps the session in the plan week it was
-/// sized for, so its structure and the week's load are unchanged.
+/// Reschedule a planned, not-yet-run session to any day from today to the end
+/// of the plan. Plans meet real life: a session missed this week usually
+/// belongs next week, not in the bin. Race day is fixed by the event,
+/// completed runs are history, and the plan's own span bounds the move.
 pub fn move_workout(
     store: &Store,
     workout_id: &str,
     to: NaiveDate,
     today: NaiveDate,
 ) -> Result<PlanWorkout> {
-    let (_, workouts) = store
+    let (plan, workouts) = store
         .current_plan()?
         .ok_or_else(|| AppError::Other("No active plan".into()))?;
     let workout = workouts
         .iter()
         .find(|workout| workout.id == workout_id)
         .ok_or_else(|| AppError::Other("Planned workout not found".into()))?;
-    let week = monday_of(today);
-    if monday_of(workout.date) != week || monday_of(to) != week {
-        return Err(AppError::Other(
-            "Sessions can only be moved within the current week".into(),
-        ));
-    }
     if workout.kind == WorkoutKind::Race {
         return Err(AppError::Other("Race day is fixed by the event".into()));
     }
@@ -384,6 +375,16 @@ pub fn move_workout(
         .any(|entry| entry.0 == workout.id);
     if workout.done || completed {
         return Err(AppError::Other("This session is already completed".into()));
+    }
+    if to < today {
+        return Err(AppError::Other(
+            "Sessions can't be moved into the past".into(),
+        ));
+    }
+    if to > plan.target_date {
+        return Err(AppError::Other(
+            "Sessions can't be moved past the end of your plan".into(),
+        ));
     }
     let moved = PlanWorkout {
         date: to,
@@ -590,7 +591,7 @@ fn fmt_pace(seconds: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
+    use chrono::{Datelike, TimeZone, Utc};
 
     fn fixture() -> (Store, TrainingPlan, Vec<PlanWorkout>) {
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
@@ -680,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn sessions_move_only_within_the_current_week_and_stay_pending() {
+    fn planned_sessions_move_forward_within_the_plan_and_stay_pending() {
         let (store, plan, workouts) = fixture();
         let workout = workouts
             .iter()
@@ -702,10 +703,21 @@ mod tests {
             .iter()
             .any(|e| e.workout_id.as_deref() == Some(&workout.id) && e.date == next_day));
 
-        // Out of the current week: neither from another week nor into one.
-        let sunday = monday_of(today) + Duration::days(6);
-        assert!(move_workout(&store, &workout.id, sunday + Duration::days(1), today).is_err());
-        assert!(move_workout(&store, &workout.id, sunday, today + Duration::days(7)).is_err());
+        // A week that slipped away is the reason to drag a session at all, so
+        // the move crosses week boundaries freely — but never backwards in
+        // time, and never past the race the plan was built for.
+        let next_week = today + Duration::days(7);
+        assert_eq!(
+            move_workout(&store, &workout.id, next_week, today)
+                .unwrap()
+                .date,
+            next_week
+        );
+        assert!(move_workout(&store, &workout.id, today - Duration::days(1), today).is_err());
+        assert!(
+            move_workout(&store, &workout.id, plan.target_date + Duration::days(1), today)
+                .is_err()
+        );
 
         // A completed session is history, and race day belongs to the event.
         let activity = insert_run(&store, &moved, "running", "moved");

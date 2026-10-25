@@ -13,6 +13,10 @@ let cursor = new Date();
 cursor.setDate(1);
 let monthEvents: CalendarEvent[] = [];
 let renderVersion = 0;
+/// Race day of the plan on screen, as YYYY-MM-DD. `null` while no plan is
+/// loaded, which is the fail-closed state: with no plan there is nothing that
+/// could be rescheduled.
+let planEnd: string | null = null;
 
 const KIND_LABEL: Record<string, string> = {
   easy: "Easy",
@@ -31,22 +35,23 @@ function ymd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/// First and last day (YYYY-MM-DD) of the week containing today, Monday-based.
-function currentWeek(): [string, string] {
-  const today = new Date();
-  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
-  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-  return [ymd(monday), ymd(sunday)];
+function todayKey(): string {
+  return ymd(new Date());
 }
 
-function inCurrentWeek(date: string): boolean {
-  const [from, to] = currentWeek();
-  return date >= from && date <= to;
+/// First and last day (YYYY-MM-DD) a session may be moved to: from today to
+/// race day. The week a session was generated into is a suggestion, and the
+/// reason to drag one at all is that real life pushed it out of its slot — so
+/// the only walls are the past and the end of the plan.
+function isDroppableDate(date: string): boolean {
+  return planEnd !== null && date >= todayKey() && date <= planEnd;
 }
 
-/// Only planned sessions still to run can move; completed runs are history and race day is fixed.
+/// Only planned sessions still to run can move; completed runs are history
+/// and race day is fixed. A session whose day already slipped past still
+/// moves — dragging it forward is exactly how a missed week is recovered.
 function isMovable(w: CalendarEvent): boolean {
-  return !!w.workoutId && w.activityId == null && w.kind !== "race" && inCurrentWeek(w.date);
+  return !!w.workoutId && w.activityId == null && w.kind !== "race";
 }
 
 async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void> {
@@ -77,7 +82,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   );
   const lead = (first.getDay() + 6) % 7;
   for (let i = 0; i < lead; i++) cells.push(`<div class="cal-cell empty"></div>`);
-  const todayKey = ymd(new Date());
+  const today = todayKey();
   for (let day = 1; day <= last.getDate(); day++) {
     const key = ymd(new Date(year, month, day));
     const ws = byDay.get(key) ?? [];
@@ -85,7 +90,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
       .map(
         (w) =>
           `<button type="button" class="chip workout-chip chip-${w.kind}${w.activityId != null ? " chip-done" : ""}${isMovable(w) ? " movable" : ""}" data-event-index="${workouts.indexOf(w)}"${
-            isMovable(w) ? ` draggable="true" title="Drag to another day this week"` : ""
+            isMovable(w) ? ` title="Drag to a new day"` : ""
           } aria-label="${escapeHtml(w.title)}">${KIND_LABEL[w.kind] ?? w.kind}${
             w.distanceM ? ` ${(w.distanceM / 1000).toFixed(1)}k` : ""
           }</button>`,
@@ -99,7 +104,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
       ? `<span class="cal-pain ${pain >= 7 ? "sev-high" : pain >= 5 ? "sev-mid" : "sev-low"}" title="Pain logged: ${pain}/10"></span>`
       : "";
     cells.push(
-      `<div class="cal-cell${inCurrentWeek(key) ? " cal-this-week" : ""}${key === todayKey ? " cal-today" : ""}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
+      `<div class="cal-cell${isDroppableDate(key) ? " cal-droppable" : ""}${key === today ? " cal-today" : ""}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
     );
   }
   el("cal-grid").innerHTML = cells.join("");
@@ -159,56 +164,111 @@ function renderAgenda(
     : `<p class="muted">No sessions scheduled this month.</p>`;
 }
 
+/// When a pointer-drag released, in performance.now terms. The click that
+/// the browser fires after pointerup must not open the session detail.
+let dragEndedAt = 0;
+
+/// Drag-to-reschedule on the month grid.
+///
+/// This is deliberately pointer-driven rather than HTML5 drag-and-drop: the
+/// desktop app renders in WKWebView, where `draggable="true"` on a button
+/// never starts a drag session, so the chips looked draggable and silently
+/// were not. A pointerdown/move/up gesture works identically in WebKit,
+/// Chromium, and Firefox, and the same pattern already drives the settings
+/// drawer in lib/overlay.ts.
 function initDragAndDrop(): void {
   const grid = el("cal-grid");
   let dragged: CalendarEvent | null = null;
+  let chip: HTMLElement | null = null;
+  let ghost: HTMLElement | null = null;
+  let activeId = -1;
+  let startX = 0;
+  let startY = 0;
+  let moving = false;
+
   const clearTargets = () =>
     grid.querySelectorAll(".drop-target").forEach((cell) => cell.classList.remove("drop-target"));
-  const targetCell = (event: DragEvent) => {
-    const cell = (event.target as Element).closest<HTMLElement>(".cal-cell[data-date]");
-    return cell && dragged && inCurrentWeek(cell.dataset.date!) ? cell : null;
+
+  const cellAt = (x: number, y: number): HTMLElement | null => {
+    const under = document.elementFromPoint(x, y)?.closest<HTMLElement>(".cal-cell[data-date]");
+    return under && dragged && isDroppableDate(under.dataset.date!) ? under : null;
   };
 
-  grid.addEventListener("dragstart", (event) => {
-    const chip = (event.target as Element).closest<HTMLElement>(".workout-chip.movable");
-    const selected = chip ? monthEvents[Number(chip.dataset.eventIndex)] : null;
-    if (!chip || !selected || !event.dataTransfer) return;
-    dragged = selected;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", selected.workoutId!);
-    chip.classList.add("dragging");
-    grid.classList.add("is-dragging");
-  });
-  grid.addEventListener("dragend", () => {
+  const reset = () => {
     dragged = null;
+    chip = null;
+    activeId = -1;
+    moving = false;
     clearTargets();
     grid.classList.remove("is-dragging");
-    grid.querySelectorAll(".dragging").forEach((chip) => chip.classList.remove("dragging"));
+    grid.querySelectorAll(".dragging").forEach((node) => node.classList.remove("dragging"));
+    ghost?.remove();
+    ghost = null;
+  };
+
+  grid.addEventListener("pointerdown", (event) => {
+    // Touch keeps its native behaviour: below the width breakpoint the grid
+    // is replaced by the agenda, and hijacking touch here would break
+    // scrolling the page on narrow windows.
+    if (event.pointerType === "touch" || event.button !== 0) return;
+    const target = (event.target as Element).closest<HTMLElement>(".workout-chip.movable");
+    const selected = target ? monthEvents[Number(target.dataset.eventIndex)] : null;
+    if (!target || !selected) return;
+    dragged = selected;
+    chip = target;
+    activeId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+    moving = false;
   });
-  grid.addEventListener("dragover", (event) => {
-    const cell = targetCell(event);
-    if (!cell) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    if (!cell.classList.contains("drop-target")) {
-      clearTargets();
-      cell.classList.add("drop-target");
+
+  // Move and release are watched on the window, not the grid: once the pointer
+  // travels past the grid's edge the grid stops seeing events, and a drag that
+  // ends there would otherwise never be cleaned up. Pointer capture is
+  // deliberately not used — it retargets the click that follows, which would
+  // stop a plain click on a chip from opening the session.
+  window.addEventListener("pointermove", (event) => {
+    if (!dragged || !chip || event.pointerId !== activeId) return;
+    if (!moving) {
+      // Small jitter before the threshold stays a click, not a move.
+      if (Math.abs(event.clientX - startX) < 5 && Math.abs(event.clientY - startY) < 5) return;
+      moving = true;
+      chip.classList.add("dragging");
+      grid.classList.add("is-dragging");
+      ghost = chip.cloneNode(true) as HTMLElement;
+      ghost.classList.remove("dragging");
+      ghost.classList.add("chip-ghost");
+      ghost.style.width = `${chip.getBoundingClientRect().width}px`;
+      document.body.appendChild(ghost);
     }
-  });
-  grid.addEventListener("drop", (event) => {
-    const cell = targetCell(event);
-    const workout = dragged;
-    clearTargets();
-    if (!cell || !workout) return;
     event.preventDefault();
-    const date = cell.dataset.date!;
-    if (date === workout.date) return;
-    tauri
-      .moveWorkout(workout.workoutId!, date)
-      // Re-renders the grid; the Settings pane picks up the new publish time.
-      .then(() => window.dispatchEvent(new CustomEvent("runalytics:calendar-updated")))
-      .catch(fail);
+    ghost?.style.setProperty("transform", `translate(${event.clientX + 10}px, ${event.clientY + 10}px)`);
+    const cell = cellAt(event.clientX, event.clientY);
+    if (cell?.classList.contains("drop-target")) return;
+    clearTargets();
+    cell?.classList.add("drop-target");
   });
+
+  const finish = (event: PointerEvent) => {
+    if (!dragged || event.pointerId !== activeId) return;
+    const workout = dragged;
+    const cell = moving ? cellAt(event.clientX, event.clientY) : null;
+    if (moving) {
+      dragEndedAt = performance.now();
+      const date = cell?.dataset.date;
+      if (date && date !== workout.date) {
+        tauri
+          .moveWorkout(workout.workoutId!, date)
+          // Re-renders the grid; the Settings pane picks up the new publish time.
+          .then(() => window.dispatchEvent(new CustomEvent("runalytics:calendar-updated")))
+          .catch(fail);
+      }
+    }
+    reset();
+  };
+
+  window.addEventListener("pointerup", finish);
+  window.addEventListener("pointercancel", () => reset());
 }
 
 async function main(): Promise<void> {
@@ -218,6 +278,9 @@ async function main(): Promise<void> {
   // One delegated listener covers both views: the grid's chips and the
   // agenda's rows carry the same data-event-index into the same array.
   el("calendar").addEventListener("click", (event) => {
+    // A pointer drag ends with a click on the chip it moved. That gesture was
+    // a reschedule, not a request to open the session.
+    if (performance.now() - dragEndedAt < 250) return;
     const button = (event.target as Element).closest<HTMLButtonElement>("[data-event-index]");
     const selected = button ? monthEvents[Number(button.dataset.eventIndex)] : null;
     if (selected) void openCalendarEvent(selected).catch(fail);
@@ -255,6 +318,10 @@ async function main(): Promise<void> {
 // scheduled sessions to show, so it redirects rather than rendering an empty grid.
 async function boot(): Promise<void> {
   if (await requirePlanOrRedirect("gated")) return;
+  // Race day bounds how far a session may be dragged. The gate above already
+  // proved a plan exists; if the read fails the window stays closed and the
+  // backend still refuses anything it disagrees with.
+  planEnd = (await tauri.currentPlan().catch(() => null))?.[0].targetDate ?? null;
   await main();
 }
 

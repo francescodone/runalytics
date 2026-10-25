@@ -7,12 +7,28 @@
     <link rel="stylesheet" href="/src/styles/app.css" />
     <script>
       localStorage.setItem("runalytics.onboarding.v1", "done");
+      // The page asks "what day is it?" in three places (the drop window, the
+      // today ring, the agenda). Pinned to a Monday at the start of a month so
+      // this week AND next week both land in the month on screen.
+      const TODAY = new Date(2026, 9, 5, 12, 0, 0);
+      const RealDate = Date;
+      class FixedDate extends RealDate {
+        constructor(...args) {
+          if (args.length === 0) super(TODAY.getTime());
+          else super(...args);
+        }
+        static now() {
+          return TODAY.getTime();
+        }
+      }
+      window.Date = FixedDate;
       const ymdOf = (d) =>
         `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
           d.getDate(),
         ).padStart(2, "0")}`;
-      // A week that is still open: one session already banked, three still to
-      // run. This is the state where drag is supposed to be available.
+      // This week is fully banked — the state the real app is in — so every
+      // session that could be dragged lives in a FUTURE week. Cross-week
+      // moves are the whole point.
       const monday = new Date();
       monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
       const day = (offset) => {
@@ -21,9 +37,12 @@
       };
       const workouts = [
         { id: "w-done", day: day(0), kind: "easy", title: "Easy run 6 km", distanceM: 6000, done: true },
-        { id: "w-tempo", day: day(2), kind: "tempo", title: "4 x 1 km tempo", distanceM: 8000, done: false },
+        { id: "w-tempo", day: day(2), kind: "tempo", title: "4 x 1 km tempo", distanceM: 8000, done: true },
         { id: "w-easy", day: day(4), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
-        { id: "w-long", day: day(6), kind: "longRun", title: "Long run 16 km", distanceM: 16000, done: false },
+        { id: "w-long", day: day(6), kind: "longRun", title: "Long run 16 km", distanceM: 16000, done: true },
+        { id: "w-next-tempo", day: day(9), kind: "tempo", title: "5 x 1 km tempo", distanceM: 9000, done: false },
+        { id: "w-next-easy", day: day(11), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
+        { id: "w-next-long", day: day(13), kind: "longRun", title: "Long run 18 km", distanceM: 18000, done: false },
       ];
       window.__moves = [];
 
