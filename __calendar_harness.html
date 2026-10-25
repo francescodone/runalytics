@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Runalytics calendar harness</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+    <script>
+      localStorage.setItem("runalytics.onboarding.v1", "done");
+      const ymdOf = (d) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+          d.getDate(),
+        ).padStart(2, "0")}`;
+      // A week that is still open: one session already banked, three still to
+      // run. This is the state where drag is supposed to be available.
+      const monday = new Date();
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+      const day = (offset) => {
+        const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + offset);
+        return ymdOf(d);
+      };
+      const workouts = [
+        { id: "w-done", day: day(0), kind: "easy", title: "Easy run 6 km", distanceM: 6000, done: true },
+        { id: "w-tempo", day: day(2), kind: "tempo", title: "4 x 1 km tempo", distanceM: 8000, done: false },
+        { id: "w-easy", day: day(4), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
+        { id: "w-long", day: day(6), kind: "longRun", title: "Long run 16 km", distanceM: 16000, done: false },
+      ];
+      window.__moves = [];
+
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          switch (cmd) {
+            case "current_plan":
+              return [
+                {
+                  id: "p1",
+                  distance: "10K",
+                  kind: "race",
+                  targetDate: day(120),
+                  status: "active",
+                  weeklyFrequency: 4,
+                  longrunDay: 7,
+                  increase: "moderate",
+                  thresholdSecKm: 285,
+                  createdAt: new Date().toISOString(),
+                  pushedId: null,
+                  baselineWeeklyKm: 40,
+                  qualityOffsetSecKm: 0,
+                  qualityOffsetFrom: null,
+                },
+                workouts,
+              ];
+            case "calendar_events": {
+              const [from, to] = [args.from, args.to];
+              return workouts
+                .filter((w) => w.day >= from && w.day <= to)
+                .map((w) => ({
+                  id: w.id,
+                  workoutId: w.id,
+                  activityId: w.done ? 1 : null,
+                  date: w.day,
+                  kind: w.kind,
+                  title: w.title,
+                  distanceM: w.distanceM,
+                  durationMin: Math.round(w.distanceM / 200),
+                  notes: "Harness notes.",
+                  start: w.day,
+                  end: w.day,
+                  allDay: true,
+                }));
+            }
+            case "pain_days":
+              return [];
+            case "move_workout":
+              window.__moves.push([args.workoutId, args.date]);
+              return null;
+            case "get_settings":
+              return { theme: "system", llmEnabled: false, thresholds: {} };
+            case "provider_status":
+              return [{ provider: "coros", connected: true, lastSync: new Date().toISOString(), detail: "" }];
+            case "flow_state":
+              return { connected: true, lastSync: new Date().toISOString(), plan: "p1", pushed: false };
+            case "sync_status":
+              return false;
+            default:
+              throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
+          }
+        },
+      };
+    </script>
+    <script type="module">
+      const page = await (await fetch("/calendar.html")).text();
+      const body = new DOMParser().parseFromString(page, "text/html").body;
+      body.querySelectorAll("script").forEach((s) => s.remove());
+      document.body.replaceChildren(...body.childNodes);
+      await import("/src/calendar.ts");
+    </script>
+  </head>
+  <body></body>
+</html>
