@@ -273,6 +273,44 @@ export interface CalendarPublishing {
   lastError: string | null;
 }
 
+/// The cross-device plan channel. `canPublish` is decided by the platform, not
+/// the user: the machine that builds plans is the one that publishes them.
+export interface PlanSync {
+  enabled: boolean;
+  gistId: string | null;
+  hasToken: boolean;
+  canPublish: boolean;
+  lastPushed: string | null;
+  lastPulled: string | null;
+  installedRev: number | null;
+  lastError: string | null;
+}
+
+/// The only part of the config the interface owns: everything else is derived
+/// from the platform or recorded by the backend.
+export interface PlanSyncPatch {
+  enabled: boolean;
+}
+
+export interface PlanSyncStatus {
+  config: PlanSync;
+  /// False until COROS has been connected — that account id is how the two
+  /// devices recognise each other, so without it there is no channel.
+  accountLinked: boolean;
+  /// The anonymous channel code. Shown so both devices can be compared when
+  /// a sync appears to do nothing.
+  code: string | null;
+}
+
+export interface PullOutcome {
+  installed: boolean;
+  planName: string;
+  workouts: number;
+  /// Set when a different plan is already on this device and the import was
+  /// not forced — the caller asks before overwriting.
+  conflict: string | null;
+}
+
 export interface DashboardScores {
   trainingScore: number;
   injuryRisk: number;

@@ -6,8 +6,10 @@ mod error;
 mod fit;
 mod metrics;
 mod plan;
+mod plan_sync;
 mod proposal;
 mod providers;
+mod secure_store;
 mod state;
 mod store;
 mod types;
@@ -61,18 +63,31 @@ pub fn run() {
             });
 
             // Single window with in-app navigation between the pages.
-            let _win = tauri::WebviewWindowBuilder::new(
+            // On mobile the window must fill the device screen: tao sizes the
+            // native frame directly from `inner_size` in points, so passing a
+            // desktop size there creates an oversized webview on iPhone and
+            // the page renders in desktop layout, clipped to the screen.
+            // Leaving the size unset makes tao use the full screen bounds.
+            let window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("Runalytics")
-            .inner_size(1180.0, 780.0)
-            .min_inner_size(900.0, 600.0)
-            // The native file-drop handler swallows HTML5 drag events, which
-            // the calendar uses to reschedule sessions.
-            .disable_drag_drop_handler()
-            .build()?;
+            .title("Runalytics");
+            #[cfg(not(mobile))]
+            let window = window
+                .inner_size(1180.0, 780.0)
+                .min_inner_size(900.0, 600.0);
+            // On mobile the COROS sign-in happens in this webview rather than an
+            // external browser, so the redirect back to the loopback redirect URI
+            // has to be caught here — see `providers::coros::on_webview_navigation`.
+            #[cfg(mobile)]
+            let window = window.on_navigation(providers::coros::on_webview_navigation);
+            let _win = window
+                // The native file-drop handler swallows HTML5 drag events, which
+                // the calendar uses to reschedule sessions.
+                .disable_drag_drop_handler()
+                .build()?;
 
             // Auto-sync on launch: pull fresh COROS data in the background
             // as soon as the app opens. The nav-bar spinner (driven by the
@@ -102,6 +117,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::provider_status,
+            commands::coros_signin_notice,
             commands::check_provider_api,
             commands::connect_provider,
             commands::disconnect_provider,
@@ -123,6 +139,10 @@ pub fn run() {
             commands::calendar_events,
             commands::calendar_publishing,
             commands::save_calendar_publishing,
+            commands::plan_sync_status,
+            commands::plan_sync_configure,
+            commands::plan_sync_push,
+            commands::plan_sync_pull,
             commands::match_calendar_activity,
             commands::move_workout,
             commands::get_settings,

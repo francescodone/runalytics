@@ -19,6 +19,15 @@ function geometryOf(btn: HTMLElement): Geometry {
   return { x: btn.offsetLeft, y: btn.offsetTop, w: btn.offsetWidth, h: btn.offsetHeight };
 }
 
+// A touch screen fires `pointerover` on tap and then never fires
+// `pointerleave`, so the grey pill would stay parked on whatever was tapped
+// last — a permanent fake selection competing with the accent one. The pointer
+// pill is a hover affordance, so it follows the pointer only where hovering
+// exists. Keyboard focus still drives it, since that is a real selection cue.
+function canHover(): boolean {
+  return window.matchMedia("(hover: hover)").matches;
+}
+
 function write(
   track: HTMLElement,
   prefix: string,
@@ -71,25 +80,27 @@ function observe(track: HTMLElement): void {
   const remeasure = () => {
     if (track.offsetWidth === 0) return;
     syncActive(track);
-    syncHover(track, entryOf(track, track.querySelector("button:hover")));
+    if (canHover()) syncHover(track, entryOf(track, track.querySelector("button:hover")));
   };
   const ro = new ResizeObserver(remeasure);
   ro.observe(track);
   track.querySelectorAll("button").forEach((b) => ro.observe(b));
 
-  track.addEventListener("pointerover", (e) =>
-    syncHover(track, entryOf(track, e.target)),
-  );
+  track.addEventListener("pointerover", (e) => {
+    if (!canHover()) return;
+    syncHover(track, entryOf(track, e.target));
+  });
   // Leaving the track hides the pill — unless an entry still holds keyboard
   // focus, in which case the pill goes back to it rather than vanishing.
-  track.addEventListener("pointerleave", () =>
+  track.addEventListener("pointerleave", () => {
+    if (!canHover()) return;
     syncHover(
       track,
       track.contains(document.activeElement)
         ? (document.activeElement as HTMLElement)
         : null,
-    ),
-  );
+    );
+  });
   // Keyboard focus drives the same pill, so tabbing feels like hovering.
   track.addEventListener("focusin", (e) => syncHover(track, entryOf(track, e.target)));
   // Only hide when focus actually leaves the track: moving between two entries

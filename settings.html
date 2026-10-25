@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#5544e9" />
     <title>Runalytics — Settings</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
   </head>
@@ -33,6 +37,9 @@
             </button>
             <button role="tab" data-pane="calendar" aria-selected="false">
               <span class="sn-icon" data-icon="calendar"></span>Calendar subscription
+            </button>
+            <button role="tab" data-pane="sync" aria-selected="false">
+              <span class="sn-icon" data-icon="sync"></span>Plan sync
             </button>
             <button role="tab" data-pane="tiles" aria-selected="false">
               <span class="sn-icon" data-icon="map"></span>Map tiles
@@ -259,6 +266,36 @@
             <div class="actions">
               <button id="ics-regenerate" class="secondary"><span data-icon="sync"></span> Refresh calendar</button>
               <button id="ics-reveal" class="secondary">Reveal in Finder</button>
+            </div>
+          </section>
+
+          <section class="panel" id="pane-sync" role="tabpanel" aria-label="Plan sync" hidden>
+            <h2>Plan sync</h2>
+            <p class="section-intro">
+              Your plan lives on the computer that built it. Switch this on and Runalytics
+              publishes it to a private GitHub gist that only your own accounts can open, so a
+              phone signed in to the same COROS account picks it up by itself.
+            </p>
+            <p id="sync-status" role="status">Loading sync settings...</p>
+            <p id="sync-code" class="muted mono"></p>
+            <details class="disclosure">
+              <summary><span class="disclosure-copy"><strong>Connect the two devices</strong><small>Same COROS login, plus a GitHub token</small></span></summary>
+              <form id="plan-sync-form" class="calendar-publishing-form">
+                <p class="muted">
+                  Both devices must be signed in to the same COROS account — that is how they
+                  find each other without you pasting a URL anywhere. The token needs the
+                  <code>gist</code> scope and nothing else. The plan is encrypted before upload,
+                  so GitHub only ever holds ciphertext.
+                </p>
+                <label class="check-label"><input id="sync-enabled" type="checkbox" /> Sync my plan between devices</label>
+                <label>GitHub token<input id="sync-token" type="password" autocomplete="new-password" /></label>
+                <label class="check-label"><input id="sync-clear-token" type="checkbox" /> Remove saved token</label>
+                <div class="actions"><button id="sync-save" type="submit"><span data-icon="check"></span> Save settings</button></div>
+              </form>
+            </details>
+            <div class="actions">
+              <button id="sync-push" class="secondary" hidden><span data-icon="sync"></span> Publish plan now</button>
+              <button id="sync-pull" class="secondary" hidden><span data-icon="repeat"></span> Import plan now</button>
             </div>
           </section>
 

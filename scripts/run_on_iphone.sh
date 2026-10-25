@@ -131,19 +131,24 @@ fi
 # --- 4. archive + install path (no dev server) ------------------------------
 if [[ "$BUILD_ONLY" -eq 1 ]]; then
   say "archiving for $DEVICE_NAME (first run compiles every crate for aarch64-apple-ios)"
+  # Signed on purpose here, unlike scripts/build_ios.sh: this path installs
+  # straight onto the phone with devicectl, which refuses an unsigned app.
   # `tauri ios build` has no --devices flag and no --ci flag either (it accepts
-  # only --debug/--target/--features/--config/--open), and --no-sign would
-  # produce an app the phone refuses to run. So: archive signed, install by hand.
+  # only --debug/--target/--features/--config/--open), so: archive signed,
+  # install by hand.
   (cd "$REPO" && npx tauri ios build --debug --target aarch64)
   # Search rather than assume: the export directory differs between tauri-cli
-  # versions, so a hardcoded bundle/ipa path can miss a successful build.
+  # versions, so a hardcoded bundle/ipa path can miss a successful build. A
+  # signed build exports to gen/apple/build, and --no-sign nests one level
+  # deeper under build/<arch>/, so neither path alone is enough. Nothing under
+  # src-tauri/target ever matches — that is the desktop bundle tree.
   # Picking the newest by hand — `find | xargs ls -t` runs bare `ls` (listing the
   # current directory) when find matches nothing, which would fake a success.
   IPA=""
   while IFS= read -r cand; do
     [[ -z "$IPA" || "$cand" -nt "$IPA" ]] && IPA="$cand"
-  done < <(find "$REPO/src-tauri/target" -name '*.ipa' -type f 2>/dev/null)
-  [[ -n "$IPA" ]] || die "no .ipa found under src-tauri/target — check the build output above"
+  done < <(find "$REPO/src-tauri/gen/apple/build" -name '*.ipa' -type f 2>/dev/null)
+  [[ -n "$IPA" ]] || die "no .ipa found under src-tauri/gen/apple/build — check the build output above"
   say "installing $(basename "$IPA") on $DEVICE_NAME"
   STAGE="$(mktemp -d)"
   unzip -q "$IPA" -d "$STAGE"

@@ -175,7 +175,17 @@
   --control-pad-x-sm: var(--space-3);
   --control-pad-x-lg: var(--space-5);
   --sidebar-w: 208px;
-  --toolbar-h: 64px;
+  /* The toolbar's own height, before any display cutout. Redefining
+     --toolbar-h (rather than every consumer) is what keeps the body offset,
+     the sticky table head, the nav dropdown and the scroll margins in sync. */
+  --toolbar-h-core: 64px;
+  --toolbar-h: var(--toolbar-h-core);
+  /* Notch / home-indicator insets. Zero on any display without a cutout, so
+     every calc() below stays exact on desktop and correct on iPhone. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
   /* How far a control compresses under the finger — one value, so a pill,
      a stepper cell and a primary button all feel the same press. */
   --press-scale: 0.96;
@@ -664,6 +674,9 @@ body {
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* WKWebView's default tap flash is a flat grey rectangle that ignores the
+     radius, colour and press animation of every control here. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* A modal dialog is open — lock the page behind it. The old sheet used a
@@ -1091,6 +1104,13 @@ main {
 }
 
 @media (max-width: 900px) {
+  :root {
+    /* viewport-fit=cover makes the fixed toolbar extend under the status bar,
+       so the toolbar has to grow by the inset. Everything that clears it
+       already offsets by --toolbar-h and follows automatically. */
+    --toolbar-h: calc(var(--toolbar-h-core) + var(--safe-t));
+  }
+
   body {
     padding-left: 0;
     padding-top: var(--toolbar-h);
@@ -1102,6 +1122,8 @@ main {
     width: 100%;
     height: var(--toolbar-h);
     padding: var(--space-2) var(--gutter);
+    padding-top: calc(var(--space-2) + var(--safe-t));
+    padding-inline: calc(var(--gutter) + var(--safe-l)) calc(var(--gutter) + var(--safe-r));
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
@@ -1168,8 +1190,16 @@ main {
   }
 
   #nav #sync-chip {
-    margin: 0;
+    /* The toolbar runs gap:0, so the chip would sit flush against the menu
+       button. One --space-2 of breathing room — the same gap .actions and
+       .cal-nav give their buttons — keeps the two tap targets apart. */
+    margin: 0 var(--space-2) 0 0;
     min-height: 44px;
+  }
+
+  /* Sticky category list has to clear the fixed toolbar, not slide under it. */
+  .settings-nav {
+    top: calc(var(--toolbar-h) + var(--space-6));
   }
 }
 
@@ -4970,6 +5000,17 @@ fieldset.plan-field legend {
   .calendar-subscription button.btn-busy { padding-inline: var(--space-2); gap: var(--space-1); white-space: normal; }
 }
 
+/* ---- plan sync pane ----
+   Publish and import are mutually exclusive by platform — the machine that
+   builds plans writes them, the other reads — so exactly one of the two is
+   hidden at runtime. `button` sets display:inline-flex, which outranks the UA
+   `[hidden]` rule, so hiding has to be re-asserted or both actions show. */
+#sync-push[hidden],
+#sync-pull[hidden] { display: none; }
+#sync-status { margin: 0; color: var(--text-dim); font-size: var(--text-sm); overflow-wrap: anywhere; }
+#sync-status.error { color: var(--bad); }
+#sync-code { margin: 0; font-size: var(--text-sm); }
+
 /* The agenda is the narrow-window twin of the month grid: the same events,
    grouped into a day-by-day list. Seven columns of session text crowd below
    ~560px, so the grid and its legend hide and the agenda shows — CSS decides
@@ -5666,7 +5707,9 @@ fieldset.plan-field legend {
 #toast {
   position: fixed;
   left: 50%;
-  bottom: var(--space-6);
+  /* viewport-fit=cover means the home indicator owns the last ~34px, so
+     the inset has to be the safe area plus the gap, not the gap alone. */
+  bottom: calc(var(--space-6) + var(--safe-b));
   transform: translate(-50%, var(--space-4));
   max-width: min(560px, calc(100vw - var(--gutter)));
   background: var(--glass-bg-2);
@@ -5902,6 +5945,55 @@ fieldset.plan-field legend {
   text-align: center;
   min-height: 20px;
   margin: 8px 0 0;
+}
+
+/* The touch rendering of the muscle map: the same regions as a wrapping grid
+   of 44pt rows. A tinted region carries the heat gradient as a dot so recent
+   pain is still visible when the picture is gone; the selected row takes the
+   same accent fill as a selected chip elsewhere. */
+.bodymap.bodymap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-width: none;
+}
+.bodymap-list-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  background: var(--glass-surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-shadow: none;
+  color: var(--text-dim);
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-align: left;
+  transition-property: background-color, color, border-color;
+}
+.bodymap-list-item::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.bodymap-list-item.tinted::before {
+  background: color-mix(in srgb, var(--scale-2) calc(35% + var(--tint, 0.3) * 65%), var(--scale-4));
+}
+.bodymap-list-item.selected,
+.bodymap-list-item.selected:hover {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primary-text);
+  font-weight: 600;
+}
+.bodymap-list-item.selected::before {
+  background: var(--primary-text);
 }
 
 /* Log-pain form. Fields are the global <label> + field material; only the
@@ -6636,15 +6728,26 @@ main {
 
 @media (max-width: 900px) {
   :root { --gutter: 24px; --stack: 26px; }
-  #nav { flex-direction: row; align-items: center; padding: 8px var(--gutter); border-bottom: 0; }
+  #nav { flex-direction: row; align-items: center; padding: 8px var(--gutter); padding-top: calc(8px + var(--safe-t)); padding-inline: calc(var(--gutter) + var(--safe-l)) calc(var(--gutter) + var(--safe-r)); border-bottom: 0; }
   #nav .brand { padding: 0; }
   #nav .nav-toggle { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 15%, transparent); border-color: color-mix(in srgb, var(--on-brand) 20%, transparent); }
   #nav .nav-toggle:hover { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 25%, transparent); }
   #nav[data-open="true"] .nav-destinations { display: grid; }
   #nav .nav-destinations { background: var(--brand-mid); border: 1px solid color-mix(in srgb, var(--on-brand) 18%, transparent); }
   #nav .nav-link[href="settings.html"] { margin-top: 0; }
-  main { padding-top: 32px; }
-  #dash .group > .group-head { top: 0; }
+  main { padding-top: 32px; padding-bottom: calc(80px + var(--safe-b)); }
+  /* Pinned heads belong below the toolbar; `top: 0` slid them underneath it. */
+  #dash .group > .group-head { top: var(--toolbar-h); }
+  /* The 2px scroll bar is invisible under the status bar — sit it on the
+     bottom edge of the toolbar instead. */
+  #page-progress { top: calc(var(--toolbar-h) - 2px); }
+}
+
+@media (max-width: 760px) {
+  /* Home indicator must not sit on top of the sheet's last control. */
+  .sheet-dialog .sheet-body {
+    padding-bottom: calc(var(--space-8) + var(--safe-b));
+  }
 }
 
 @media (max-width: 760px) {
@@ -6790,4 +6893,440 @@ a.btn:active { transform: scale(var(--press-scale)); }
   }
   #weeks-table .week-sessions { width: 100%; }
   #weeks-table .workout-chip { min-height: 38px; }
+}
+
+/* ============================================================
+   Touch / iOS hardening
+   ============================================================
+   Two media features carry everything about the *input device* rather
+   than the viewport width, so a narrow desktop window keeps its hover
+   affordances and a phone does not:
+
+   (hover: none)   WKWebView keeps :hover latched after a tap until
+                   something else is tapped, turning every hover
+                   affordance into a sticky grey state. Rather than edit
+                   the 60-odd hover rules where they live, one block at
+                   the end of the cascade re-asserts each rule's resting
+                   value — then re-asserts the :active, .active, :focus
+                   and tone rules that share a selector's specificity,
+                   since on touch the latched :hover stays on through a
+                   press and would otherwise outrank them on source
+                   order. Press feedback must survive the neutralisation.
+
+   (pointer: coarse)
+                   A finger. Apple's floor for a hit target is 44pt, and
+                   iOS zooms the page on focus for any field under 16px.
+   ============================================================ */
+
+@media (hover: none) {
+  /* ---- 1. hover back to resting ---- */
+  .nav-link:hover {
+    background: none;
+    color: color-mix(in srgb, var(--on-brand) 82%, transparent);
+  }
+  #sync-chip:hover {
+    background: var(--glass-surface-2);
+    border-color: var(--line);
+    color: var(--text-dim);
+    filter: none;
+    box-shadow: none;
+  }
+  #nav #sync-chip:hover {
+    background: color-mix(in srgb, var(--on-brand) 12%, transparent);
+    color: var(--on-brand);
+  }
+  .segmented > button:hover {
+    color: var(--text-dim);
+    background: none;
+    box-shadow: none;
+    transform: none;
+    filter: none;
+  }
+  .ob-skip:hover {
+    color: var(--text-faint);
+    background: transparent;
+    filter: none;
+  }
+  .card:hover {
+    border-color: var(--line);
+  }
+  tbody tr:hover {
+    background: transparent;
+  }
+  /* MapLibre ships its own `a:hover { text-decoration: underline }` and its
+     stylesheet is bundled into a chunk that loads *after* this one, so
+     source order alone cannot win here — the tap-latched underline on the
+     map credit has to be beaten with !important. */
+  .maplibregl-ctrl-attrib a:hover {
+    text-decoration: none !important;
+  }
+  .map-ctrl button:hover {
+    background: none;
+    color: var(--text-dim);
+    filter: none;
+    box-shadow: none;
+  }
+  input:hover,
+  select:hover,
+  textarea:hover {
+    border-color: var(--line-strong);
+  }
+  button:hover,
+  .btn:hover {
+    filter: none;
+  }
+  button.secondary:hover,
+  button.icon-btn:hover {
+    background: var(--panel);
+  }
+  .disclosure:hover {
+    border-color: var(--line);
+  }
+  .disclosure summary:hover {
+    background: transparent;
+  }
+  .plan-seg-opt:hover .seg-face {
+    border-color: var(--line-strong);
+    color: var(--text-dim);
+  }
+  .plan-stepper .plan-step:hover {
+    background: none;
+    filter: none;
+    transform: none;
+  }
+  .carousel-btn.prev:hover svg,
+  .carousel-btn.next:hover svg {
+    transform: none;
+  }
+  .carousel-dots button:hover {
+    filter: none;
+    box-shadow: none;
+  }
+  .carousel-dots button:hover::after {
+    background: var(--text-faint);
+    transform: none;
+  }
+  .cal-cell:hover {
+    border-color: var(--line);
+  }
+  .workout-chip:hover {
+    background: var(--glass-surface-2);
+    filter: none;
+    transform: none;
+  }
+  .workout-link:hover {
+    background: transparent;
+    color: inherit;
+  }
+  .agenda-row:hover {
+    background: transparent;
+    filter: none;
+    transform: none;
+  }
+  .settings-nav-list button:hover {
+    background: transparent;
+    color: var(--text-dim);
+    transform: none;
+  }
+  .palette-option:hover {
+    border-color: var(--line-strong);
+  }
+  .sheet-close:hover {
+    color: var(--text-dim);
+    background: transparent;
+  }
+  .bodymap-region:hover rect,
+  .bodymap-region:hover circle,
+  .bodymap-region:hover ellipse,
+  .bodymap-region:hover path {
+    fill: var(--muscle-fill);
+    fill-opacity: 1;
+    stroke: transparent;
+  }
+  .entry-chat .chat-clear:hover {
+    background: transparent;
+    color: var(--text-dim);
+  }
+  .header-action:hover {
+    opacity: 1;
+  }
+  .decision-review:hover {
+    color: var(--on-brand);
+  }
+  .pillar:hover {
+    transform: none;
+    border-color: var(--line);
+    border-top-color: var(--accent);
+    box-shadow: var(--shadow-sm);
+  }
+  .today-plan-link:hover {
+    color: var(--accent);
+  }
+  #nav .nav-toggle:hover {
+    background: color-mix(in srgb, var(--on-brand) 15%, transparent);
+  }
+  .nav-link:hover .nav-icon,
+  #nav #sync-chip:not(.syncing):hover svg,
+  #cal-prev:not(:disabled):hover svg,
+  #cal-next:not(:disabled):hover svg {
+    transform: none;
+  }
+  .header-action:hover,
+  .actions > button:not(:disabled):hover,
+  .plan-submit button:not(:disabled):hover,
+  a.btn:hover {
+    transform: none;
+  }
+
+  /* ---- 2. states the latched :hover would outrank ----
+     Each mirrors the rule it protects; keep them in sync when editing. */
+  .nav-link.active,
+  .nav-link.active:hover {
+    background: var(--on-brand);
+    color: var(--brand-ink);
+    box-shadow: 0 8px 24px -12px color-mix(in srgb, var(--brand-end) 50%, transparent);
+  }
+  .nav-link:active {
+    transform: scale(var(--press-scale));
+  }
+  #sync-chip:active {
+    transform: scale(var(--press-scale));
+    transition-duration: var(--dur-press);
+  }
+  .segmented > button.active {
+    background: none;
+    color: var(--text);
+  }
+  .segmented > button:focus-visible {
+    box-shadow: var(--focus);
+  }
+  .ob-skip:hover {
+    color: var(--text-faint);
+  }
+  tbody tr:active {
+    background: var(--fill);
+  }
+  .map-ctrl button:active {
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--accent);
+  }
+  button:active,
+  .btn:active {
+    filter: brightness(0.94);
+    transform: translateY(0) scale(var(--press-scale));
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition-duration: var(--dur-press);
+  }
+  .plan-stepper .plan-step:active {
+    background: var(--line);
+  }
+  .carousel-dots button:active {
+    transform: scale(var(--press-scale));
+  }
+  .carousel-dots button[aria-current="true"]::after {
+    background: var(--accent);
+    transform: scale(1.45);
+  }
+  .cal-cell.cal-today,
+  .cal-cell.cal-today:hover {
+    border-color: var(--accent);
+  }
+  .cal-cell:active {
+    background: var(--fill);
+  }
+  .workout-chip:active {
+    transform: scale(var(--press-scale));
+    filter: none;
+  }
+  .workout-chip.chip-done,
+  .workout-chip.chip-done:hover {
+    background: var(--chip-bg);
+    filter: none;
+  }
+  .agenda-row:active {
+    transform: scale(var(--press-scale));
+    filter: none;
+  }
+  .agenda-row.chip-done,
+  .agenda-row.chip-done:hover {
+    background: var(--chip-bg);
+    filter: none;
+  }
+  .settings-nav-list button.active {
+    background: var(--primary);
+    color: var(--primary-text);
+    font-weight: 600;
+  }
+  .settings-nav-list button:active {
+    transform: scale(var(--press-scale));
+  }
+  .palette-option.active,
+  .palette-option.active:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .palette-option:active {
+    transform: scale(var(--press-scale));
+  }
+  .bodymap-region.spot:hover rect,
+  .bodymap-region.spot:hover circle,
+  .bodymap-region.spot:hover ellipse,
+  .bodymap-region.spot:hover path {
+    fill: transparent;
+  }
+  .bodymap-region.tinted:hover rect,
+  .bodymap-region.tinted:hover circle,
+  .bodymap-region.tinted:hover ellipse,
+  .bodymap-region.tinted:hover path {
+    fill: url(#bodymap-heat);
+    fill-opacity: calc(0.35 + var(--tint, 0.3) * 0.65);
+  }
+  .bodymap-region.selected rect,
+  .bodymap-region.selected circle,
+  .bodymap-region.selected ellipse,
+  .bodymap-region.selected path {
+    fill: url(#bodymap-heat);
+    fill-opacity: 1;
+    stroke: var(--muscle-active);
+    stroke-width: 1.5;
+  }
+  .pillar:active {
+    transform: scale(var(--press-scale));
+  }
+  .pillar.tone-warn,
+  .pillar.tone-warn:hover {
+    border-top-color: var(--warn);
+  }
+  .pillar.tone-bad,
+  .pillar.tone-bad:hover {
+    border-top-color: var(--bad);
+  }
+  .pillar.tone-neutral,
+  .pillar.tone-neutral:hover {
+    border-top-color: var(--line-strong);
+  }
+  .header-action:active,
+  a.btn:active {
+    transform: scale(var(--press-scale));
+  }
+  .actions > button:not(:disabled):active,
+  .plan-submit button:not(:disabled):active {
+    transform: translateY(0) scale(var(--press-scale));
+    filter: brightness(0.94);
+  }
+}
+
+@media (pointer: coarse) {
+  /* iOS rubber-bands the whole document past its own bounds, which slides
+     the page out from behind the fixed toolbar and reveals bare canvas
+     below the bottom sheets. Scoped to touch because on a trackpad the same
+     overscroll is the native, expected feel — the desktop app should keep it. */
+  html {
+    overscroll-behavior-y: none;
+  }
+
+  /* One token bump fixes the 40px icon buttons, sheet close, small
+     segmented pills and .sm controls together. */
+  :root {
+    --control-h-sm: 44px;
+  }
+
+  /* The dots row reserves its own height on the carousel; the edge
+     buttons centre against it, so both grow here. */
+  .carousel {
+    --dots-h: 44px;
+  }
+
+  /* Map zoom controls: 32px was under half the 44pt floor. */
+  .map-ctrl button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .carousel-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Base chip is 40; the stacked weeks-table override is 38 and carries an
+     ID selector, so it needs its own matching-specificity rule here — a
+     later plain-class rule alone would lose the cascade and stay at 38. */
+  .workout-chip,
+  #weeks-table .workout-chip {
+    min-height: 44px;
+  }
+
+  .entry-chat .chat-clear {
+    min-height: 44px;
+  }
+
+  /* The onboarding card's skip is a bare text button with min-height: 0,
+     which lands at 25px — and it is the one control a first-time phone
+     user is most likely to hunt for. Anchored by `top`, so growing it
+     extends downward into the card's padding rather than shifting. */
+  .ob-skip {
+    min-height: 44px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0 var(--space-3);
+  }
+
+  /* The intensity slider: a 20px thumb on a 24px row is the hardest thing
+     on the page to grab. Grow the row and the thumb together; the 6px
+     track stays, so the control still reads as a hairline. */
+  .pain-field input[type="range"] {
+    height: 44px;
+  }
+  .pain-field input[type="range"]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+    margin-top: -11px;
+  }
+  .pain-field input[type="range"]::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  /* iOS zooms the whole page on focus for any field under 16px — the
+     single most jarring phone bug in a 14px-typed form. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* A session title in a list is a bare text button at 40px. Growing its
+     box would stretch the baseline-aligned row it sits in, so the hit area
+     grows as an overlay instead — a pseudo-element is part of its element
+     for hit-testing, so the tap lands on the button while the row's laid-out
+     height stays exactly as designed. ::before because a completed
+     session's check mark already owns ::after. */
+  .workout-link {
+    position: relative;
+  }
+  .workout-link::before {
+    content: "";
+    position: absolute;
+    inset: -2px -6px;
+  }
+
+  /* MapLibre's attribution toggle is a ~14px sliver; grow the tap area
+     with padding rather than the type. */
+  .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button {
+    min-height: 32px;
+    padding-top: 9px !important;
+    padding-bottom: 9px !important;
+  }
+  /* The attribution links themselves stay small type — they are required
+     map credit, not a control — but get enough padding to land on.
+     inline-block matters: inline padding paints outside the line box, so
+     the pill behind it stayed 24px while the tap area grew past it. */
+  .maplibregl-ctrl-attrib a {
+    display: inline-block;
+    padding-block: 10px;
+  }
 }

@@ -31,7 +31,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 reqwest = { version = "0.13", features = ["json"] }
 rmcp = { version = "3.5", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "auth"] }
 keyring = { version = "4.2", features = ["apple-native-keyring-store"] }
+# The Entry type `keyring` wraps. Needed directly because on iOS the entry has
+# to be built from an explicit store (see `secure_store`), and going through
+# that store bypasses `keyring`'s macOS-only default-store install.
+keyring-core = "1.0"
 rustyfit = "0.10"
+# Already in the tree as rustls' crypto backend (and already cross-compiled for
+# iOS), so naming it directly adds no new native build. Used by `plan_sync` to
+# seal a plan before it is uploaded to GitHub.
+aws-lc-rs = "1"
 embedded-io-adapters = { version = "0.7", features = ["std"] }
 thiserror = "2"
 

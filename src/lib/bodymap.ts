@@ -151,7 +151,52 @@ export interface BodyMapOptions {
   onSelect: (key: string) => void;
 }
 
+/** The same regions and the same selection as the map, as buttons.
+ *
+ * A finger cannot aim at a 9px-wide SVG path — the smallest regions here are
+ * narrower than Apple's own 44pt floor — so on a touch screen the picture is
+ * replaced by this list rather than being asked to work. One `onSelect` feeds
+ * both, so the page's logic does not know which one the runner used. */
+export function renderBodyRegionList(
+  container: HTMLElement,
+  opts: BodyMapOptions,
+): void {
+  container.classList.add("bodymap-list");
+  container.setAttribute("role", "group");
+  container.setAttribute("aria-label", "Where does it hurt?");
+  container.replaceChildren(
+    ...Object.entries(BODY_REGIONS).map(([key, label]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bodymap-list-item";
+      btn.dataset.region = key;
+      btn.textContent = label;
+      const tint = opts.tints.get(key);
+      if (tint != null) {
+        btn.classList.add("tinted");
+        btn.style.setProperty("--tint", String(Math.max(0.15, Math.min(1, tint / 10))));
+      }
+      const isSelected = key === opts.selected;
+      btn.setAttribute("aria-pressed", String(isSelected));
+      if (isSelected) btn.classList.add("selected");
+      btn.addEventListener("click", () => opts.onSelect(key));
+      return btn;
+    }),
+  );
+}
+
 export function renderBodyMap(container: HTMLElement, opts: BodyMapOptions): void {
+  // Coarse pointer and no hover means a finger, not a trackpad-capable tablet.
+  if (
+    window.matchMedia("(pointer: coarse)").matches &&
+    !window.matchMedia("(hover: hover)").matches
+  ) {
+    renderBodyRegionList(container, opts);
+    return;
+  }
+  container.classList.remove("bodymap-list");
+  container.removeAttribute("role");
+  container.removeAttribute("aria-label");
   container.innerHTML = BODY_SVG;
   const svg = container.querySelector("svg");
   if (!svg) return;

@@ -35,13 +35,21 @@ function readCache(): ThemeChoice | null {
 }
 
 /** Every palette the Settings picker offers, default first. `swatch` is the
- * preview strip (canvas, primary, accent) in dark-scheme colours. */
-export const PALETTES: { id: PaletteId; name: string; blurb: string; swatch: [string, string, string] }[] = [
-  { id: "amethyst", name: "Amethyst Dusk", blurb: "The original violet twilight", swatch: ["#151321", "#7650dd", "#b6a7ff"] },
-  { id: "glacier", name: "Glacier Lake", blurb: "Cold, clear alpine blue", swatch: ["#0a1721", "#0077bc", "#6ebdff"] },
-  { id: "evergreen", name: "Evergreen Trail", blurb: "Deep forest and fresh moss", swatch: ["#0b1911", "#008557", "#6fcc9e"] },
-  { id: "sakura", name: "Sakura Bloom", blurb: "Cherry blossom at first light", swatch: ["#1f1016", "#c12c77", "#f195b9"] },
-  { id: "ember", name: "Desert Ember", blurb: "Warm copper of a sunset run", swatch: ["#1f110b", "#b84b00", "#f49d74"] },
+ * preview strip (canvas, primary, accent) in dark-scheme colours; `bar` is the
+ * top of the nav gradient (`--brand-start`), which is what sits behind the iOS
+ * status bar once the toolbar extends under it. */
+export const PALETTES: {
+  id: PaletteId;
+  name: string;
+  blurb: string;
+  swatch: [string, string, string];
+  bar: string;
+}[] = [
+  { id: "amethyst", name: "Amethyst Dusk", blurb: "The original violet twilight", swatch: ["#151321", "#7650dd", "#b6a7ff"], bar: "#5544e9" },
+  { id: "glacier", name: "Glacier Lake", blurb: "Cold, clear alpine blue", swatch: ["#0a1721", "#0077bc", "#6ebdff"], bar: "#00719b" },
+  { id: "evergreen", name: "Evergreen Trail", blurb: "Deep forest and fresh moss", swatch: ["#0b1911", "#008557", "#6fcc9e"], bar: "#007d31" },
+  { id: "sakura", name: "Sakura Bloom", blurb: "Cherry blossom at first light", swatch: ["#1f1016", "#c12c77", "#f195b9"], bar: "#b40087" },
+  { id: "ember", name: "Desert Ember", blurb: "Warm copper of a sunset run", swatch: ["#1f110b", "#b84b00", "#f49d74"], bar: "#bb2600" },
 ];
 
 const PALETTE_KEY = "runalytics.palette";
@@ -50,12 +58,22 @@ function isPalette(v: unknown): v is PaletteId {
   return PALETTES.some((p) => p.id === v);
 }
 
+/** Tell the OS to colour the status-bar area like the top of the toolbar.
+ * Each page's static meta carries the default; this keeps it honest once a
+ * palette is applied — on iOS a stale value reads as a wrong-coloured bar. */
+function paintStatusBar(palette: PaletteId): void {
+  const meta = document.querySelector<HTMLMetaElement>("meta[name='theme-color']");
+  const bar = PALETTES.find((p) => p.id === palette)?.bar;
+  if (meta && bar) meta.content = bar;
+}
+
 /** Paint a palette and mirror it to the cache. The default carries no
  * attribute, so the base token set in app.css applies untouched. */
 export function setPalette(id: PaletteId | null | undefined): PaletteId {
   const palette = isPalette(id) ? id : "amethyst";
   if (palette === "amethyst") delete document.documentElement.dataset.palette;
   else document.documentElement.dataset.palette = palette;
+  paintStatusBar(palette);
   try {
     localStorage.setItem(PALETTE_KEY, palette);
   } catch {

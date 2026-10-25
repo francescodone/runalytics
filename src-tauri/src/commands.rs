@@ -12,6 +12,7 @@ use crate::calendar_publish::{self, Publishing};
 use crate::error::{AppError, Result};
 use crate::metrics;
 use crate::plan::{adaptive, engine, pacing};
+use crate::plan_sync;
 use crate::proposal;
 use crate::providers::Provider;
 use crate::state::AppState;
@@ -48,6 +49,15 @@ pub async fn provider_status(state: State<'_, AppState>) -> Result<Vec<ProviderS
         });
     }
     Ok(out)
+}
+
+/// Where the COROS sign-in got to. On mobile the authorization runs inside the
+/// app's own webview, which destroys the page that started it, so the page that
+/// loads afterwards asks this instead of awaiting the invoke that started it.
+/// `Some("pending")` while a sign-in is still in flight.
+#[tauri::command]
+pub async fn coros_signin_notice() -> Option<String> {
+    crate::providers::coros::take_auth_notice()
 }
 
 /// Verify the provider's API endpoint is reachable and authorized by listing
@@ -146,6 +156,10 @@ async fn run_full_sync_inner(
     let p = get_provider(state, provider)?;
     let mut messages = Vec::new();
     let activities_new = p.sync_activities(&state.store, 30).await?;
+    // On the phone the plan is not created, it arrives: fetch the one the
+    // desktop published before reconciling, so the imported workouts are
+    // matched against the activities that have just synced.
+    plan_sync::pull_if_missing(state).await;
     {
         let _guard = state.calendar_lock.lock().await;
         calendar::reconcile(&state.store)?;
@@ -419,6 +433,7 @@ pub async fn create_plan(
     state.store.insert_plan(&plan)?;
     state.store.insert_workouts(&workouts)?;
     calendar_publish::refresh(&state).await?;
+    plan_sync::push_if_enabled(&state).await;
     Ok((plan, workouts))
 }
 
@@ -542,6 +557,7 @@ pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         // what actually clears them from the calendar view and the .ics file.
         state.store.delete_plan(&plan.id)?;
         calendar_publish::refresh(&state).await?;
+        plan_sync::push_if_enabled(&state).await;
         if let Some(note) = provider_note {
             return Err(AppError::Other(note));
         }
@@ -603,6 +619,39 @@ pub async fn save_calendar_publishing(
     calendar_publish::configure(&state, config, password).await
 }
 
+// ---- plan sync -------------------------------------------------------------
+
+#[tauri::command]
+pub async fn plan_sync_status(state: State<'_, AppState>) -> Result<plan_sync::PlanSyncStatus> {
+    plan_sync::status(&state)
+}
+
+#[tauri::command]
+pub async fn plan_sync_configure(
+    state: State<'_, AppState>,
+    config: plan_sync::PlanSyncPatch,
+    token: Option<String>,
+) -> Result<plan_sync::PlanSyncStatus> {
+    plan_sync::configure(&state, config, token)
+}
+
+/// Publish the active plan to the sync channel now.
+#[tauri::command]
+pub async fn plan_sync_push(state: State<'_, AppState>) -> Result<plan_sync::PlanSync> {
+    plan_sync::push(&state, true).await
+}
+
+/// Import the synced plan. `force` replaces a different plan already on device.
+/// The caller refreshes the views itself, as it already does for a calendar edit.
+#[tauri::command]
+pub async fn plan_sync_pull(
+    state: State<'_, AppState>,
+    force: bool,
+) -> Result<plan_sync::PullOutcome> {
+    let (_, outcome) = plan_sync::pull(&state, force).await?;
+    Ok(outcome)
+}
+
 #[tauri::command]
 pub async fn match_calendar_activity(
     state: State<'_, AppState>,
@@ -638,6 +687,7 @@ pub async fn move_workout(
         )?;
     }
     calendar_publish::refresh(&state).await?;
+    plan_sync::push_if_enabled(&state).await;
     if let Some((plan, workouts)) = state.store.current_plan()? {
         if plan.status == PlanStatus::Pushed {
             tauri::async_runtime::spawn(async move {
@@ -759,6 +809,7 @@ async fn apply_workout_edits(
     }
     let fresh = state.store.plan_workouts(&plan.id)?;
     calendar_publish::refresh(state).await?;
+    plan_sync::push_if_enabled(state).await;
     // Keep the watch schedule mirroring the local plan, as the adaptive path does.
     if let (Some(p), true) = (provider, plan.status == PlanStatus::Pushed) {
         if let Ok(Some(id)) = p.push_plan(&plan, &fresh, None).await {
@@ -907,6 +958,7 @@ pub async fn apply_proposal(
             ..plan
         };
         calendar_publish::refresh(&state).await?;
+        plan_sync::push_if_enabled(&state).await;
         let fresh = state.store.plan_workouts(&plan.id)?;
         if let (Some(p), true) = (prov, plan.status == PlanStatus::Pushed) {
             if let Ok(Some(id)) = p.push_plan(&plan, &fresh, None).await {
@@ -976,8 +1028,8 @@ pub async fn pacing_report(state: State<'_, AppState>) -> Result<Option<PacingRe
 const LLM_KEYRING_SERVICE: &str = "com.fradone.runalytics.llm";
 const LLM_KEYRING_USER: &str = "api_key";
 
-fn llm_key_entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(LLM_KEYRING_SERVICE, LLM_KEYRING_USER)
+fn llm_key_entry() -> Result<keyring_core::Entry> {
+    crate::secure_store::entry(LLM_KEYRING_SERVICE, LLM_KEYRING_USER)
         .map_err(|e| AppError::Other(format!("keyring unavailable: {e}")))
 }
 
@@ -1023,7 +1075,7 @@ pub async fn set_llm_api_key(key: String) -> Result<()> {
 #[tauri::command]
 pub async fn clear_llm_api_key() -> Result<()> {
     match llm_key_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
         Err(e) => Err(AppError::Other(format!("could not remove the key: {e}"))),
     }
 }

@@ -55,17 +55,86 @@ export function renderSetup(
       .join("");
   };
 
+  /// Watch the backend until the sign-in it is running lands, then move on.
+  /// Shared by the button and by the resumed pane, because on mobile the page
+  /// that pressed the button does not survive the sign-in (see `renderConnect`).
+  let pollTimer = 0;
+  const startPolling = (btn: HTMLButtonElement, status: HTMLElement) => {
+    // Re-rendering this pane would otherwise leave the previous poller running
+    // against detached nodes for the rest of its deadline.
+    window.clearInterval(pollTimer);
+    const busy = setBusy(btn, "Waiting for sign-in…");
+    const deadline = Date.now() + 5 * 60_000;
+    pollTimer = window.setInterval(async () => {
+      try {
+        const st = await tauri.providerStatus();
+        if (st.find((s) => s.provider === "coros")?.connected) {
+          window.clearInterval(pollTimer);
+          busy.restore();
+          steps[0].done = true;
+          onAdvance();
+          render();
+          return;
+        }
+        // The sign-in can end in failure after this polling started — on mobile
+        // the exchange happens once the user is already back here — so the pane
+        // would otherwise sit on "still waiting" for the full five minutes.
+        const notice = await tauri.corosSigninNotice();
+        if (notice && notice !== "pending") {
+          window.clearInterval(pollTimer);
+          status.textContent = notice;
+          busy.restore();
+          btn.textContent = "Try again";
+        } else if (Date.now() > deadline) {
+          window.clearInterval(pollTimer);
+          status.textContent = "Still waiting on the sign-in. Finish it, then try again.";
+          busy.restore();
+          btn.textContent = "Try again";
+        }
+      } catch {
+        // Transient status poll failure — keep waiting for the deadline.
+      }
+    }, 2500);
+  };
+
   const renderConnect = () => {
     panel.innerHTML = `
       <h3>Connect your COROS watch</h3>
-      <p>Sign in to COROS in your browser — Runalytics uses the official API and keeps everything on this Mac.</p>
+      <p>Sign in to COROS — Runalytics uses the official API and keeps everything on this device.</p>
       <button type="button" class="big">Connect COROS</button>
       <p class="setup-status" role="status"></p>`;
     const btn = panel.querySelector<HTMLButtonElement>("button")!;
     const status = panel.querySelector<HTMLElement>(".setup-status")!;
+
+    // On mobile the sign-in runs in this webview, so the page that started it is
+    // destroyed and this pane loads again afterwards — with the sign-in either
+    // still in flight or already over. Ask the backend which, and pick the
+    // thread back up, rather than offering a button for something already done.
+    void (async () => {
+      let notice: string | null = null;
+      try {
+        notice = await tauri.corosSigninNotice();
+      } catch {
+        // No backend to ask (plain browser) — the button below says so anyway.
+      }
+      if (notice === "pending") {
+        startPolling(btn, status);
+        status.textContent = "Finishing your COROS sign-in…";
+        return;
+      }
+      if (notice) {
+        status.textContent = notice;
+        btn.textContent = "Try again";
+        return;
+      }
+      // A sign-in that ended in success never leaves a notice, and this page
+      // only renders step 1 while the backend still says "not connected", so
+      // there is nothing further to recover here.
+    })();
+
     btn.addEventListener("click", async () => {
       const busy = setBusy(btn, "Waiting for sign-in…");
-      status.textContent = "Opening your browser… finish the sign-in there.";
+      status.textContent = "Finish the sign-in when it opens.";
       try {
         await tauri.connectProvider("coros");
       } catch (e) {
@@ -74,29 +143,14 @@ export function renderSetup(
         fail(e);
         return;
       }
-      // OAuth completes in the external browser — poll until the backend
-      // reports the connection, then move to the next step automatically.
-      const deadline = Date.now() + 5 * 60_000;
-      const timer = window.setInterval(async () => {
-        try {
-          const st = await tauri.providerStatus();
-          if (st.find((s) => s.provider === "coros")?.connected) {
-            window.clearInterval(timer);
-            busy.restore();
-            steps[0].done = true;
-            onAdvance();
-            render();
-          } else if (Date.now() > deadline) {
-            window.clearInterval(timer);
-            status.textContent =
-              "Still waiting on the sign-in. Finish it in the browser, then try again.";
-            busy.restore();
-            btn.textContent = "Try again";
-          }
-        } catch {
-          // Transient status poll failure — keep waiting for the deadline.
-        }
-      }, 2500);
+      // Desktop: the browser tab holds the sign-in and this page survives, so
+      // the same call resolves once the code has been exchanged. Mobile never
+      // gets here — the await dies with the page, which the resumed pane above
+      // is the recovery path for.
+      // Hand the button over to the poller, which sets its own busy state;
+      // restoring first keeps the real label as what gets restored afterwards.
+      busy.restore();
+      startPolling(btn, status);
     });
   };
 

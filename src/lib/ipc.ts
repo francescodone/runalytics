@@ -13,9 +13,13 @@ import type {
   PlanDefaults,
   PlanProposal,
   PlanRequest,
+  PlanSync,
+  PlanSyncPatch,
+  PlanSyncStatus,
   PlanWorkout,
   ProviderKind,
   ProviderStatus,
+  PullOutcome,
   RunScore,
   Settings,
   SyncReport,
@@ -63,6 +67,12 @@ export const tauri = {
     call<string[]>("check_provider_api", { provider }),
   connectProvider: (provider: ProviderKind) =>
     call<string>("connect_provider", { provider }),
+  /**
+   * Where the COROS sign-in got to. On mobile the sign-in runs in this same
+   * webview, so the page that started it is gone by the time it ends — the page
+   * that loads afterwards asks this instead. "pending" while still in flight.
+   */
+  corosSigninNotice: () => call<string | null>("coros_signin_notice"),
   disconnectProvider: (provider: ProviderKind) =>
     call<void>("disconnect_provider", { provider }),
   syncNow: (provider: ProviderKind) => call<SyncReport>("sync_now", { provider }),
@@ -92,6 +102,12 @@ export const tauri = {
     call<CalendarPublishing>("save_calendar_publishing", { config, password }),
   matchCalendarActivity: (workoutId: string, activityId: number) =>
     call<void>("match_calendar_activity", { workoutId, activityId }),
+  // ---- cross-device plan sync ----
+  planSyncStatus: () => call<PlanSyncStatus>("plan_sync_status"),
+  planSyncConfigure: (config: PlanSyncPatch, token: string | null) =>
+    call<PlanSyncStatus>("plan_sync_configure", { config, token }),
+  planSyncPush: () => call<PlanSync>("plan_sync_push"),
+  planSyncPull: (force: boolean) => call<PullOutcome>("plan_sync_pull", { force }),
   moveWorkout: (workoutId: string, date: string) =>
     call<void>("move_workout", { workoutId, date }),
   getSettings: () => call<Settings>("get_settings"),

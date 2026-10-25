@@ -11,11 +11,13 @@ name: Release
 # publishes locally without CI. If CI builds the tag first, run
 # `gh release delete v0.2.0 -y` before re-running the local script.
 #
-# Both Apple-silicon and Intel bundles are built. There is no updater key:
-# Runalytics has no in-app updater, so the DMG is the only artifact. The app
-# is ad-hoc-signed via bundle.macOS.signingIdentity in tauri.conf.json (the
-# bundler must seal the bundle, or Gatekeeper calls it damaged on other
-# machines); it is not notarised, so first launch needs right-click -> Open.
+# Both Apple-silicon and Intel DMGs are built, along with an iOS IPA. There is
+# no updater key: Runalytics has no in-app updater, so the bundles are the only
+# artifacts. The macOS app is ad-hoc-signed via bundle.macOS.signingIdentity in
+# tauri.conf.json (the bundler must seal the bundle, or Gatekeeper calls it
+# damaged on other machines); it is not notarised, so first launch needs
+# right-click -> Open. The IPA is deliberately unsigned and installs through
+# Sideloadly, which signs it with the recipient's own Apple ID.
 
 on:
   push:
@@ -65,7 +67,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "Runalytics v__VERSION__"
-          releaseBody: "See the assets below to download Runalytics for macOS (arm64 for Apple silicon, x86_64 for Intel)."
+          releaseBody: "See the assets below to download Runalytics for macOS (arm64 for Apple silicon, x86_64 for Intel) or iPhone (the .ipa, installed with Sideloadly - see the README)."
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
@@ -87,3 +89,50 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           gh release upload "v$VERSION" \
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg --clobber
+
+  # The iOS artifact is an unsigned IPA that Sideloadly re-signs with each
+  # recipient's own Apple ID (see scripts/build_ios.sh), so this job needs no
+  # certificate, no provisioning profile and no App Store Connect key.
+  #
+  # It is a separate job rather than another matrix leg because a macOS
+  # cross-target build and an iOS build would fight over the same cargo lock.
+  # It still waits on `publish`, because tauri-action in that job is what
+  # creates the draft release: `gh release upload` fails against a release that
+  # does not exist yet, so racing it would lose the IPA.
+  ios:
+    needs: publish
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # The Xcode scaffold under src-tauri/gen/apple is committed, so no
+      # `tauri ios init` and no CocoaPods: the Podfile declares zero pods and
+      # the CLI only runs `pod install` from init, never from build.
+      - name: Build unsigned IPA
+        run: bash scripts/build_ios.sh
+
+      - name: Upload IPA to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          gh release upload "v$VERSION" \
+            src-tauri/gen/apple/build/Runalytics_${VERSION}.ipa --clobber

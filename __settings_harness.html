@@ -51,6 +51,25 @@
         lastError: null,
       };
 
+      // In-memory plan-sync channel state for the Plan sync pane. `canPublish`
+      // mirrors what the backend derives from the platform, not from the user.
+      let syncToken = true;
+      const planSync = {
+        enabled: false,
+        gistId: null,
+        hasToken: true,
+        canPublish: true,
+        lastPushed: null,
+        lastPulled: null,
+        installedRev: null,
+        lastError: null,
+      };
+      const syncStatus = () => ({
+        config: structuredClone(planSync),
+        accountLinked: true,
+        code: "3ee75e3a7c0b9d41",
+      });
+
       // Mirrors Thresholds::normalized() in Rust closely enough to prove the
       // round trip: out-of-range input comes back clamped and ordered.
       function normalize(t) {
@@ -125,6 +144,34 @@
                 : publishing.lastPublished;
               publishing.lastError = null;
               return structuredClone(publishing);
+            case "plan_sync_status":
+              return syncStatus();
+            case "plan_sync_configure":
+              // Like the backend: the client only owns `enabled`; everything
+              // else is derived or recorded server-side.
+              planSync.enabled = args.config.enabled;
+              if (args.token !== null) {
+                syncToken = args.token !== "";
+                planSync.hasToken = syncToken;
+                planSync.gistId = null;
+              }
+              planSync.lastError = null;
+              return syncStatus();
+            case "plan_sync_push":
+              if (!planSync.enabled) throw new Error("Plan sync is switched off");
+              if (!planSync.hasToken) throw new Error("Add your GitHub token in Settings → Plan sync to publish a plan");
+              planSync.gistId = planSync.gistId || "gist-8f21c0d4";
+              planSync.lastPushed = new Date().toISOString();
+              planSync.lastError = null;
+              return structuredClone(planSync);
+            case "plan_sync_pull":
+              if (!planSync.hasToken) throw new Error("Add your GitHub token in Settings → Plan sync to fetch a plan");
+              return {
+                installed: true,
+                planName: "Half marathon on 06 Dec 2026",
+                workouts: 44,
+                conflict: null,
+              };
             default:
               throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
           }

@@ -1,8 +1,13 @@
 # Runalytics
 
-Training analytics for runners. A Tauri v2 desktop app (macOS) that pulls your
-COROS data, scores your training, builds adaptive race-preparation plans, and
-shows where you run.
+Training analytics for runners. A Tauri v2 app (macOS and iPhone) that pulls
+your COROS data, scores your training, builds adaptive race-preparation plans,
+and shows where you run.
+
+The Mac is where a plan is created and published; the phone carries it, so the
+two stay in step over the plan-sync channel in Settings. See
+[Installing on iPhone](#installing-on-iphone) for how the iOS build is
+distributed.
 
 ## Features
 
@@ -28,6 +33,10 @@ shows where you run.
   Push workouts to COROS's training schedule from the Plan page.
 - **Heatmap**: MapLibre GL JS with a heatmap layer over OSM raster tiles, or
   fully offline from a [PMTiles] archive (path configurable in Settings).
+- **Plan sync**: the desktop app publishes the active plan to a private GitHub
+  gist that the phone finds and imports, keyed to your COROS account. Enable it
+  with the **Plan sync** toggle in Settings. One-way, desktop to phone;
+  completed workouts stay local.
 - **Garmin**: feature-gated (`--features garmin`); no official public API
   exists, so it ships as a stub.
 
@@ -107,6 +116,45 @@ support using varied workout formats, but do not establish either requested buil
 complete planned sequence. The rotation and effort caps above are Runalytics
 heuristics, not a reconstruction of missing Runna plans.
 
+## Installing on iPhone
+
+Every release carries an iOS build next to the macOS DMGs: the asset named
+`Runalytics_<version>.ipa`. It is not on the App Store and it is not
+notarised, so it installs through [Sideloadly], which signs it on your
+machine with **your own** Apple ID:
+
+1. Download `Runalytics_<version>.ipa` from the [releases] page.
+2. Open Sideloadly, drag the IPA onto it, and enter your Apple ID when asked.
+   Leave the App ID and signing identity at what Sideloadly suggests.
+3. Click **Start**. When it reports the app as installed, open it on the phone.
+4. If it will not open: **Settings → General → VPN & Device Management**,
+   choose your Apple ID under *App Account*, tap **Trust**, then reopen the
+   app. On iOS 16 and later you also need **Settings → Privacy & Security →
+   Developer Mode** switched on, because Sideloadly signs with a development
+   certificate.
+
+With a free Apple ID the signature lasts **seven days**. Sideloadly can renew it
+for you — enable its automatic app refreshing, which re-signs in the background
+before the window closes — otherwise the app stops launching until you run
+Sideloadly again with the same IPA and Apple ID. Either way nothing is
+reinstalled, so the plan and synced history on the phone survive. A paid Apple
+Developer account signs for a year.
+
+Free Apple IDs are also rate-limited — Apple caps how many sideloaded apps a
+device holds at once and how many App IDs an account can mint per seven days —
+so uninstall what you no longer use before adding another.
+
+The IPA is built unsigned on purpose. A development-signed build only launches
+on the specific devices listed in its provisioning profile, so it would be
+useless to anyone but the machine that produced it; an unsigned bundle is the
+raw app, which Sideloadly can sign for whoever installs it. This is the iOS
+counterpart of the ad-hoc-signed DMG: both are sealed by the person who
+installs them, and both need one manual override on first launch.
+
+To get an existing plan onto the phone rather than recreating it there, see
+**Plan sync** in Settings: the desktop app publishes the active plan to a
+private GitHub gist that the phone finds and imports.
+
 ## Development
 
 ```sh
@@ -136,8 +184,8 @@ interstitial mount busy and make `bundle_dmg.sh` fail with
 
 One command, CI does the build — bumps the version, commits, tags, and
 pushes; `.github/workflows/release.yml` then builds both Apple-silicon and
-Intel DMGs and creates a **draft** release (publish it from the Releases
-page once both jobs are green):
+Intel DMGs plus the iOS IPA and creates a **draft** release (publish it from
+the Releases page once all three jobs are green):
 
 ```sh
 ./scripts/tag_release.sh 0.2.0
@@ -153,9 +201,11 @@ Or build and publish from your machine:
 `bump_version.sh` rewrites package.json, package-lock.json,
 `src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, then verifies
 every field. `release.sh` commits the bump, tags and pushes, runs
-`npm run tauri build` + `make_dmg.sh`, and publishes the DMG as a GitHub
-release via `gh` (requires the `gh` CLI). Pass `--dry-run` to either
-script to preview the steps without committing or publishing.
+`npm run tauri build` + `make_dmg.sh` + `build_ios.sh`, and publishes the DMG
+and IPA as a GitHub release via `gh` (requires the `gh` CLI). Pass `--dry-run`
+to either script to preview the steps without committing or publishing. Set
+`SKIP_IOS=1` to skip the IPA on a machine without Xcode — CI publishes it for
+that version instead.
 
 The two paths publish the same tag — if CI created the release, don't
 also run `release.sh` for that version (or delete the CI draft with
@@ -168,6 +218,16 @@ version). `make_dmg.sh` refuses to build a DMG around a bundle whose
 signature does not verify, so an unsigned build fails the release
 instead of shipping a "damaged" app.
 
+The iOS job is the mirror image of that rule. `scripts/build_ios.sh` runs
+`tauri ios build --no-sign`, and refuses any IPA that *is* signed — a
+development-signed build would install only on the handful of devices in its
+provisioning profile, and would fail silently on every recipient's phone
+rather than at build time. Recipients re-sign with their own Apple ID through
+Sideloadly, so no certificate or App Store Connect credential is involved on
+either side. The build needs no `tauri ios init` and no CocoaPods: the Xcode
+scaffold is committed under `src-tauri/gen/apple`, the Podfile declares zero
+pods, and the CLI only shells out to `pod install` from `init`.
+
 ## Architecture
 
 | Piece | Where | Notes |
@@ -179,6 +239,7 @@ instead of shipping a "damaged" app.
 | Scores | `src-tauri/src/metrics.rs` | consistency + ACWR + recovery heuristics |
 | ICS export | `src-tauri/src/calendar.rs` | hand-rolled RFC 5545 emitter |
 | Calendar publishing | `src-tauri/src/calendar_publish.rs` | HTTPS PUT, separate read URL, Keychain credentials |
+| Plan sync | `src-tauri/src/plan_sync.rs` | AES-GCM blob in a private gist, key derived from the COROS account |
 | Frontend | `index/plan/calendar/settings.html` + `src/*.ts` | vanilla TS + Vite multi-page, MapLibre heatmap |
 
 Data lives in `~/Library/Application Support/com.fradone.runalytics/`
@@ -245,3 +306,5 @@ holds port 1499.
 
 [COROS MCP server]: https://mcp.coros.com/mcp
 [PMTiles]: https://pmtiles.org
+[Sideloadly]: https://sideloadly.io
+[releases]: https://github.com/francescodone/runalytics/releases

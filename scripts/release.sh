@@ -14,8 +14,12 @@
 #      scripts/make_dmg.sh to produce the DMG with `hdiutil makehybrid`
 #      (Tauri's own DMG step fails on machines whose endpoint-security agent
 #      holds the interstitial mount busy).
-#   3. Creates the GitHub release with the .dmg — the distributable. There is
-#      no in-app updater, so no .app.tar.gz / .sig / latest.json.
+#   3. scripts/build_ios.sh to produce the unsigned IPA that Sideloadly
+#      installs. Set SKIP_IOS=1 to skip it (the iOS artifact then comes from
+#      CI, which builds it too).
+#   4. Creates the GitHub release with the .dmg and the .ipa — the
+#      distributables. There is no in-app updater, so no .app.tar.gz /
+#      .sig / latest.json.
 #
 # Pass --dry-run to print what would happen without committing, tagging,
 # building or publishing.
@@ -74,22 +78,41 @@ run git push origin "$BRANCH" "$TAG"
 # --- 2. build --------------------------------------------------------------
 ARCH="$(uname -m)"
 DMG="src-tauri/target/release/bundle/dmg/Runalytics_${CURRENT}_${ARCH}.dmg"
+IPA="src-tauri/gen/apple/build/Runalytics_${CURRENT}.ipa"
+ASSETS=("$DMG")
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "  [dry-run] npm run tauri build && bash scripts/make_dmg.sh"
+  if [[ "${SKIP_IOS:-0}" == 1 ]]; then
+    echo "  skipping the iOS build (SKIP_IOS=1) — CI publishes the IPA"
+  else
+    echo "  [dry-run] bash scripts/build_ios.sh"
+    # Preview the asset list the publish step below would actually pass.
+    ASSETS+=("$IPA")
+  fi
 else
   echo "==> building $TAG ($ARCH)"
   npm run tauri build
   bash scripts/make_dmg.sh
   [[ -f "$DMG" ]] || { echo "error: $DMG missing after build" >&2; exit 1; }
+
+  # Needs Xcode, so it is the one step a machine without it can opt out of.
+  # CI builds the same IPA, and the release stays valid without it locally.
+  if [[ "${SKIP_IOS:-0}" == 1 ]]; then
+    echo "  skipping the iOS build (SKIP_IOS=1) — CI publishes the IPA"
+  else
+    bash scripts/build_ios.sh
+    [[ -f "$IPA" ]] || { echo "error: $IPA missing after build" >&2; exit 1; }
+    ASSETS+=("$IPA")
+  fi
 fi
 
 # --- 3. publish ------------------------------------------------------------
 echo "==> creating release $TAG"
 if [[ "$DRY_RUN" == 1 ]]; then
-  echo "  [dry-run] gh release create $TAG $DMG --title 'Runalytics $CURRENT' --generate-notes"
+  echo "  [dry-run] gh release create $TAG ${ASSETS[*]} --title 'Runalytics $CURRENT' --generate-notes"
 else
-  gh release create "$TAG" "$DMG" --title "Runalytics $CURRENT" --generate-notes
+  gh release create "$TAG" "${ASSETS[@]}" --title "Runalytics $CURRENT" --generate-notes
 fi
 
 echo

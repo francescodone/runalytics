@@ -2,10 +2,14 @@
 //! (https://mcp.coros.com/mcp, OAuth 2.0 + PKCE, stateless streamable HTTP).
 //!
 //! Flow:
-//! 1. `connect()` builds an `OAuthState`, starts authorization with a local
-//!    loopback callback (127.0.0.1:<ephemeral>/callback), opens the system
-//!    browser, waits for the redirect, exchanges the code, and persists the
-//!    resulting tokens into the macOS keychain via a `CredentialStore`.
+//! 1. `connect()` builds an `OAuthState` and starts authorization with a
+//!    loopback callback (127.0.0.1:<port>/callback). On desktop it opens the
+//!    system browser and listens on that port for the redirect. On mobile
+//!    neither is possible — Safari suspends the app and cannot reach a loopback
+//!    server — so the webview loads the authorize page itself and
+//!    `on_webview_navigation` catches the redirect before it is requested.
+//!    Either way the code is then exchanged and the resulting tokens persisted
+//!    into the keychain via a `CredentialStore`.
 //! 2. Every operation builds a fresh MCP client over an `AuthClient`-backed
 //!    streamable-HTTP transport (tokens auto-refresh through the manager).
 //! 3. Tool results arrive as MCP content blocks; COROS returns a
@@ -14,24 +18,29 @@
 //!    read label-by-label. FIT files arrive as base64 blob resources.
 
 use std::collections::HashMap;
+#[cfg(not(mobile))]
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use async_trait::async_trait;
 use chrono::{Datelike, Duration, NaiveDate, Utc};
-use keyring::Entry;
 use rmcp::model::CallToolResult;
 use rmcp::service::{RoleClient, RunningService};
-use rmcp::transport::auth::{AuthClient, AuthorizationManager, CredentialStore, StoredCredentials};
+use rmcp::transport::auth::{
+    AuthClient, AuthorizationManager, CredentialStore, OAuthClientConfig, StoredCredentials,
+};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
 use serde_json::{json, Value};
+#[cfg(not(mobile))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::Provider;
 use crate::error::{AppError, Result};
 use crate::fit;
+use crate::secure_store::entry;
 use crate::store::Store;
 use crate::types::*;
 
@@ -41,6 +50,288 @@ const KEYRING_USER: &str = "oauth";
 /// Upper bound on waiting for the user to finish the browser authorization.
 const AUTH_TIMEOUT_SECS: u64 = 300;
 
+/// Where COROS sends the browser once the user has approved. Fixed rather than
+/// ephemeral on mobile because the registered redirect URI has to stay valid
+/// across launches — and nothing listens here anyway, since the navigation is
+/// caught and cancelled before a connection is ever attempted.
+#[cfg(mobile)]
+const MOBILE_REDIRECT: &str = "http://127.0.0.1:47184/callback";
+
+/// The app page handed back to the user when a sign-in ends.
+#[cfg(mobile)]
+const AUTH_RETURN_PAGE: &str = "settings.html";
+
+/// Keychain key holding the redirect URI the client id was registered with.
+const REDIRECT_USER: &str = "redirect_uri";
+
+/// What the OAuth provider bounced back at the redirect URI.
+struct AuthCallback {
+    code: String,
+    state: String,
+    iss: Option<String>,
+    error: Option<String>,
+}
+
+/// An in-flight sign-in.
+///
+/// On mobile the authorization cannot leave the app: Safari is a separate
+/// process, the app is suspended the moment it is frontmost, and the redirect
+/// target is a loopback address the phone's browser cannot serve. So the webview
+/// loads the authorize page itself and `on_webview_navigation` catches the
+/// redirect before it is requested. The channel hands the code back to the
+/// `connect` task waiting on it.
+#[cfg(mobile)]
+struct AuthFlow {
+    tx: tokio::sync::mpsc::UnboundedSender<AuthCallback>,
+    /// Origin to hand the webview back to once the sign-in ends.
+    return_origin: String,
+}
+
+#[cfg(mobile)]
+static AUTH_FLOW: OnceLock<Mutex<Option<AuthFlow>>> = OnceLock::new();
+/// Where a sign-in got to, for the page that loads after the webview comes back.
+/// Its own JS context cannot await the invoke whose promise died with the
+/// previous page, so it asks this instead.
+static AUTH_NOTICE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+#[cfg(mobile)]
+fn auth_flow() -> &'static Mutex<Option<AuthFlow>> {
+    AUTH_FLOW.get_or_init(|| Mutex::new(None))
+}
+
+fn auth_notice() -> &'static Mutex<Option<String>> {
+    AUTH_NOTICE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(mobile)]
+fn set_notice(msg: Option<&str>) {
+    if let Ok(mut slot) = auth_notice().lock() {
+        *slot = msg.map(str::to_string);
+    }
+}
+
+/// Progress of a mobile sign-in, for the reloaded Settings pane: `Some("pending")`
+/// while one is in flight, the failure message once one has been left, `None`
+/// when there is nothing to report.
+///
+/// "pending" is a state and so survives being read — the pane reloads whenever
+/// the user returns to it, and each visit has to find the sign-in still waiting
+/// on. A message is an event and is cleared, so a stale failure does not reappear
+/// on the next visit.
+pub(crate) fn take_auth_notice() -> Option<String> {
+    let mut slot = auth_notice().lock().ok()?;
+    match slot.as_deref() {
+        Some("pending") => Some("pending".into()),
+        _ => slot.take(),
+    }
+}
+
+/// The scheme+host+port of a URL, built by hand because `Url::origin()` is
+/// opaque for the custom schemes Tauri serves bundled assets under — and those
+/// carry no port at all, so one must not be invented here.
+#[cfg(mobile)]
+fn origin_of(url: &tauri::Url) -> Option<String> {
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+        None => format!("{}://{}", url.scheme(), host),
+    })
+}
+
+/// True for COROS' own hosts — the authorize page and the identity provider it
+/// redirects to (`openeu.coros.com`), a different host to the issuer.
+#[cfg(mobile)]
+fn is_coros_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h == "coros.com" || h.ends_with(".coros.com")
+}
+
+/// True for the redirect URI registered with COROS. Never a real page on mobile:
+/// caught and cancelled rather than loaded.
+#[cfg(mobile)]
+fn is_auth_callback(url: &tauri::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]") && url.path() == "/callback"
+}
+
+/// Decide a main-frame navigation, and capture the OAuth redirect.
+///
+/// Returns false to veto. While a sign-in is in flight only the app's own pages
+/// and COROS are allowed: once the webview shows a third-party page it has no IPC
+/// access at all, so anything else there is a dead end the user would have to be
+/// pulled out of by hand. With no sign-in in flight everything is allowed, which
+/// is how the app's own multi-page routing moves around.
+#[cfg(mobile)]
+pub(crate) fn on_webview_navigation(url: &tauri::Url) -> bool {
+    if is_auth_callback(url) {
+        // Taking the slot here ends the flow, so a duplicate redirect — a retry,
+        // or the provider firing the same URL twice — is ignored rather than
+        // handed to whoever happens to be waiting next.
+        let flow = auth_flow().lock().ok().and_then(|mut slot| slot.take());
+        if let Some(flow) = flow {
+            let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+            let _ = flow.tx.send(AuthCallback {
+                code: query.get("code").cloned().unwrap_or_default(),
+                state: query.get("state").cloned().unwrap_or_default(),
+                iss: query.get("iss").cloned(),
+                error: query.get("error").cloned(),
+            });
+            // Cancelled: the loopback address is a dead end here, and the code is
+            // already handed back.
+            return false;
+        }
+        return true;
+    }
+
+    // Work out what to allow first, then release the guard: the cancel path below
+    // locks again, and std::sync::Mutex is not reentrant.
+    enum Where {
+        Coros,
+        App,
+        Elsewhere,
+    }
+    let where_to = {
+        let Ok(slot) = auth_flow().lock() else {
+            return true;
+        };
+        match slot.as_ref() {
+            None => Where::App,
+            Some(flow) => {
+                if url.host_str().is_some_and(is_coros_host) {
+                    Where::Coros
+                } else if origin_of(url).as_deref() == Some(flow.return_origin.as_str()) {
+                    Where::App
+                } else {
+                    Where::Elsewhere
+                }
+            }
+        }
+    };
+
+    match where_to {
+        Where::Coros => true,
+        Where::Elsewhere => false,
+        Where::App => {
+            // Back with the app while the sign-in page is still owed an answer:
+            // nothing can complete it now, so drop the sender. The waiting task
+            // sees the channel close and reports the sign-in as cancelled instead
+            // of holding the connect lock until the timeout expires.
+            if let Ok(mut slot) = auth_flow().lock() {
+                *slot = None;
+            }
+            true
+        }
+    }
+}
+
+/// The redirect URI a previous run registered this client id with.
+fn stored_redirect() -> Option<String> {
+    entry(KEYRING_SERVICE, REDIRECT_USER)
+        .ok()?
+        .get_password()
+        .ok()
+}
+
+fn save_redirect(redirect: &str) {
+    if let Ok(e) = entry(KEYRING_SERVICE, REDIRECT_USER) {
+        let _ = e.set_password(redirect);
+    }
+}
+
+/// Drive the authorization inside the app's own webview and wait for the redirect
+/// to be caught by `on_webview_navigation`.
+#[cfg(mobile)]
+async fn authorize_in_app(auth_url: &str) -> Result<AuthCallback> {
+    use tauri::Manager;
+
+    let handle = APP_HANDLE
+        .get()
+        .ok_or_else(|| AppError::Other("app handle unavailable".into()))?;
+    let win = handle
+        .get_webview_window("main")
+        .ok_or_else(|| AppError::Other("main window unavailable".into()))?;
+
+    // The webview is on an app page right now, which is the page to come back to.
+    let return_origin = win
+        .url()
+        .ok()
+        .and_then(|u| origin_of(&u))
+        .ok_or_else(|| AppError::Other("cannot read the app origin".into()))?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AuthCallback>();
+    let parsed =
+        tauri::Url::parse(auth_url).map_err(|e| AppError::Provider(format!("auth url: {e}")))?;
+
+    // From here until the timeout below, both the gate and the notice are
+    // claimed, so every early exit has to release them.
+    {
+        let mut slot = auth_flow()
+            .lock()
+            .map_err(|_| AppError::Other("auth state poisoned".into()))?;
+        *slot = Some(AuthFlow {
+            tx,
+            return_origin: return_origin.clone(),
+        });
+    }
+    set_notice(Some("pending"));
+
+    if let Err(e) = win.navigate(parsed) {
+        if let Ok(mut slot) = auth_flow().lock() {
+            *slot = None;
+        }
+        set_notice(None);
+        return Err(AppError::Provider(format!("open sign-in: {e}")));
+    }
+
+    let waited =
+        tokio::time::timeout(std::time::Duration::from_secs(AUTH_TIMEOUT_SECS), rx.recv()).await;
+
+    // Release the gate before handing the webview back. Left claimed, it would
+    // keep restricting navigations after the sign-in ended and keep reporting a
+    // sign-in that is no longer happening.
+    if let Ok(mut slot) = auth_flow().lock() {
+        *slot = None;
+    }
+
+    // Record the outcome before handing the webview back: the page that loads
+    // asks for this as soon as it starts, so setting it after the navigation
+    // would race it. On success the notice is left pending rather than cleared —
+    // the token exchange that actually connects the account happens after this
+    // returns, and the page that loads polls for it. `connect` clears the notice
+    // once the account is connected.
+    let outcome = match waited {
+        Ok(Some(cb)) if cb.error.is_none() => Ok(cb),
+        Ok(Some(_)) => {
+            let msg = "COROS refused the request. Try again.";
+            set_notice(Some(msg));
+            Err(AppError::Provider(msg.into()))
+        }
+        Ok(None) => {
+            let msg = "The sign-in was cancelled.";
+            set_notice(Some(msg));
+            Err(AppError::Provider(msg.into()))
+        }
+        Err(_) => {
+            let msg = "The sign-in timed out. Try again.";
+            set_notice(Some(msg));
+            Err(AppError::Provider(msg.into()))
+        }
+    };
+
+    // Whatever happened, the COROS page has served its purpose; put the app back.
+    let back = tauri::Url::parse(&format!(
+        "{}/{}",
+        return_origin.trim_end_matches('/'),
+        AUTH_RETURN_PAGE
+    ))
+    .map_err(|e| AppError::Provider(format!("return url: {e}")))?;
+    let _ = win.navigate(back);
+
+    outcome
+}
+
 /// Keychain-backed rmcp credential store so tokens survive restarts.
 struct KeyringCredentialStore;
 
@@ -49,7 +340,7 @@ impl CredentialStore for KeyringCredentialStore {
     async fn load(
         &self,
     ) -> std::result::Result<Option<StoredCredentials>, rmcp::transport::auth::AuthError> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         match entry.get_password() {
             Ok(json) => {
@@ -58,7 +349,7 @@ impl CredentialStore for KeyringCredentialStore {
                 })?;
                 Ok(Some(creds))
             }
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(e) => Err(rmcp::transport::auth::AuthError::CredentialStoreError(
                 e.to_string(),
             )),
@@ -71,7 +362,7 @@ impl CredentialStore for KeyringCredentialStore {
     ) -> std::result::Result<(), rmcp::transport::auth::AuthError> {
         let json = serde_json::to_string(&credentials)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         entry
             .set_password(&json)
@@ -79,10 +370,10 @@ impl CredentialStore for KeyringCredentialStore {
     }
 
     async fn clear(&self) -> std::result::Result<(), rmcp::transport::auth::AuthError> {
-        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(e) => Err(rmcp::transport::auth::AuthError::CredentialStoreError(
                 e.to_string(),
             )),
@@ -108,7 +399,7 @@ impl CorosProvider {
     }
 
     fn has_credentials(&self) -> bool {
-        Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        entry(KEYRING_SERVICE, KEYRING_USER)
             .and_then(|e| e.get_password())
             .is_ok()
     }
@@ -566,17 +857,22 @@ fn json_pick<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a Value> {
 
 /// Minimal loopback HTTP server: accepts one GET on /callback and returns the
 /// (code, state, iss) triple. Serves a friendly HTML page on success.
+#[cfg(not(mobile))]
 async fn wait_for_callback(
     listener: TcpListener,
     timeout: std::time::Duration,
 ) -> Result<(String, String, Option<String>)> {
-    let (mut sock, _) = tokio::net::TcpListener::from_std(listener)
-        .map_err(|e| AppError::Other(format!("callback listener: {e}")))?
-        .accept()
-        .await
-        .map_err(|e| AppError::Other(format!("callback accept: {e}")))?;
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .map_err(|e| AppError::Other(format!("callback listener: {e}")))?;
 
+    // The accept has to sit inside the timeout too: a sign-in abandoned in the
+    // browser never produces a request, and waiting on it outside would hold the
+    // connect lock for good — every later attempt then reports it is in use.
     let result = tokio::time::timeout(timeout, async {
+        let (mut sock, _) = listener
+            .accept()
+            .await
+            .map_err(|e| AppError::Other(format!("callback accept: {e}")))?;
         let mut buf = vec![0u8; 8192];
         let mut read = 0usize;
         loop {
@@ -626,6 +922,7 @@ async fn wait_for_callback(
     Ok(result)
 }
 
+#[cfg(not(mobile))]
 fn urlencoding(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
@@ -763,60 +1060,121 @@ impl Provider for CorosProvider {
         // Reuse a previously registered client id when present.
         let _ = manager.initialize_from_store().await;
 
-        // Ephemeral loopback port for the redirect.
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| AppError::Other(format!("bind callback port: {e}")))?;
-        let port = listener.local_addr()?.port();
-        let redirect = format!("http://127.0.0.1:{port}/callback");
+        // The redirect URI must match, byte for byte, the one the client id was
+        // registered with, so it is remembered next to the id instead of drawn
+        // from whatever port happened to be free on this run.
+        #[cfg(mobile)]
+        let redirect = MOBILE_REDIRECT.to_string();
+        #[cfg(not(mobile))]
+        let (listener, redirect) = {
+            let l = TcpListener::bind("127.0.0.1:0")
+                .map_err(|e| AppError::Other(format!("bind callback port: {e}")))?;
+            let port = l.local_addr()?.port();
+            (l, format!("http://127.0.0.1:{port}/callback"))
+        };
 
-        // Dynamic client registration unless a stored client id configured us.
-        let configured = manager
+        // Dynamic client registration, unless a stored client id was registered
+        // against this very redirect URI.
+        let stored_client = manager
             .get_credentials()
             .await
-            .map(|(id, _)| !id.is_empty())
-            .unwrap_or(false);
-        if !configured {
+            .map(|(id, _)| id)
+            .unwrap_or_default();
+        let configured =
+            !stored_client.is_empty() && stored_redirect().as_deref() == Some(redirect.as_str());
+        if configured {
+            // `initialize_from_store` re-configures the client with the MCP base
+            // URL as its redirect URI, which COROS would reject. Put the
+            // registered value back.
+            manager
+                .configure_client(OAuthClientConfig::new(stored_client, &redirect))
+                .map_err(|e| AppError::Provider(format!("client config: {e}")))?;
+        } else {
             manager
                 .register_client("Runalytics", &redirect, &[])
                 .await
                 .map_err(|e| AppError::Provider(format!("client registration: {e}")))?;
+            save_redirect(&redirect);
         }
         let url = manager
             .get_authorization_url(&[])
             .await
             .map_err(|e| AppError::Provider(format!("auth url: {e}")))?;
 
-        // Open the system browser (no CSP involvement — this is an OS open).
-        if let Some(handle) = APP_HANDLE.get() {
-            use tauri_plugin_opener::OpenerExt;
-            let _ = handle.opener().open_url(&url, None::<String>);
+        #[cfg(mobile)]
+        let callback = authorize_in_app(&url).await?;
+        #[cfg(not(mobile))]
+        let callback = {
+            // Open the system browser (no CSP involvement — this is an OS open).
+            if let Some(handle) = APP_HANDLE.get() {
+                use tauri_plugin_opener::OpenerExt;
+                let _ = handle.opener().open_url(&url, None::<String>);
+            }
+            let (code, state, iss) =
+                wait_for_callback(listener, std::time::Duration::from_secs(AUTH_TIMEOUT_SECS))
+                    .await?;
+            AuthCallback {
+                code,
+                state,
+                iss,
+                error: None,
+            }
+        };
+
+        if let Some(err) = callback.error.as_deref() {
+            return Err(AppError::Provider(format!("COROS sign-in was {err}")));
         }
 
-        let (code, csrf, iss) =
-            wait_for_callback(listener, std::time::Duration::from_secs(AUTH_TIMEOUT_SECS)).await?;
         let token = manager
-            .exchange_code_for_token_with_issuer(&code, &csrf, iss.as_deref())
+            .exchange_code_for_token_with_issuer(
+                &callback.code,
+                &callback.state,
+                callback.iss.as_deref(),
+            )
             .await
-            .map_err(|e| AppError::Provider(format!("token exchange: {e}")))?;
+            .map_err(|e| {
+                // On mobile the user is already back in the app and the pane
+                // there is waiting on this call, so it needs telling rather than
+                // polling a connection that will never arrive.
+                #[cfg(mobile)]
+                set_notice(Some("COROS did not accept the sign-in. Try again."));
+                AppError::Provider(format!("token exchange: {e}"))
+            })?;
 
         // Persist explicitly so a restart can rebuild the manager from the
-        // keychain (initialize_from_store).
-        let (client_id, _) = manager
-            .get_credentials()
-            .await
-            .map_err(|e| AppError::Provider(format!("client id: {e}")))?;
-        let scopes = manager.get_current_scopes().await;
-        let creds = StoredCredentials::new(
-            client_id,
-            Some(token),
-            scopes,
-            Some(Utc::now().timestamp() as u64),
-        );
-        KeyringCredentialStore
-            .save(creds)
-            .await
-            .map_err(|e| AppError::Provider(format!("save credentials: {e}")))?;
+        // keychain (initialize_from_store). Grouped so a failure here still
+        // tells the waiting page, rather than leaving it on "pending".
+        let persist = async {
+            let (client_id, _) = manager
+                .get_credentials()
+                .await
+                .map_err(|e| AppError::Provider(format!("client id: {e}")))?;
+            let scopes = manager.get_current_scopes().await;
+            let creds = StoredCredentials::new(
+                client_id,
+                Some(token),
+                scopes,
+                Some(Utc::now().timestamp() as u64),
+            );
+            KeyringCredentialStore
+                .save(creds)
+                .await
+                .map_err(|e| AppError::Provider(format!("save credentials: {e}")))?;
+            Ok::<(), AppError>(())
+        }
+        .await;
+        if let Err(e) = persist {
+            #[cfg(mobile)]
+            set_notice(Some(
+                "COROS signed in but the token could not be stored. Try again.",
+            ));
+            return Err(e);
+        }
         self.connected.store(true, Ordering::Relaxed);
+        // The page waiting on this can now see the account connected, so the
+        // sign-in has nothing left to report.
+        #[cfg(mobile)]
+        set_notice(None);
         Ok("COROS account connected".into())
     }
 

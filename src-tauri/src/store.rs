@@ -1191,6 +1191,63 @@ impl Store {
         Ok(())
     }
 
+    /// Install a plan as the only plan on this device, replacing whatever was
+    /// there. Used by plan sync: an imported plan must not sit beside a stale
+    /// one, because `current_plan` picks by `created_ts` and two in-flight
+    /// plans would make the calendar show both.
+    ///
+    /// One transaction, so a failure part-way through cannot leave the device
+    /// with the old plan deleted and the new one unwritten.
+    pub fn replace_plan(&self, plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM training_plans", [])?;
+        tx.execute(
+            "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
+                longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
+                kind, quality_offset_sec_km, quality_offset_from)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+            params![
+                plan.id,
+                distance_name(plan.distance),
+                plan.target_date.format("%Y-%m-%d").to_string(),
+                status_name(plan.status),
+                plan.weekly_frequency,
+                plan.longrun_day,
+                increase_name(plan.increase),
+                plan.threshold_sec_km,
+                plan.created_at.timestamp(),
+                plan.pushed_id,
+                plan.baseline_weekly_km,
+                plan_kind_name(plan.kind),
+                plan.quality_offset_sec_km,
+                plan.quality_offset_from
+                    .map(|d| d.format("%Y-%m-%d").to_string())
+            ],
+        )?;
+        for w in workouts {
+            tx.execute(
+                "INSERT INTO plan_workouts (id, plan_id, day, kind, title, distance_m,
+                    duration_min, pace_lo_s_km, pace_hi_s_km, done)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![
+                    w.id,
+                    w.plan_id,
+                    w.date.format("%Y-%m-%d").to_string(),
+                    kind_name(w.kind),
+                    w.title,
+                    w.distance_m,
+                    w.duration_min,
+                    w.pace_lo_s_km,
+                    w.pace_hi_s_km,
+                    w.done as i64
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Replace a workout's kind/title (used by adaptive downgrades).
     pub fn soften_workout(&self, id: &str, kind: WorkoutKind, title: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();

@@ -51,8 +51,8 @@ fn validate_url(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn credential(config: &Publishing) -> Result<keyring::Entry> {
-    keyring::Entry::new("com.fradone.runalytics.calendar", &config.upload_url)
+fn credential(config: &Publishing) -> Result<keyring_core::Entry> {
+    crate::secure_store::entry("com.fradone.runalytics.calendar", &config.upload_url)
         .map_err(|_| AppError::Other("Calendar Keychain entry unavailable".into()))
 }
 
@@ -83,7 +83,7 @@ pub async fn configure(
         let entry = credential(&config)?;
         if password.is_empty() {
             match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Ok(()) | Err(keyring_core::Error::NoEntry) => {}
                 Err(_) => {
                     return Err(AppError::Other(
                         "Could not clear calendar credential".into(),
