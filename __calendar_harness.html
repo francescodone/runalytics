@@ -90,6 +90,16 @@
             }
             case "pain_days":
               return [];
+            case "calendar_publishing":
+              return {
+                enabled: true,
+                uploadUrl: "https://api.github.com/gists/abc123",
+                subscriptionUrl: "https://gist.githubusercontent.com/x/raw/feed.ics",
+                username: "",
+                hasPassword: true,
+                lastPublished: new Date(Date.now() - 3_600_000).toISOString(),
+                lastError: null,
+              };
             case "move_workout":
               window.__moves.push([args.workoutId, args.date]);
               return null;

@@ -4,7 +4,7 @@ import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
 import { scrollIntoViewMotion } from "./lib/motion";
 import { initGroupProgress, initScrollReveal } from "./lib/reveal";
-import { escapeHtml, openWorkout } from "./lib/workout-detail";
+import { escapeHtml } from "./lib/workout-detail";
 import { qualityBand } from "./lib/plan-bands";
 import { requirePlanOrRedirect, initNavGate } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -23,18 +23,6 @@ import type {
   SessionReview,
   TrainingPlan,
 } from "./lib/types";
-
-const KIND_LABEL: Record<string, string> = {
-  easy: "Easy",
-  tempo: "Tempo",
-  intervals: "Intervals",
-  // Two spellings, one kind: PlanWorkout.kind arrives as "longrun" (serde
-  // lowercase), the calendar's event_kind emits "longRun". Label both.
-  longRun: "Long run",
-  longrun: "Long run",
-  race: "Race",
-  rest: "Rest",
-};
 
 // --- create-plan form helpers -------------------------------------------
 
@@ -103,7 +91,8 @@ function raceTimeS(thresholdSecKm: number, distance: RaceDistance): number {
 /// Neither projects training gains (the plan adds no fitness model), so the
 /// gap between them is model disagreement, never "faster" — an earlier
 /// "(x faster)" note read as a promised improvement and was pure noise.
-/// Empty string when nothing is known.
+/// Empty string when nothing is known. Also the fallback for the chart below
+/// when fewer than two points exist to compare.
 function estTimesHtml(distance: RaceDistance, thresholdSecKm: number | null): string {
   const today = devicePrediction(distance);
   const race = thresholdSecKm != null ? raceTimeS(thresholdSecKm, distance) : null;
@@ -115,6 +104,96 @@ function estTimesHtml(distance: RaceDistance, thresholdSecKm: number | null): st
     <div class="est-row"><span class="est-title">Est. ${distance} from threshold</span>
       <span class="est-val">${race != null ? fmtClock(race) : "—"}</span>
       <span>${race != null ? "from your threshold pace" : "set a threshold pace"}</span></div>
+  </div>`;
+}
+
+/// The threshold pace the plan projects for its final week — if it works.
+/// The engine's own volume ramp (baseline → peak weekly km) is the only
+/// fitness signal a plan carries, so the projection moves threshold pace by
+/// half the volume gain, accrues at most 0.5 % per week (fitness needs
+/// weeks, not intent), and never claims more than 4 % (≈12 s/km at 5:00/km).
+/// Every surface that shows it labels it "est.": this is a promise the plan
+/// makes, not a measurement the watch took.
+function projectedThresholdSecKm(
+  thresholdSecKm: number,
+  baselineKm: number,
+  peakKm: number,
+  weeks: number,
+): number {
+  const gain = Math.max(0, peakKm / baselineKm - 1);
+  const improvement = Math.min(0.04, gain * 0.5, weeks * 0.005);
+  return thresholdSecKm * (1 - improvement);
+}
+
+/**
+ * The three race-time predictions on one shared time axis (faster to the
+ * left): what the watch predicts today, what today's threshold pace
+ * projects, and what the same model projects once the plan has run its
+ * course. Bars drawn from zero would hide the difference worth seeing — a
+ * plan's projected gain is a few percent of the time — so the markers'
+ * positions carry the comparison, and the shaded span on the projection row
+ * is the projected gain itself.
+ */
+function estChartHtml(
+  distance: RaceDistance,
+  thresholdSecKm: number | null,
+  shape: { weeks: number; peakKm: number; baselineKm: number | null } | null,
+): string {
+  const today = devicePrediction(distance);
+  const thr = thresholdSecKm != null ? raceTimeS(thresholdSecKm, distance) : null;
+  let end: number | null = null;
+  if (thresholdSecKm != null && thr != null && shape && shape.baselineKm != null && shape.baselineKm > 0) {
+    const t = raceTimeS(
+      projectedThresholdSecKm(thresholdSecKm, shape.baselineKm, shape.peakKm, shape.weeks),
+      distance,
+    );
+    // Under ~0.3 % the plan is holding, not building: a second marker on the
+    // same spot would claim a gain that is not there.
+    if (thr - t >= Math.max(10, thr * 0.003)) end = t;
+  }
+  const rows: {
+    cls: string;
+    title: string;
+    src: string;
+    secs: number;
+    gainFrom: number | null;
+  }[] = [];
+  if (today != null) {
+    rows.push({ cls: "row-watch", title: `Est. ${distance} today`, src: "from your watch", secs: today, gainFrom: null });
+  }
+  if (thr != null) {
+    rows.push({ cls: "row-thr", title: `Est. ${distance} now`, src: "from threshold pace", secs: thr, gainFrom: null });
+  }
+  if (end != null) {
+    rows.push({ cls: "row-end", title: `Est. ${distance} at race day`, src: "if the plan works · est.", secs: end, gainFrom: thr });
+  }
+  if (rows.length < 2) return estTimesHtml(distance, thresholdSecKm);
+
+  const lo = Math.min(...rows.map((r) => r.secs));
+  const hi = Math.max(...rows.map((r) => r.secs));
+  const pad = Math.max(45, (hi - lo) * 0.08);
+  const pos = (s: number) => ((s - (lo - pad)) / (hi - lo + 2 * pad)) * 100;
+
+  const body = rows
+    .map((r) => {
+      const gain =
+        r.gainFrom != null
+          ? `<span class="est-gain" style="left:${pos(r.secs).toFixed(1)}%;width:${(pos(r.gainFrom) - pos(r.secs)).toFixed(1)}%"></span>`
+          : "";
+      const delta =
+        r.gainFrom != null
+          ? ` <span class="est-delta">\u2212${fmtClock(r.gainFrom - r.secs)}</span>`
+          : "";
+      return `<div class="est-row ${r.cls}">
+        <span class="est-info"><span class="est-title">${r.title}</span><span class="est-val">${fmtClock(r.secs)}</span>${delta}<span class="est-src">${r.src}</span></span>
+        <span class="est-track" aria-hidden="true">${gain}<span class="est-mark" style="left:${pos(r.secs).toFixed(1)}%"></span></span>
+      </div>`;
+    })
+    .join("");
+  const summary = rows.map((r) => `${fmtClock(r.secs)} ${r.src}`).join(", ");
+  return `<div class="est-chart" role="group" aria-label="Estimated ${distance} times on a shared axis, faster to the left: ${summary}.">
+    ${body}
+    <p class="est-axis" aria-hidden="true"><span>faster</span><span>slower</span></p>
   </div>`;
 }
 
@@ -218,13 +297,16 @@ function estimatePeakWeeklyKm(
   frequency: number,
   weeks: number,
   kind: PlanKind = "race",
+  startKm: number | null = null,
 ): number {
   const base = { "5K": 32, "10K": 42, "21K": 58, "42K": 80 }[distance];
   // engine.rs scales the base ±7.5 % per session away from a 4-session week.
   const freqFactor = Math.min(Math.max(1 + (frequency - 4) * 0.075, 0.85), 1.3);
   const mult = { conservative: 0.85, moderate: 1.0, ambitious: 1.15 }[increase] ?? 1.0;
   const cap = { conservative: 1.05, moderate: 1.08, ambitious: 1.12 }[increase] ?? 1.08;
-  const start = baselineWeeklyKm() ?? base * 0.4;
+  // The form's field while creating; an active plan passes its own recorded
+  // baseline, which is the volume the ramp actually started from.
+  const start = startKm ?? baselineWeeklyKm() ?? base * 0.4;
   // A maintenance block holds the volume the runner arrived with: engine.rs
   // sets peak = requested and the ramp ratio to exactly 1, so there is no
   // peak to forecast. Without this branch the preview promised a build on a
@@ -362,7 +444,7 @@ function updatePlanPreview(): void {
     ${startStat}
     ${stat(`${weeks * freq}`, "Sessions")}
     ${peakStat}
-    ${kind === "maintenance" ? "" : estTimesHtml(selectedDistance(), paceOk ? parsePace(thresholdInput.value) : null)}`;
+    ${kind === "maintenance" ? "" : estChartHtml(selectedDistance(), paceOk ? parsePace(thresholdInput.value) : null, { weeks, peakKm: peak, baselineKm: start })}`;
 }
 
 const PLAN_KIND_LABEL: Record<PlanKind, string> = {
@@ -371,86 +453,55 @@ const PLAN_KIND_LABEL: Record<PlanKind, string> = {
   maintenance: "Maintenance block",
 };
 
-/// Injury-risk impact per done session, keyed by workout id — how many points
-/// the run itself moved the runner's risk (risk with the session minus risk
-/// without it), the same number the calendar description prints. Refreshed
-/// with the plan; empty outside the desktop app or before any run has a
-/// snapshot, which simply renders no badge.
-let riskDeltaByWorkout = new Map<string, number>();
-
-/// The small signed badge on a done session. An empty string means no
-/// snapshot exists for this session yet (a future week, or a sync that has
-/// not run) — not a zero.
-function riskDeltaBadge(workoutId: string): string {
-  const d = riskDeltaByWorkout.get(workoutId);
-  if (d == null) return "";
-  const tone = d > 0 ? "risk-up" : "risk-down";
-  return `<span class="risk-delta ${tone}">${d > 0 ? "+" : ""}${d}%</span>`;
-}
-
-function renderPlan(plan: TrainingPlan, workouts: PlanWorkout[]): void {
+/// The one-line read-out of the plan the actions below apply to. The plan's
+/// sessions themselves are deliberately absent: the calendar is the single
+/// source of truth for the schedule, and a second copy here would be a second
+/// thing to keep in sync (and the first thing to go stale).
+function renderPlan(plan: TrainingPlan): void {
   // Only a plan that ends on a start line has a finish time worth predicting:
   // a maintenance block never races its target date, so a predicted 42K there
   // would be a number attached to a day nothing happens on.
   const predicts = plan.kind !== "maintenance";
-  el("plan-status").innerHTML = `<span class="chip status">${plan.status}</span>
-    ${PLAN_KIND_LABEL[plan.kind]} · ${plan.distance} on ${plan.targetDate}
-    · threshold ${fmtPace(plan.thresholdSecKm)}/km
-    · ${plan.weeklyFrequency}×/week
-    ${plan.baselineWeeklyKm != null ? `· from ${plan.baselineWeeklyKm.toFixed(0)} km/wk` : ""}${plan.pushedId ? ` · pushed (${plan.pushedId})` : ""}
-    ${predicts ? estTimesHtml(plan.distance, plan.thresholdSecKm) : ""}`;
-
-  // Group workouts by ISO week starting Monday. The key is built from local
-  // date parts — toISOString() serialises in UTC and would label every week
-  // Sunday in UTC+ timezones.
-  const weeks = new Map<string, PlanWorkout[]>();
-  for (const w of workouts) {
-    const d = new Date(w.date + "T00:00:00");
-    const day = (d.getDay() + 6) % 7; // Mon=0
-    d.setDate(d.getDate() - day);
-    const key = ymdLocal(d);
-    (weeks.get(key) ?? weeks.set(key, []).get(key)!).push(w);
+  // The plan's own shape, recomputed the way the preview does it — the plan
+  // stores its baseline, frequency and increase method, so the projection
+  // uses the volume the ramp really started from, not whatever the (hidden)
+  // create form holds now. Only while it still has a ramp left to run: an
+  // aborted or past-dated plan cannot "work", so it gets the current-fitness
+  // rows alone rather than a promise about a plan that is over.
+  const weeksLeft = Math.ceil(daysUntilRace(plan.targetDate) / 7);
+  const shape =
+    predicts && (plan.status === "active" || plan.status === "pushed") && weeksLeft > 0
+      ? {
+          weeks: weeksLeft,
+          peakKm: estimatePeakWeeklyKm(
+            plan.distance,
+            plan.increase,
+            plan.weeklyFrequency,
+            weeksLeft,
+            plan.kind,
+            plan.baselineWeeklyKm,
+          ),
+          baselineKm: plan.baselineWeeklyKm,
+        }
+      : null;
+  // Label over value rather than one middot-run sentence: the values are what
+  // the runner scans for, and bold-on-strong makes them findable at a glance.
+  const facts: Array<[string, string]> = [
+    ["Kind", PLAN_KIND_LABEL[plan.kind]],
+    ["Distance", plan.distance],
+    [plan.kind === "race" ? "Race day" : "Ends", fmtDay(plan.targetDate)],
+    ["Threshold", `${fmtPace(plan.thresholdSecKm)}/km`],
+    ["Frequency", `${plan.weeklyFrequency}×/week`],
+  ];
+  if (plan.baselineWeeklyKm != null) {
+    facts.push(["Starting from", `${plan.baselineWeeklyKm.toFixed(0)} km/wk`]);
   }
-
-  const todayKey = ymdLocal(new Date());
-  const rows = [...weeks.entries()].map(([monday, ws], i) => {
-    const km = ws.reduce((s, w) => s + (w.distanceM ?? 0), 0) / 1000;
-    // The week you are living in gets the expanded treatment: its sessions
-    // stack as full-width rows (the calendar agenda's shape) instead of
-    // crowding as chips in a table cell, and the row takes an accent rim so
-    // "this week" is findable without scanning dates. `monday` is this
-    // week's Monday key, so today's key falling in [monday, monday+6] is
-    // the whole test — string compare works because the keys are ISO.
-    const sunday = new Date(new Date(`${monday}T12:00:00`).getTime() + 6 * 86_400_000);
-    const isNow = todayKey >= monday && todayKey <= ymdLocal(sunday);
-    const sorted = [...ws].sort((a, b) => a.date.localeCompare(b.date));
-    const cells = sorted
-      .map(
-        (w) =>
-          `<button type="button" class="chip workout-chip chip-${w.kind}${w.done ? " chip-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}" aria-label="${escapeHtml(`${w.date}: ${w.title}${w.done ? ", completed" : ""}`)}">${KIND_LABEL[w.kind] ?? w.kind}${
-            w.distanceM ? ` ${(w.distanceM / 1000).toFixed(0)}km` : ""
-          }${w.done ? riskDeltaBadge(w.id) : ""}</button>`,
-      )
-      .join(" ");
-    // Expanded: one session per line in the calendar agenda's shape — kind
-    // on the left, title, distance on the right. The weekday rides with the
-    // distance, since stacking drops the chip order that was the dates'
-    // only cue.
-    const stacked = sorted
-      .map(
-        (w) =>
-          `<button type="button" class="week-session agenda-row chip-${w.kind}${w.done ? " chip-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}" aria-label="${escapeHtml(`${w.date}: ${w.title}${w.done ? ", completed" : ""}`)}">
-            <span class="agenda-kind">${KIND_LABEL[w.kind] ?? w.kind}</span>
-            <span class="agenda-title">${escapeHtml(w.title)}</span>
-            <span class="agenda-meta">${new Date(w.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short" })}${w.distanceM ? ` · ${(w.distanceM / 1000).toFixed(1)} km` : ""}${w.done ? ` ${riskDeltaBadge(w.id)}` : ""}</span>
-          </button>`,
-      )
-      .join("");
-    return `<tr${isNow ? ' class="plan-week-now"' : ""}><td>W${i + 1}<span class="muted"> ${monday}</span></td><td>${km.toFixed(1)} km</td><td>${isNow ? `<div class="week-sessions">${stacked}</div>` : cells}</td></tr>`;
-  });
-  el("plan-weeks").innerHTML = rows.length
-    ? `<table id="weeks-table"><thead><tr><th>Week</th><th>Volume</th><th>Sessions</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
-    : `<p class="muted">No plan yet.</p>`;
+  if (plan.pushedId) facts.push(["Pushed to COROS", plan.pushedId]);
+  el("plan-status").innerHTML = `<span class="chip status">${plan.status}</span>
+    <dl class="plan-facts">${facts
+      .map(([k, v]) => `<div class="plan-fact"><dt>${k}</dt><dd>${v}</dd></div>`)
+      .join("")}</dl>
+    ${predicts ? estChartHtml(plan.distance, plan.thresholdSecKm, shape) : ""}`;
 
   const pushBtn = el<HTMLButtonElement>("push-plan");
   const abortBtn = el<HTMLButtonElement>("abort-plan");
@@ -485,25 +536,12 @@ function setCreateFormEnabled(enabled: boolean): void {
 
 async function refresh(): Promise<void> {
   const current = await tauri.currentPlan();
-  // Done sessions show their run's injury-risk delta; a failed fetch (or no
-  // desktop app) just means no badges rather than a broken plan page.
-  try {
-    const scores = await tauri.runScores();
-    riskDeltaByWorkout = new Map(
-      scores
-        .filter((s) => s.workoutId != null)
-        .map((s) => [s.workoutId as string, s.riskDelta]),
-    );
-  } catch {
-    riskDeltaByWorkout = new Map();
-  }
   if (current) {
-    renderPlan(current[0], current[1]);
+    renderPlan(current[0]);
     setCreateFormEnabled(false);
     void refreshPacing(current[0], current[1]).catch(fail);
   } else {
     el("plan-status").innerHTML = `<p class="muted">No active plan — create one above.</p>`;
-    el("plan-weeks").innerHTML = "";
     el<HTMLButtonElement>("push-plan").disabled = true;
     el<HTMLButtonElement>("abort-plan").disabled = true;
     setCreateFormEnabled(true);
@@ -700,8 +738,8 @@ async function main(): Promise<void> {
   initSyncIndicator();
   // Same motion layer as the dashboard: the page's scroll rail (this page has
   // no group headings, so the listener only drives the rail) and the panels'
-  // entrance held until they are scrolled to — the weeks table and the pacing
-  // panel live well below the form.
+  // entrance held until they are scrolled to — the pacing panel lives well
+  // below the form.
   initGroupProgress();
   initScrollReveal();
   // The kind decides which fields exist at all, so it is applied before
@@ -713,12 +751,18 @@ async function main(): Promise<void> {
       updatePlanPreview();
     });
   });
-  el("plan-weeks").addEventListener("click", (event) => {
-    const button = (event.target as Element).closest<HTMLButtonElement>("[data-workout-id]");
-    if (button) void openWorkout(button.dataset.workoutId!, button.dataset.workoutDate!).catch(fail);
-  });
   for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
     window.addEventListener(event, () => { void refresh().catch(fail); });
+  }
+  // Watch data first, plan second: the status chart reads the device's race
+  // predictions, and rendering the plan before defaults arrive drew it without
+  // the watch row on every cold load. The fetch is a store read, and its
+  // failure must not gate the plan render — an empty `defaults` just means
+  // the chart shows fewer rows.
+  try {
+    defaults = await tauri.planDefaults();
+  } catch {
+    /* no device data yet — leave the form empty */
   }
   try {
     await refresh();
@@ -731,12 +775,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Prefill threshold and current mileage with whatever the watch reported.
-  try {
-    defaults = await tauri.planDefaults();
-  } catch {
-    /* no device data yet — leave the form empty */
-  }
   // A plan built on top of an unresolved injury tends to make it worse —
   // say so before the runner commits, without blocking them.
   if (defaults.activePain) {
@@ -838,7 +876,7 @@ async function main(): Promise<void> {
     }
     try {
       const mileageRaw = parseFloat(el<HTMLInputElement>("plan-mileage").value);
-      const [plan, workouts] = await withBusy(btn, "Generating plan…", () => tauri.createPlan({
+      const [plan] = await withBusy(btn, "Generating plan…", () => tauri.createPlan({
         distance: selectedDistance(),
         kind,
         targetDate: dateStr,
@@ -848,10 +886,12 @@ async function main(): Promise<void> {
         increase: el<HTMLSelectElement>("plan-increase").value as IncreaseMethod,
         currentWeeklyKm: isFinite(mileageRaw) && mileageRaw > 0 ? mileageRaw : null,
       }));
-      renderPlan(plan, workouts);
+      renderPlan(plan);
       // This may be the first plan the account has ever had — that is exactly
       // the moment the rest of the nav becomes real.
       void initNavGate(true).catch(() => undefined);
+      // The actions are the only plan content left on this page, so land
+      // there; the schedule the plan just wrote is one tap away in the calendar.
       scrollIntoViewMotion(el("plan-view"), { block: "start" });
     } catch (e) {
       fail(e);

@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtPace } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -215,6 +215,47 @@ function renderAgenda(
     : `<p class="muted">No sessions scheduled this month.</p>`;
 }
 
+/// The week's numbers above the grid, pinned to the REAL current week no
+/// matter which month is on screen: what ran, what was planned, the average
+/// pace of the running, and when the feed last went out. The events come from
+/// the same calendar feed the grid renders, so a run matched minutes ago moves
+/// these tiles the same way it moves a chip.
+async function renderWeekStats(): Promise<void> {
+  if (!inTauri) return;
+  const monday = mondayOf(new Date());
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const [events, publishing] = await Promise.all([
+    tauri.calendarEvents(ymd(monday), ymd(sunday)),
+    // Read-only config load; a missing/broken config only costs the stamp.
+    tauri.calendarPublishing().catch(() => null),
+  ]);
+  const ran = events.filter((e) => e.activityId != null);
+  const ranM = ran.reduce((s, e) => s + (e.distanceM ?? 0), 0);
+  // Planned is the whole week's plan — banked sessions included — so the two
+  // tiles read as progress against a fixed target, like the dashboard tiles.
+  const planM = events.reduce((s, e) => s + (e.distanceM ?? 0), 0);
+  // Pace weighted by distance, not an average of per-run paces: two 5 km runs
+  // and one 16 km long run did not happen equally.
+  const ranMin = ran.reduce((s, e) => s + (e.durationMin ?? 0), 0);
+  const avgPace = ranM > 0 && ranMin > 0 ? (ranMin * 60) / (ranM / 1000) : null;
+  const range = `${monday.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${sunday.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const published = publishing
+    ? publishing.lastPublished
+      ? // The stored stamp is UTC; toLocaleString renders it in local time.
+        new Date(publishing.lastPublished).toLocaleString()
+      : publishing.enabled
+        ? "not yet published"
+        : "publishing off"
+    : "—";
+  el("cal-week").innerHTML = [
+    `<div class="tile center" title="${range}"><b>${(ranM / 1000).toFixed(1)}</b><span>km ran</span></div>`,
+    `<div class="tile center" title="${range}"><b>${(planM / 1000).toFixed(1)}</b><span>km planned</span></div>`,
+    `<div class="tile center" title="${range}"><b>${avgPace != null ? `${fmtPace(avgPace)}/km` : "—"}</b><span>avg pace</span></div>`,
+    `<div class="tile center pub"><b>${escapeHtml(published)}</b><span>last published</span></div>`,
+  ].join("");
+}
+
 /// When a pointer-drag released, in performance.now terms. The click that
 /// the browser fires after pointerup must not open the session detail.
 let dragEndedAt = 0;
@@ -338,11 +379,13 @@ async function main(): Promise<void> {
   });
   for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
     window.addEventListener(event, () => {
-      void renderMonth().catch(fail);
+      // A sync or a reschedule moves both the month and the week's numbers —
+      // and a republish moves the stamp in the stats strip.
+      void Promise.all([renderMonth(), renderWeekStats()]).catch(fail);
     });
   }
   try {
-    await renderMonth();
+    await Promise.all([renderMonth(), renderWeekStats()]);
   } catch (e) {
     if (!inTauri) {
       const message = `<div class="empty-state"><h3>Open your training calendar on your Mac</h3><p>Sessions appear here when Runalytics is connected to your watch in the desktop app.</p></div>`;

@@ -22,6 +22,55 @@
         d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
         return ymdOf(d);
       };
+      // A whole plan's sessions, past and future, so the dashboard's plan
+      // timeline has a ramp to draw: 8 weeks running from 3 weeks ago to a
+      // race 49 days out, volume climbing then tapering, 4 runs a week.
+      const planWorkouts = () => {
+        const out = [];
+        const base = new Date();
+        base.setDate(base.getDate() - ((base.getDay() + 6) % 7) - 21);
+        for (let w = 0; w < 8; w++) {
+          const taper = w >= 6 ? [0.85, 0.6][w - 6] : 1;
+          const long = Math.round((14 + w * 1.6) * taper);
+          const spec = [
+            ["easy", "Easy 6 km", 6],
+            ["tempo", "Tempo 5 km", 5],
+            ["easy", "Recovery 5 km", 5],
+            ["longRun", `Long ${long} km`, long],
+          ];
+          spec.forEach(([kind, title, km], i) => {
+            const d = new Date(base);
+            d.setDate(base.getDate() + w * 7 + [0, 2, 4, 6][i]);
+            out.push({
+              id: `pw-${w}-${i}`,
+              planId: "p1",
+              date: ymdOf(d),
+              kind,
+              title,
+              distanceM: km * 1000,
+              durationMin: Math.round(km * 5.4),
+              paceLoSKm: kind === "easy" ? 360 : 300,
+              paceHiSKm: kind === "easy" ? 400 : 330,
+              done: d < new Date(),
+            });
+          });
+        }
+        const race = new Date();
+        race.setDate(race.getDate() + 48);
+        out.push({
+          id: "pw-race",
+          planId: "p1",
+          date: ymdOf(race),
+          kind: "race",
+          title: "Race day",
+          distanceM: 21097,
+          durationMin: null,
+          paceLoSKm: null,
+          paceHiSKm: null,
+          done: false,
+        });
+        return out;
+      };
       // Per-day readiness sub-scores, oldest→newest — mirrors the backend's
       // score_history: the last point's values are the headline scores.
       const scoreHistory = Array.from({ length: 7 }, (_, i) => {
@@ -171,8 +220,8 @@
         invoke: async (cmd, args) => {
           if (cmd === "provider_status") return [{ provider: "coros", connected: true, lastSync: day(0), detail: "" }];
           if (cmd === "current_plan") return [
-            { id: "p1", distance: "21K", kind: "race", targetDate: day(-30), status: "pushed", weeklyFrequency: 4, longrunDay: 6, increase: "moderate", thresholdSecKm: 280, createdAt: day(10), pushedId: "z", baselineWeeklyKm: 32, qualityOffsetSecKm: harnessOffset, qualityOffsetFrom: harnessOffset === 0 ? null : mondayThisWeek() },
-            [],
+            { id: "p1", distance: "21K", kind: "race", targetDate: day(-48), status: "pushed", weeklyFrequency: 4, longrunDay: 6, increase: "moderate", thresholdSecKm: 280, createdAt: day(10), pushedId: "z", baselineWeeklyKm: 32, qualityOffsetSecKm: harnessOffset, qualityOffsetFrom: harnessOffset === 0 ? null : mondayThisWeek() },
+            planWorkouts(),
           ];
           if (cmd === "dashboard") return dashboard;
           if (cmd === "activity_detail") {
@@ -275,6 +324,15 @@
       <div id="dash" hidden>
         <section id="today" class="hero" aria-label="Today">
           <div id="today-hero"></div>
+        </section>
+
+        <section id="plan-timeline" class="panel" hidden>
+          <header class="panel-head">
+            <h2>Plan timeline</h2>
+            <span class="panel-meta" id="plan-timeline-meta"></span>
+          </header>
+          <div id="plan-timeline-chart"></div>
+          <p class="muted heatmap-legend" id="plan-timeline-legend" hidden></p>
         </section>
 
         <div class="group body-group">

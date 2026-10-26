@@ -310,8 +310,9 @@ pub fn snapshot_scores(store: &Store, th: &Thresholds) -> Result<()> {
     Ok(())
 }
 
-/// The two score lines appended to a banked run's description. Both are
-/// percentages: injury risk is already 0..=100, and the load ratio is the
+/// The stat block appended to a banked run's description: the load and injury
+/// risk the body was carrying, then what was actually run. The scores are
+/// percentages — injury risk is already 0..=100, and the load ratio is the
 /// COROS Intensity Trend percentage (1.35 reads as 135 %, the number the
 /// training-status chart's band is named by). The risk delta is the run's own
 /// impact — risk with the session minus risk without it — so it is never
@@ -319,34 +320,71 @@ pub fn snapshot_scores(store: &Store, th: &Thresholds) -> Result<()> {
 /// The load delta compares against the run banked before this one (snapshots
 /// arrive oldest first), and a first-ever run simply has no earlier ratio to
 /// change against.
+///
+/// The `Ran:` line closes the block because it answers a different question
+/// than the two above it: those say what the load did to the runner, this one
+/// says what the runner did that day. A matched session keeps the planned
+/// distance in its title, so without this line the description would restate
+/// the plan and never record the outcome.
 fn score_lines(
     snapshots: &[(i64, Option<f64>, u32, i64)],
     index: Option<usize>,
-    activity_id: i64,
+    activity: &Activity,
 ) -> String {
-    let Some(index) = index else {
-        return String::new();
-    };
-    let (id, load, risk, risk_delta) = snapshots[index];
-    debug_assert_eq!(id, activity_id);
-    let previous = index.checked_sub(1).map(|i| snapshots[i]);
-    // The block always starts with its own blank line, whether or not the
-    // run has a Load line — a run the provider never scored must not have
-    // its risk line glued to the paragraph above.
-    let mut lines = String::from("\n\n");
-    if let Some(ratio) = load {
-        let load_pct = ratio * 100.0;
-        let _ = write!(lines, "Load: {load_pct:.0}%");
-        if let Some((_, Some(before), _, _)) = previous {
-            let delta = load_pct - before * 100.0;
-            if delta.abs() >= 0.5 {
-                let _ = write!(lines, " ({delta:+.0}%)");
+    let mut lines = Vec::new();
+    if let Some(index) = index {
+        let (id, load, risk, risk_delta) = snapshots[index];
+        debug_assert_eq!(id, activity.id);
+        let previous = index.checked_sub(1).map(|i| snapshots[i]);
+        if let Some(ratio) = load {
+            let load_pct = ratio * 100.0;
+            let mut load_line = format!("Load: {load_pct:.0}%");
+            if let Some((_, Some(before), _, _)) = previous {
+                let delta = load_pct - before * 100.0;
+                if delta.abs() >= 0.5 {
+                    let _ = write!(load_line, " ({delta:+.0}%)");
+                }
             }
+            lines.push(load_line);
         }
-        lines.push('\n');
+        lines.push(format!("Injury risk: {risk}% ({risk_delta:+}%)"));
     }
-    let _ = write!(lines, "Injury risk: {risk}% ({risk_delta:+}%)");
-    lines
+    // A run the provider never scored still has a distance and a pace, so the
+    // block is not tied to the snapshots existing.
+    if let Some(ran) = ran_line(activity) {
+        lines.push(ran);
+    }
+    // The block always starts with its own blank line, whatever it ends up
+    // holding — a run with no Load line must not have its risk line glued to
+    // the paragraph above.
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", lines.join("\n"))
+    }
+}
+
+/// What the run actually was: real distance and real average pace, as opposed
+/// to the plan the session was matched to. A run with no distance at all (an
+/// indoor session, a provider that never reported one) has nothing to say.
+fn ran_line(activity: &Activity) -> Option<String> {
+    if activity.distance_m <= 0.0 {
+        return None;
+    }
+    let distance = fmt_distance(activity.distance_m);
+    Some(match average_pace_s_km(activity) {
+        Some(pace) => format!("Ran: {distance} @ {}/km", fmt_pace(pace.round() as i64)),
+        None => format!("Ran: {distance}"),
+    })
+}
+
+/// The run's average pace in seconds per km: what the provider reported, or
+/// the flat average over the recorded distance and duration when it didn't.
+fn average_pace_s_km(activity: &Activity) -> Option<f64> {
+    activity.avg_pace_s_km.or_else(|| {
+        (activity.distance_m > 0.0 && activity.duration_s > 0.0)
+            .then_some(activity.duration_s / (activity.distance_m / 1000.0))
+    })
 }
 
 /// Reschedule a planned, not-yet-run session to any day from today to the end
@@ -447,7 +485,7 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
         // A banked run carries what the body was carrying when it landed.
         let notes = format!(
             "{notes}{}",
-            score_lines(&snapshots, snapshot_index.get(&activity.id).copied(), activity.id)
+            score_lines(&snapshots, snapshot_index.get(&activity.id).copied(), &activity)
         );
         output.push(CalendarEvent {
             id: completion
@@ -620,6 +658,26 @@ mod tests {
         let conn = store.conn.lock().unwrap();
         conn.execute("INSERT INTO activities (provider, provider_record_id, sport, start_ts, duration_s, distance_m) VALUES ('coros', ?1, ?2, ?3, 3600, ?4)", rusqlite::params![record, sport, start, workout.distance_m]).unwrap();
         conn.last_insert_rowid()
+    }
+
+    /// A run shaped for `score_lines`, which takes the activity rather than
+    /// querying the store — the score block is pure formatting. Duration is
+    /// left at zero so a case without a reported pace really has no pace.
+    fn scored_run(id: i64, distance_m: f64, pace_s_km: Option<f64>) -> Activity {
+        Activity {
+            id,
+            provider: ProviderKind::Coros,
+            provider_record_id: id.to_string(),
+            sport: "running".into(),
+            start_time: Utc::now(),
+            duration_s: 0.0,
+            distance_m,
+            avg_hr: None,
+            max_hr: None,
+            avg_pace_s_km: pace_s_km,
+            elevation_gain_m: None,
+            has_track: false,
+        }
     }
 
     #[test]
@@ -844,16 +902,61 @@ mod tests {
         // The first banked run has no earlier ratio to change against, but
         // its own impact is always there.
         assert_eq!(
-            score_lines(&snapshots, Some(0), 1),
-            "\n\nLoad: 120%\nInjury risk: 30% (+2%)"
+            score_lines(&snapshots, Some(0), &scored_run(1, 10_000.0, Some(300.0))),
+            "\n\nLoad: 120%\nInjury risk: 30% (+2%)\nRan: 10.0 km @ 5:00/km"
         );
         assert_eq!(
-            score_lines(&snapshots, Some(1), 2),
-            "\n\nLoad: 135% (+15%)\nInjury risk: 35% (+5%)"
+            score_lines(&snapshots, Some(1), &scored_run(2, 12_500.0, Some(291.4))),
+            "\n\nLoad: 135% (+15%)\nInjury risk: 35% (+5%)\nRan: 12.5 km @ 4:51/km"
         );
         // A run that diluted a heavy week comes out negative, and a run the
         // provider never scored for load simply has no Load line.
-        assert_eq!(score_lines(&snapshots, Some(2), 3), "\n\nInjury risk: 35% (-1%)");
+        assert_eq!(
+            score_lines(&snapshots, Some(2), &scored_run(3, 6_400.0, None)),
+            "\n\nInjury risk: 35% (-1%)\nRan: 6.4 km"
+        );
+    }
+
+    #[test]
+    fn ran_line_falls_back_to_duration_over_distance() {
+        // A provider that reports no pace still gets a real average: an hour
+        // over 10 km is 6:00/km, not a missing number.
+        let mut run = scored_run(1, 10_000.0, None);
+        run.duration_s = 3600.0;
+        assert_eq!(ran_line(&run).as_deref(), Some("Ran: 10.0 km @ 6:00/km"));
+        // With neither distance nor pace there is nothing honest to print.
+        let mut blank = scored_run(2, 0.0, None);
+        blank.duration_s = 3600.0;
+        assert_eq!(ran_line(&blank), None);
+    }
+
+    #[test]
+    fn a_done_run_records_what_was_run_even_without_scores() {
+        let (store, _, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|w| w.kind != WorkoutKind::Rest)
+            .unwrap()
+            .clone();
+        let activity_id = insert_run(&store, &workout, "run", "unscored");
+        match_activity(&store, &workout.id, activity_id).unwrap();
+        // No snapshot_scores call: the description must still say what ran.
+        let done = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.id == workout.id)
+            .unwrap();
+        // insert_run banks an hour over the planned distance, so the average
+        // pace is that division and nothing else.
+        let km = workout.distance_m.unwrap() / 1000.0;
+        let pace = (3600.0 / km).round() as i64;
+        assert!(
+            done.notes
+                .ends_with(&format!("Ran: {km:.1} km @ {}:{:02}/km", pace / 60, pace % 60)),
+            "{}",
+            done.notes
+        );
+        assert!(!done.notes.contains("Injury risk"), "{}", done.notes);
     }
 
     #[test]
@@ -916,6 +1019,13 @@ mod tests {
                 .notes
                 .clone()
         };
+        // insert_run banks an hour over the planned distance, which is the
+        // average the Ran line has to report back.
+        let ran_line = |workout: &PlanWorkout| {
+            let km = workout.distance_m.unwrap() / 1000.0;
+            let pace = (3600.0 / km).round() as i64;
+            format!("Ran: {km:.1} km @ {}:{:02}/km", pace / 60, pace % 60)
+        };
         let first = run_notes(days[0].date);
         let second = run_notes(days[1].date);
         // The first banked run has no earlier ratio to change against, but
@@ -923,16 +1033,18 @@ mod tests {
         // the 1.35 ratio reads as the chart's 135 %. The risk value itself
         // depends on the fixture's volumes, so only its line shape is pinned
         // here.
-        let lines: Vec<&str> = first.lines().rev().take(2).collect();
+        let lines: Vec<&str> = first.lines().rev().take(3).collect();
+        assert_eq!(lines[0], ran_line(&days[0]), "{first}");
         assert!(
-            lines[0].starts_with("Injury risk: ") && lines[0].ends_with("%)")
-                && lines[0].contains("% ("),
+            lines[1].starts_with("Injury risk: ") && lines[1].ends_with("%)")
+                && lines[1].contains("% ("),
             "{first}"
         );
-        assert_eq!(lines[1], "Load: 120%", "{first}");
-        let lines: Vec<&str> = second.lines().rev().take(2).collect();
-        assert!(lines[0].starts_with("Injury risk: "), "{second}");
-        assert_eq!(lines[1], "Load: 135% (+15%)", "{second}");
+        assert_eq!(lines[2], "Load: 120%", "{first}");
+        let lines: Vec<&str> = second.lines().rev().take(3).collect();
+        assert_eq!(lines[0], ran_line(&days[1]), "{second}");
+        assert!(lines[1].starts_with("Injury risk: "), "{second}");
+        assert_eq!(lines[2], "Load: 135% (+15%)", "{second}");
     }
 
     #[test]

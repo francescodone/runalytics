@@ -2349,6 +2349,57 @@ body::after {
   }
 }
 
+/* ---- plan timeline ----
+   The same bar component as the week strip and weekly mileage, stretched
+   over the whole plan: one column per plan week, the dashed tick the planned
+   mileage, the fill what was run. The start line is the one event a plan
+   exists for, so it gets a marker that crosses the full plot height — a race
+   day is not a taller bar, it is a different kind of day. Positioned in the
+   plot's own coordinate space (a percentage of all columns), landing inside
+   its week at the day's fraction of it. */
+/* The plan timeline carries a readout line above the plot as well as captions
+   below it, so it takes the height its parts need rather than the fixed 132px
+   the two shorter charts reserve. */
+.bar-chart.plan {
+  height: auto;
+}
+
+/* Same history language as the mileage chart: finished weeks are pushed back,
+   the week being written is at full strength and washed, future weeks are
+   already dimmed by .bar-col.future. */
+.bar-chart.plan .bar-col.past .bar-fill {
+  opacity: 0.4;
+}
+
+.bar-chart.plan .bar-col.now .bar-track {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.pt-race {
+  position: absolute;
+  top: -6px;
+  bottom: -1px;
+  border-left: 2px dashed var(--workout-race);
+  pointer-events: none;
+}
+
+/* The flag under the race week's caption, in the same violet as the marker
+   above — key and mark quote each other across the plot. */
+.pt-flag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  font-style: normal;
+}
+
+.pt-flag svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2;
+  color: var(--workout-race);
+}
+
 /* Coach's brief: the hero's third row, spanning both columns under the
    fold. Prose rather than numbers, so it reads as the page talking to the
    runner — dimmer, longer line, comfortable measure. */
@@ -3009,88 +3060,6 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 
-/* The plan's current week: the row takes an accent rim on its first cell so
-   the eye finds "this week" without scanning dates, and its sessions render
-   as stacked .agenda-row rows (styled where the calendar agenda defines
-   them) instead of chips. The hover tint is suppressed — the row is already
-   highlighted, and the stacked rows carry their own hover. */
-#weeks-table tr.plan-week-now {
-  background: var(--accent-soft);
-}
-
-#weeks-table tr.plan-week-now:hover {
-  background: var(--accent-soft);
-}
-
-#weeks-table tr.plan-week-now td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-/* A plan block is up to sixteen rows, so the column labels ride along while
-   the table scrolls — the same pinned-head idea as the dashboard's group
-   headings, applied to the one long table on the page. The header cells are
-   already an opaque tinted track, so no extra material is needed; the inset
-   shadow stands in for the collapsed border, which sticky cells tend to
-   leave behind when they detach. The global `table` rule sets overflow,
-   which would make the table its own (unscrollable) scroll container and
-   pin the head to nothing — the head needs the page as its scrollport. */
-#weeks-table {
-  overflow: visible;
-}
-
-#weeks-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  box-shadow: inset 0 -1px 0 var(--line);
-}
-
-@media (max-width: 900px) {
-  /* Below the fixed toolbar, not under it. */
-  #weeks-table thead th {
-    top: var(--toolbar-h);
-  }
-}
-
-.week-sessions {
-  display: grid;
-  gap: 0;
-}
-
-/* The stacked rows live inside a table cell, where the table's own row
-   height and the agenda's min-height would make each session a tall band;
-   a slightly tighter row keeps the expanded week close to the table's
-   rhythm. */
-.week-sessions .agenda-row {
-  min-height: 40px;
-}
-
-/* On a phone the sessions column is barely wider than the row's own kind
-   label plus the (nowrap) distance read-out, so the 1fr title column
-   collapses to a single character per line. The row wraps instead: kind and
-   meta keep the first line, the title takes the second at full width.
-   Placed by hand — with the title spanning, auto-placement would drop the
-   meta into a column that resolves to nothing. */
-@media (max-width: 900px) {
-  .week-sessions .agenda-row {
-    grid-template-columns: auto 1fr;
-    row-gap: 2px;
-  }
-
-  .week-sessions .agenda-kind {
-    grid-area: 1 / 1;
-  }
-
-  .week-sessions .agenda-meta {
-    grid-area: 1 / 2;
-    justify-self: end;
-  }
-
-  .week-sessions .agenda-title {
-    grid-area: 2 / 1 / 3 / 3;
-  }
-}
-
 /* ---- map ---- */
 
 #map {
@@ -3632,10 +3601,79 @@ button.lg,
 /* ---- plan creation ---- */
 
 /* While a plan is active the create form is locked, so it drops below the
-   active plan — the page reads top-to-bottom in the order the runner acts:
-   follow the plan, push it, (only then) start over. */
+   plan actions — the page reads top-to-bottom in the order the runner acts:
+   push the plan, (only then) start over. The schedule itself is not here: it
+   lives in the calendar alone. */
 #app.plan-active #plan-form {
   order: 2;
+}
+
+/* The status line is all numbers — pace, kilometres, dates — so its figures
+   are tabular like every other readout in the app: they stop jittering when
+   the line re-renders and they align with the caption above it. */
+#plan-status {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The plan's facts as a label-over-value grid instead of one middot-run
+   sentence: the bold value is what the eye scans for, the faint micro-label
+   underneath says what it is without competing with it. The block is indented
+   past the status chip so the chip reads as the line's marker, not as one
+   more fact. */
+.plan-facts {
+  display: grid;
+  /* min(…, 100%) so the floor collapses on a narrow screen: a bare 112px
+     minimum cannot shrink below 6 x 112px, so six facts overflowed a phone
+     instead of wrapping to rows. */
+  grid-template-columns: repeat(auto-fit, minmax(min(112px, 100%), 1fr));
+  gap: var(--space-4) var(--space-6);
+  margin: var(--space-4) 0 0;
+  padding-left: var(--space-4);
+}
+
+.plan-fact {
+  min-width: 0;
+}
+
+.plan-fact dt {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plan-fact dd {
+  margin: 2px 0 0;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* The one link on this page sits inside a faint caption, where the browser's
+   default blue underlined anchor reads as a raw element rather than part of
+   the panel. It takes the theme accent and shows its underline on hover only;
+   the tap target grows to control height through a pseudo-element, so the
+   sentence's text layout stays untouched. */
+#plan-view .panel-meta a {
+  position: relative;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+#plan-view .panel-meta a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+#plan-view .panel-meta a::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  right: -6px;
+  height: var(--control-h);
+  transform: translateY(-50%);
 }
 
 #plan-form .plan-card {
@@ -4013,6 +4051,127 @@ fieldset.plan-field legend {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
+}
+
+/* The three race-time predictions on one shared axis. Every row uses the
+   same grid template so the tracks start and end at the same x — the whole
+   point is comparing marker positions across rows, which only works on one
+   axis. Bars from zero would hide the difference (a plan's gain is a few
+   percent of the time), so markers carry the read and the shaded span on
+   the race-day row IS the projected gain. */
+.est-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  margin: var(--space-2) 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.est-chart .est-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.est-chart .est-info {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.est-chart .est-title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.est-chart .est-val {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* The delta is this chart's own read-out — the number on the shaded span —
+   so it stays in the chart's hue rather than borrowing the app's green
+   verdict colour, the way the pacing verdict already uses the scale. */
+.est-chart .est-delta {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--scale-1);
+}
+
+.est-chart .est-src {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.est-chart .est-track {
+  position: relative;
+  height: 10px;
+  background: var(--glass-surface-2);
+  border: 1px solid var(--line);
+}
+
+/* The projected gain: the span between what threshold says today and what
+   it says once the plan has run. Drawn in from its fast end like every
+   other bar in the app. */
+.est-chart .est-gain {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  background: color-mix(in srgb, var(--scale-3) 45%, transparent);
+  transform-origin: 0 50%;
+  animation: fill-in var(--dur-fill) var(--ease-out) var(--delay-fill) backwards;
+}
+
+.est-chart .est-mark {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  margin-left: -1.5px;
+  background: var(--text);
+  animation: fade var(--dur-med) var(--ease-out) calc(var(--delay-fill) + var(--dur-fill) * 0.7) backwards;
+}
+
+/* The axis reuses the rows' grid template and parks both labels in the track
+   column, so "faster" and "slower" sit on the track's own edges. Padding
+   guessed from the label column's width drifted whenever that column flexed. */
+.est-chart .est-axis {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  gap: var(--space-4);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.est-chart .est-axis span {
+  grid-area: 1 / 2;
+}
+
+.est-chart .est-axis span:first-child {
+  justify-self: start;
+}
+
+.est-chart .est-axis span:last-child {
+  justify-self: end;
+}
+
+/* Same breakpoint as the pacing rows in this panel: below it the label block
+   takes the full row and the track drops underneath, so the track never
+   collapses to a sliver beside a 230px label column. */
+@media (max-width: 720px) {
+  .est-chart .est-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+  .est-chart .est-axis {
+    display: flex;
+    justify-content: space-between;
+  }
 }
 
 .plan-submit {
@@ -4735,6 +4894,20 @@ fieldset.plan-field legend {
   color: var(--text-dim);
 }
 
+/* The current week's read-out above the month. Same .tile read-outs as the
+   dashboard's week row; the publish stamp is a long string, so its tile
+   carries smaller type than the three numbers beside it. */
+#cal-week {
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+#cal-week .tile.pub b {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
 #cal-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -5173,8 +5346,7 @@ fieldset.plan-field legend {
   cursor: pointer;
 }
 
-.agenda-list > li:last-child > .agenda-row,
-.week-sessions > .agenda-row:last-child {
+.agenda-list > li:last-child > .agenda-row {
   border-bottom: none;
 }
 
@@ -6626,6 +6798,9 @@ main {
 .header-action:hover { opacity: 0.85; }
 .header-action:active { transform: scale(var(--press-scale)); }
 .header-action svg { width: 17px; height: 17px; }
+/* Author display beats the UA [hidden] rule — the dashboard hides this CTA
+   once a plan exists, and without this it would stay on screen. */
+.header-action[hidden] { display: none; }
 
 #dash { display: flex; flex-direction: column; gap: 28px; }
 #dash[hidden] { display: none; }
@@ -6958,37 +7133,6 @@ a.btn:active { transform: scale(var(--press-scale)); }
 @media (max-width: 560px) {
   .settings-content > .panel:not([hidden]) { padding: 20px; }
   .settings-content .setting-row { padding: 14px; }
-  #plan-weeks { min-width: 0; max-width: 100%; }
-  #weeks-table, #weeks-table tbody { display: block; width: 100%; }
-  #weeks-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-  #weeks-table tbody tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0 8px;
-    width: 100%;
-    border-bottom: 1px solid var(--line);
-  }
-  #weeks-table tbody td { display: block; min-width: 0; padding: 11px 8px; border: 0; }
-  #weeks-table tbody td:nth-child(2) { text-align: right; }
-  #weeks-table tbody td:nth-child(3) {
-    grid-column: 1 / -1;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    padding-top: 0;
-    padding-bottom: 14px;
-  }
-  #weeks-table .week-sessions { width: 100%; }
-  #weeks-table .workout-chip { min-height: 38px; }
 }
 
 /* ============================================================
@@ -7348,11 +7492,9 @@ a.btn:active { transform: scale(var(--press-scale)); }
     height: 44px;
   }
 
-  /* Base chip is 40; the stacked weeks-table override is 38 and carries an
-     ID selector, so it needs its own matching-specificity rule here — a
-     later plain-class rule alone would lose the cascade and stay at 38. */
-  .workout-chip,
-  #weeks-table .workout-chip {
+  /* Base chip is 40; the calendar's agenda rows are the other tap target
+     here, so both grow to the phone minimum together. */
+  .workout-chip {
     min-height: 44px;
   }
 

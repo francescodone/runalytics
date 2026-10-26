@@ -65,6 +65,9 @@ interface DashExtras {
   allActivities: Activity[];
   weekPlan: PlanWorkout[];
   plan: TrainingPlan | null;
+  /// Every session the current plan holds, not just this week's — the plan
+  /// timeline needs the whole shape, and `current_plan` already returns it.
+  planWorkouts: PlanWorkout[];
   activePain: PainEntry[];
   lastSync: string | null;
 }
@@ -811,6 +814,143 @@ function renderWeekPlan(extras: DashExtras): void {
   el("week-plan").innerHTML = rows.join("");
 }
 
+/// The whole current plan on one axis: every week it holds, with the planned
+/// volume as the dashed tick and what was actually run as the fill — the same
+/// actual-under-tick reading as the week strip, stretched over the plan's full
+/// length so the ramp, the down weeks and the taper are visible as a shape
+/// instead of one week at a time. The race day (or time trial) gets a dashed
+/// marker at its day, because the point of a build is the line it runs toward.
+function renderPlanTimeline(extras: DashExtras): void {
+  const panel = el("plan-timeline");
+  const { plan, planWorkouts } = extras;
+  if (!plan || planWorkouts.length === 0) {
+    panel.hidden = true;
+    return;
+  }
+  // Weeks run Monday to Sunday exactly like the engine's own week_start, so a
+  // column here is the same unit the plan was built in. Dates are parsed at
+  // local noon — a bare "YYYY-MM-DD" is UTC midnight and lands on the
+  // previous day west of Greenwich. The backend serialises plan dates as
+  // date-only; a full ISO timestamp parses as-is.
+  const dayDate = (s: string): Date => new Date(s.length === 10 ? `${s}T12:00:00` : s);
+  const mondayOf = (key: string): Date => {
+    const d = dayDate(key);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  };
+  const weeks = new Map<string, { planKm: number; raceDate: string | null }>();
+  for (const w of planWorkouts) {
+    const key = ymd(mondayOf(w.date));
+    const week: { planKm: number; raceDate: string | null } = weeks.get(key) ?? {
+      planKm: 0,
+      raceDate: null,
+    };
+    week.planKm += (w.distanceM ?? 0) / 1000;
+    // The engine marks the start line as a race workout; an improvement
+    // block ends on a time trial instead, which is its start line. A
+    // maintenance block has neither, and gets no marker.
+    if (w.kind === "race" || (plan.kind === "improvement" && w.title.startsWith("Time trial"))) {
+      week.raceDate = w.date;
+    }
+    weeks.set(key, week);
+  }
+  // Fill any week the plan holds no session in (a full rest week would
+  // otherwise vanish and shorten the plan on screen), so the columns run
+  // unbroken from the plan's first Monday to its last.
+  const keys = [...weeks.keys()].sort();
+  const cols: { key: string; planKm: number; raceDate: string | null }[] = [];
+  const cursor = mondayOf(keys[0]);
+  const lastMonday = mondayOf(keys[keys.length - 1]);
+  while (ymd(cursor) <= ymd(lastMonday)) {
+    const key = ymd(cursor);
+    const week = weeks.get(key) ?? { planKm: 0, raceDate: null };
+    cols.push({ key, ...week });
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  const thisMonday = ymd(mondayThisWeek());
+  const maxKm = Math.max(1, ...cols.map((c) => c.planKm));
+  const raceIdx = cols.findIndex((c) => c.raceDate != null);
+  const nowIdx = cols.findIndex((c) => c.key === thisMonday);
+
+  el("plan-timeline-chart").innerHTML = `
+    <div class="bar-chart plan">
+      <div class="bar-plot" style="grid-template-columns:repeat(${cols.length},1fr)">
+        ${cols
+          .map((c) => {
+            const weekEnd = new Date(mondayOf(c.key));
+            weekEnd.setDate(weekEnd.getDate() + 6);
+            const actual = runKm(
+              extras.allActivities.filter(
+                (a) => a.startTime.slice(0, 10) >= c.key && a.startTime.slice(0, 10) <= ymd(weekEnd),
+              ),
+            );
+            const cls = c.key === thisMonday ? " now" : c.key < thisMonday ? " past" : " future";
+            return `<div class="bar-col${cls}">
+              <div class="bar-track">
+                <div class="bar-fill" style="height:${Math.min(100, (actual / maxKm) * 100).toFixed(1)}%"></div>
+                ${c.planKm ? `<span class="bar-tick" style="bottom:${Math.min(100, (c.planKm / maxKm) * 100).toFixed(1)}%"></span>` : ""}
+              </div>
+            </div>`;
+          })
+          .join("")}
+        ${cols
+          .map((c, i) =>
+            c.raceDate
+              ? `<span class="pt-race" style="left:${(((i + (((dayDate(c.raceDate).getDay() + 6) % 7) + 0.5) / 7) / cols.length) * 100).toFixed(1)}%" title="${plan.kind === "improvement" ? "Time trial" : "Start line"}"></span>`
+              : "",
+          )
+          .join("")}
+      </div>
+      <div class="bar-axis" style="grid-template-columns:repeat(${cols.length},1fr)">
+        ${cols
+          .map(
+            (c, i) =>
+              `<span class="bar-label${i === nowIdx ? " now" : ""}">${mondayOf(c.key).getDate()}/${mondayOf(c.key).getMonth() + 1}${
+                i === raceIdx ? `<i class="pt-flag" title="${plan.kind === "improvement" ? "Time trial" : "Race day"}">${icons.flag}</i>` : ""
+              }</span>`,
+          )
+          .join("")}
+      </div>
+    </div>`;
+
+  bindChartInspection(
+    el("plan-timeline-chart").querySelector<HTMLElement>(".bar-plot")!,
+    cols.map((c, i) => {
+      const weekEnd = new Date(mondayOf(c.key));
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const actual = runKm(
+        extras.allActivities.filter(
+          (a) => a.startTime.slice(0, 10) >= c.key && a.startTime.slice(0, 10) <= ymd(weekEnd),
+        ),
+      );
+      return {
+        label: `Week of ${mondayOf(c.key).getDate()}/${mondayOf(c.key).getMonth() + 1}`,
+        value: c.key > thisMonday
+          ? `${c.planKm.toFixed(1)} km planned`
+          : `${actual.toFixed(1)} km run of ${c.planKm.toFixed(1)} planned`,
+        x: ((i + 0.5) / cols.length) * 100,
+      };
+    }),
+    "Plan timeline, week by week",
+    nowIdx >= 0 ? nowIdx : cols.length - 1,
+  );
+
+  const lineLabel = plan.kind === "race" ? `${plan.distance} race` : plan.kind === "improvement" ? "Time trial" : "Ends";
+  const progress =
+    nowIdx >= 0
+      ? `week ${nowIdx + 1} of ${cols.length}`
+      : thisMonday > ymd(lastMonday)
+        ? "final week"
+        : `starts ${fmtDate(`${keys[0]}T12:00:00`)}`;
+  el("plan-timeline-meta").textContent = `${lineLabel} ${fmtDate(
+    plan.targetDate.length === 10 ? `${plan.targetDate}T12:00:00` : plan.targetDate,
+  )} · ${progress}`;
+  const legend = el("plan-timeline-legend");
+  legend.hidden = false;
+  legend.textContent = "Dashed line: the week's planned mileage · filled bar: what was run";
+  panel.hidden = false;
+}
+
 /// Weekly running mileage over the last eight weeks. The dashed target is
 /// this week's planned run distance, never the training-load target: load
 /// units and kilometres cannot be compared on the same axis.
@@ -1199,6 +1339,7 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   renderTodayHero(data, extras);
   renderPainBanner(data);
 
+  renderPlanTimeline(extras);
   renderWeek(extras);
   renderWeekPlan(extras);
   renderVolume(extras, data.loadRecommendation);
@@ -1833,6 +1974,12 @@ async function main(): Promise<void> {
 async function loadAppData(given?: FlowState): Promise<void> {
   try {
     const flow = given ?? await fetchFlowState();
+    // The header's "+ Training plan" invites creating one; once a plan
+    // exists, the Plan page is for managing it, not making another, so the
+    // duplicate invitation goes away. Set before any early return: a plan
+    // with no synced data yet still counts as an existing plan.
+    const planCta = document.getElementById("header-plan-cta");
+    if (planCta) planCta.hidden = flow.plan != null;
     const step = nextAction(flow);
     if (step !== "train" || !flow.pushed) {
       // Not everything is wired yet — guide the user, but still show data
@@ -1863,6 +2010,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
       allActivities,
       weekPlan,
       plan: planPair?.[0] ?? null,
+      planWorkouts: planPair?.[1] ?? [],
       activePain: activePain.length ? activePain : data.activePain ? [data.activePain] : [],
       lastSync: flow.lastSync,
     };

@@ -125,6 +125,7 @@ if (nav && main) {
     });
     const planLink = document.createElement("a");
     planLink.className = "header-action";
+    planLink.id = "header-plan-cta";
     planLink.href = "plan.html";
     planLink.innerHTML = `${icons.plus}<span>Training plan</span>`;
     actions.append(date, planLink);
