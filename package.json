@@ -1,7 +1,7 @@
 {
   "name": "runalytics",
   "private": true,
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "scripts": {
     "predev": "lsof -ti tcp:1499 | xargs kill -9 2>/dev/null || true",
