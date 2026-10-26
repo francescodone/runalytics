@@ -17,9 +17,15 @@
 #   3. scripts/build_ios.sh to produce the unsigned IPA that Sideloadly
 #      installs. Set SKIP_IOS=1 to skip it (the iOS artifact then comes from
 #      CI, which builds it too).
-#   4. Creates the GitHub release with the .dmg and the .ipa — the
-#      distributables. There is no in-app updater, so no .app.tar.gz /
-#      .sig / latest.json.
+#   4. Creates the GitHub release with the .dmg, the .ipa, and the updater
+#      artifacts (the signed .app.tar.gz, its .sig, and a generated
+#      latest.json) — the .app.tar.gz + latest.json are what the in-app
+#      updater in Settings → About downloads.
+#
+# The updater artifacts need the minisign key: tauri build fails outright
+# when tauri.conf.json carries an updater pubkey but the environment has no
+# TAURI_SIGNING_PRIVATE_KEY, so the key at ~/.tauri/runalytics.key is picked
+# up automatically when present.
 #
 # Pass --dry-run to print what would happen without committing, tagging,
 # building or publishing.
@@ -77,9 +83,17 @@ run git push origin "$BRANCH" "$TAG"
 
 # --- 2. build --------------------------------------------------------------
 ARCH="$(uname -m)"
-DMG="src-tauri/target/release/bundle/dmg/Runalytics_${CURRENT}_${ARCH}.dmg"
+BUNDLE_DIR="src-tauri/target/release/bundle"
+DMG="$BUNDLE_DIR/dmg/Runalytics_${CURRENT}_${ARCH}.dmg"
 IPA="src-tauri/gen/apple/build/Runalytics_${CURRENT}.ipa"
 ASSETS=("$DMG")
+
+# tauri build refuses to bundle when tauri.conf.json has an updater pubkey and
+# no TAURI_SIGNING_PRIVATE_KEY is set, so pick the local key up automatically.
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -f "$HOME/.tauri/runalytics.key" ]]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/runalytics.key"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+fi
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "  [dry-run] npm run tauri build && bash scripts/make_dmg.sh"
@@ -108,10 +122,23 @@ else
 fi
 
 # --- 3. publish ------------------------------------------------------------
-echo "==> creating release $TAG"
+# The updater needs three things next to the DMG: the .app.tar.gz, the .sig
+# tauri build already wrote beside it (when the signing key was in the
+# environment), and a latest.json manifest pointing at both, keyed by
+# platform. scripts/make_latest_json.mjs builds the manifest from the .sig.
+TARBALL="$BUNDLE_DIR/macos/Runalytics.app.tar.gz"
 if [[ "$DRY_RUN" == 1 ]]; then
-  echo "  [dry-run] gh release create $TAG ${ASSETS[*]} --title 'Runalytics $CURRENT' --generate-notes"
+  echo "  [dry-run] write latest.json, gh release create $TAG ${ASSETS[*]} $TARBALL …"
 else
+  if [[ -f "$TARBALL" && -f "$TARBALL.sig" ]]; then
+    node scripts/make_latest_json.mjs "$BUNDLE_DIR/macos" "$OWNER_REPO" "$CURRENT"
+    ASSETS+=("$TARBALL" "$TARBALL.sig" "$BUNDLE_DIR/macos/latest.json")
+  else
+    echo "  warning: no updater artifacts (missing $TARBALL or its .sig)" >&2
+    echo "  warning: was TAURI_SIGNING_PRIVATE_KEY / ~/.tauri/runalytics.key available?" >&2
+    echo "  warning: this release will not be offered to the in-app updater" >&2
+  fi
+  echo "==> creating release $TAG"
   gh release create "$TAG" "${ASSETS[@]}" --title "Runalytics $CURRENT" --generate-notes
 fi
 

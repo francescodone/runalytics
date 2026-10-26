@@ -56,6 +56,65 @@ fn credential(config: &Publishing) -> Result<keyring_core::Entry> {
         .map_err(|_| AppError::Other("Calendar Keychain entry unavailable".into()))
 }
 
+/// Keep the app's shared GitHub entry in step with what the runner just did to
+/// the publishing credential.
+///
+/// A gist target means the upload password *is* a GitHub token, and plan sync
+/// authenticates with the same one — the runner should never be asked for it
+/// twice. `provided` is the password from this save, `Some("")` meaning the
+/// runner cleared it; clearing either credential clears both, so a removed
+/// token cannot come back through the other path.
+///
+/// A save that did not touch the password leaves the entries alone, which keeps
+/// a runner whose calendar is WebDAV but whose plan channel is a gist intact.
+///
+/// Best-effort by design: the shared entry is a convenience for plan sync, and
+/// failing to maintain it must not fail a calendar publish that would otherwise
+/// succeed. Plan sync falls back to its own legacy entry when it is missing.
+fn sync_github_token(config: &Publishing, provided: Option<&str>) {
+    let shared = crate::secure_store::entry(
+        crate::secure_store::GITHUB_SERVICE,
+        crate::secure_store::GITHUB_TOKEN_USER,
+    );
+    let legacy = crate::secure_store::entry(
+        crate::secure_store::LEGACY_PLAN_SERVICE,
+        crate::secure_store::LEGACY_PLAN_TOKEN_USER,
+    );
+    match provided {
+        Some("") => {
+            if let Ok(entry) = shared.as_ref() {
+                let _ = entry.delete_credential();
+            }
+            if let Ok(entry) = legacy.as_ref() {
+                let _ = entry.delete_credential();
+            }
+        }
+        Some(token) if gist_file(config).is_some() => {
+            if let Ok(entry) = shared.as_ref() {
+                let _ = entry.set_password(token);
+            }
+            // Superseded by the shared entry, and leaving it would mean two
+            // copies of a token that can drift apart.
+            if let Ok(entry) = legacy.as_ref() {
+                let _ = entry.delete_credential();
+            }
+        }
+        _ => {}
+    }
+    // A gist save that left the password field alone still needs the shared
+    // entry refreshed, e.g. after the target gist changed.
+    if provided.is_none() && gist_file(config).is_some() && config.has_password {
+        if let Some(token) = credential(config)
+            .ok()
+            .and_then(|entry| entry.get_password().ok())
+        {
+            if let Ok(entry) = shared.as_ref() {
+                let _ = entry.set_password(&token);
+            }
+        }
+    }
+}
+
 pub async fn configure(
     state: &AppState,
     mut config: Publishing,
@@ -79,7 +138,7 @@ pub async fn configure(
         None
     };
     config.last_error = None;
-    if let Some(password) = password {
+    if let Some(password) = password.as_ref() {
         let entry = credential(&config)?;
         if password.is_empty() {
             match entry.delete_credential() {
@@ -92,13 +151,14 @@ pub async fn configure(
             }
             config.has_password = false;
         } else {
-            entry.set_password(&password).map_err(|_| {
+            entry.set_password(password).map_err(|_| {
                 AppError::Other("Could not save calendar credential in Keychain".into())
             })?;
             config.has_password = true;
         }
     }
     save(&state.data_dir, &config)?;
+    sync_github_token(&config, password.as_deref());
     refresh_locked(state).await?;
     load(&state.data_dir)
 }

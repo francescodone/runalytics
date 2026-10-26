@@ -11,13 +11,16 @@ name: Release
 # publishes locally without CI. If CI builds the tag first, run
 # `gh release delete v0.2.0 -y` before re-running the local script.
 #
-# Both Apple-silicon and Intel DMGs are built, along with an iOS IPA. There is
-# no updater key: Runalytics has no in-app updater, so the bundles are the only
-# artifacts. The macOS app is ad-hoc-signed via bundle.macOS.signingIdentity in
-# tauri.conf.json (the bundler must seal the bundle, or Gatekeeper calls it
-# damaged on other machines); it is not notarised, so first launch needs
-# right-click -> Open. The IPA is deliberately unsigned and installs through
-# Sideloadly, which signs it with the recipient's own Apple ID.
+# Both Apple-silicon and Intel DMGs are built, along with an iOS IPA. The
+# macOS bundles are signed with the minisign updater key (TAURI_SIGNING_PRIVATE_
+# KEY in repo secrets) so tauri-action can publish the .app.tar.gz + .sig and a
+# latest.json next to them — that manifest is what the in-app updater in
+# Settings → About reads. The macOS app itself is ad-hoc-signed via
+# bundle.macOS.signingIdentity in tauri.conf.json (the bundler must seal the
+# bundle, or Gatekeeper calls it damaged on other machines); it is not
+# notarised, so first launch needs right-click -> Open. The IPA is deliberately
+# unsigned and installs through Sideloadly, which signs it with the recipient's
+# own Apple ID.
 
 on:
   push:
@@ -64,6 +67,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater bundle so the action can emit the .sig and
+          # latest.json. Without this the build fails outright: tauri-cli
+          # refuses to bundle when a pubkey is configured but the private key
+          # env var is missing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: v__VERSION__
           releaseName: "Runalytics v__VERSION__"

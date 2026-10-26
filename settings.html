@@ -38,9 +38,6 @@
             <button role="tab" data-pane="calendar" aria-selected="false">
               <span class="sn-icon" data-icon="calendar"></span>Calendar subscription
             </button>
-            <button role="tab" data-pane="sync" aria-selected="false">
-              <span class="sn-icon" data-icon="sync"></span>Plan sync
-            </button>
             <button role="tab" data-pane="tiles" aria-selected="false">
               <span class="sn-icon" data-icon="map"></span>Map tiles
             </button>
@@ -261,41 +258,29 @@
                 <div class="actions"><button id="calendar-save" type="submit"><span data-icon="check"></span> Save settings</button></div>
               </form>
             </details>
+            <h3>Plan sync</h3>
+            <p class="muted">
+              Your plan lives on the computer that built it. Switch this on and Runalytics
+              publishes it to a private GitHub gist that only your own accounts can open, so a
+              phone signed in to the same COROS account picks it up by itself. Both devices must
+              be signed in to that COROS account — it is how they find each other without you
+              pasting a URL anywhere. The plan is encrypted before upload, so GitHub only ever
+              holds ciphertext.
+            </p>
+            <p id="sync-status" role="status">Loading sync settings...</p>
+            <p id="sync-code" class="muted mono"></p>
+            <div class="plan-sync-form">
+              <label class="check-label"><input id="sync-enabled" type="checkbox" /> Sync my plan between devices</label>
+              <div class="actions">
+                <button id="sync-push" type="button" class="secondary" hidden><span data-icon="sync"></span> Publish plan now</button>
+                <button id="sync-pull" type="button" class="secondary" hidden><span data-icon="repeat"></span> Import plan now</button>
+              </div>
+            </div>
             <h3>Local export</h3>
             <p id="ics-path" class="mono" aria-live="polite"></p>
             <div class="actions">
               <button id="ics-regenerate" class="secondary"><span data-icon="sync"></span> Refresh calendar</button>
               <button id="ics-reveal" class="secondary">Reveal in Finder</button>
-            </div>
-          </section>
-
-          <section class="panel" id="pane-sync" role="tabpanel" aria-label="Plan sync" hidden>
-            <h2>Plan sync</h2>
-            <p class="section-intro">
-              Your plan lives on the computer that built it. Switch this on and Runalytics
-              publishes it to a private GitHub gist that only your own accounts can open, so a
-              phone signed in to the same COROS account picks it up by itself.
-            </p>
-            <p id="sync-status" role="status">Loading sync settings...</p>
-            <p id="sync-code" class="muted mono"></p>
-            <details class="disclosure">
-              <summary><span class="disclosure-copy"><strong>Connect the two devices</strong><small>Same COROS login, plus a GitHub token</small></span></summary>
-              <form id="plan-sync-form" class="calendar-publishing-form">
-                <p class="muted">
-                  Both devices must be signed in to the same COROS account — that is how they
-                  find each other without you pasting a URL anywhere. The token needs the
-                  <code>gist</code> scope and nothing else. The plan is encrypted before upload,
-                  so GitHub only ever holds ciphertext.
-                </p>
-                <label class="check-label"><input id="sync-enabled" type="checkbox" /> Sync my plan between devices</label>
-                <label>GitHub token<input id="sync-token" type="password" autocomplete="new-password" /></label>
-                <label class="check-label"><input id="sync-clear-token" type="checkbox" /> Remove saved token</label>
-                <div class="actions"><button id="sync-save" type="submit"><span data-icon="check"></span> Save settings</button></div>
-              </form>
-            </details>
-            <div class="actions">
-              <button id="sync-push" class="secondary" hidden><span data-icon="sync"></span> Publish plan now</button>
-              <button id="sync-pull" class="secondary" hidden><span data-icon="repeat"></span> Import plan now</button>
             </div>
           </section>
 
@@ -375,8 +360,10 @@
 
           <section class="panel" id="pane-about" role="tabpanel" aria-label="About" hidden>
             <h2>About</h2>
-            <p class="muted">Runalytics 0.1.0 — training analytics for runners.</p>
+            <p class="muted" id="about-version">Runalytics — training analytics for runners.</p>
+            <p class="muted" id="update-status" hidden></p>
             <div class="actions">
+              <button id="check-updates" class="secondary" hidden>Check for updates</button>
               <button id="replay-tutorial" class="secondary">Replay tutorial</button>
             </div>
           </section>

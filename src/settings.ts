@@ -13,6 +13,8 @@ import { initPlanSync } from "./lib/plan-sync";
 import { startOnboarding } from "./lib/onboarding";
 import { setBusy, withBusy, confirmSaved } from "./lib/feedback";
 import { animatePaneChange, scrollIntoViewMotion } from "./lib/motion";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import type {
   LlmStatus,
   PaletteId,
@@ -457,8 +459,90 @@ async function renderSetupPane(): Promise<void> {
   renderSetup(state, host, panel, advance);
 }
 
+/// The About pane's updater. `check()` asks the endpoint configured in
+/// tauri.conf.json (the GitHub Releases `latest.json`); an update is only
+/// installed after a second, explicit click, because installing rewrites the
+/// app bundle. iOS is excluded: an IPA is replaced by sideloading, never from
+/// inside the app, so the button would only ever fail there.
+function initUpdater(): void {
+  const button = el<HTMLButtonElement>("check-updates");
+  const status = el("update-status");
+  const isDesktop = inTauri && !/iPhone|iPad|iPod/.test(navigator.userAgent);
+  if (!isDesktop) return;
+  button.hidden = false;
+
+  let pending: Update | null = null;
+  const say = (text: string): void => {
+    status.hidden = false;
+    status.textContent = text;
+  };
+
+  button.addEventListener("click", async () => {
+    if (!pending) {
+      try {
+        // withBusy's restore() replaces the button's children when the action
+        // settles, so the new label is applied only after it resolves.
+        const update = await withBusy(button, "Checking…", () => check());
+        pending = update;
+        if (pending) {
+          button.textContent = `Update to ${pending.version}`;
+          say(`Runalytics ${pending.version} is available. The app restarts once it is installed.`);
+        } else {
+          say(`You're on the latest version (${__APP_VERSION__}).`);
+        }
+      } catch (e) {
+        const reason = typeof e === "string" ? e : String(e);
+        // The plugin reports a plain HTTP failure (a 404 from a release that
+        // was published before updater artifacts existed) with the same
+        // confidence as a dead network. Saying "check you're online" for the
+        // first one sends the runner looking in the wrong place, so the two
+        // are named separately.
+        say(
+          reason.includes("Could not fetch a valid release JSON")
+            ? `Update check failed: no release manifest is published for this app yet. ${reason}`
+            : `Update check failed: ${reason}. Check you're online and try again.`,
+        );
+      }
+      return;
+    }
+
+    const target = pending;
+    pending = null;
+    let downloaded = 0;
+    let total: number | null = null;
+    try {
+      say(`Downloading Runalytics ${target.version}…`);
+      await withBusy(button, `Installing ${target.version}…`, async (report) => {
+        await target.downloadAndInstall((event) => {
+          if (event.event === "Started") {
+            total = event.data.contentLength ?? null;
+          } else if (event.event === "Progress") {
+            downloaded += event.data.chunkLength;
+            const pct = total ? (downloaded / total) * 100 : null;
+            report(`Installing ${target.version}`, pct);
+          } else if (event.event === "Finished") {
+            report("Finishing install");
+          }
+        });
+      });
+      say("Installed — restarting…");
+      await relaunch();
+    } catch (e) {
+      pending = target;
+      button.textContent = `Update to ${target.version}`;
+      say(
+        `Install failed: ${typeof e === "string" ? e : String(e)}. ` +
+          "You can try again.",
+      );
+    }
+  });
+}
+
 async function main(): Promise<void> {
   hydrateIcons();
+  el("about-version").textContent =
+    `Runalytics ${__APP_VERSION__} — training analytics for runners.`;
+  initUpdater();
   initSyncIndicator();
   initSegmented();
   initPanes();

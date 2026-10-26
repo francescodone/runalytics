@@ -46,18 +46,19 @@
         uploadUrl: "",
         subscriptionUrl: "",
         username: "",
-        hasPassword: false,
+        hasPassword: true,
         lastPublished: null,
         lastError: null,
       };
 
-      // In-memory plan-sync channel state for the Plan sync pane. `canPublish`
+      // In-memory plan-sync channel state for the Plan sync section. `canPublish`
       // mirrors what the backend derives from the platform, not from the user.
-      let syncToken = true;
+      // `hasToken` is the shared GitHub credential: the backend reads the same
+      // Keychain entry the calendar gist publisher writes, so it is derived from
+      // `publishing.hasPassword` rather than stored separately.
       const planSync = {
         enabled: false,
         gistId: null,
-        hasToken: true,
         canPublish: true,
         lastPushed: null,
         lastPulled: null,
@@ -65,7 +66,10 @@
         lastError: null,
       };
       const syncStatus = () => ({
-        config: structuredClone(planSync),
+        config: {
+          ...structuredClone(planSync),
+          hasToken: publishing.hasPassword,
+        },
         accountLinked: true,
         code: "3ee75e3a7c0b9d41",
       });
@@ -148,24 +152,26 @@
               return syncStatus();
             case "plan_sync_configure":
               // Like the backend: the client only owns `enabled`; everything
-              // else is derived or recorded server-side.
+              // else is derived or recorded server-side. The token argument is
+              // always null now — the credential lives with calendar publishing.
               planSync.enabled = args.config.enabled;
-              if (args.token !== null) {
-                syncToken = args.token !== "";
-                planSync.hasToken = syncToken;
-                planSync.gistId = null;
-              }
               planSync.lastError = null;
               return syncStatus();
             case "plan_sync_push":
               if (!planSync.enabled) throw new Error("Plan sync is switched off");
-              if (!planSync.hasToken) throw new Error("Add your GitHub token in Settings → Plan sync to publish a plan");
+              if (!syncStatus().config.hasToken)
+                throw new Error(
+                  "Add your GitHub token in Settings → Calendar subscription to publish a plan",
+                );
               planSync.gistId = planSync.gistId || "gist-8f21c0d4";
               planSync.lastPushed = new Date().toISOString();
               planSync.lastError = null;
               return structuredClone(planSync);
             case "plan_sync_pull":
-              if (!planSync.hasToken) throw new Error("Add your GitHub token in Settings → Plan sync to fetch a plan");
+              if (!syncStatus().config.hasToken)
+                throw new Error(
+                  "Add your GitHub token in Settings → Calendar subscription to fetch a plan",
+                );
               return {
                 installed: true,
                 planName: "Half marathon on 06 Dec 2026",

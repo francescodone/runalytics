@@ -2,12 +2,14 @@ import { tauri, el, fail, inTauri } from "./ipc";
 import type { PlanSync, PlanSyncStatus } from "./types";
 import { withBusy } from "./feedback";
 
-/// The Plan sync pane, hosted by Settings.
+/// Plan sync, hosted inside the Calendar subscription pane.
 ///
 /// Two devices never exchange addresses: both derive the same channel code from
-/// the COROS account, so the pane's job is to say which of the two prerequisites
-/// is still missing rather than to collect a URL. initPlanSync() is a no-op on
-/// pages without the pane.
+/// the COROS account, so this block's job is to say which of the two
+/// prerequisites is still missing rather than to collect a URL. It no longer
+/// collects a GitHub token either — publishing the calendar to a gist already
+/// holds one, and both features authenticate with it. initPlanSync() is a no-op
+/// on pages without the block.
 let status: PlanSyncStatus | null = null;
 
 function when(iso: string | null): string {
@@ -21,8 +23,8 @@ function describe(config: PlanSync): string {
     return "Connect COROS first — it is how your two devices recognise each other.";
   if (!config.hasToken)
     return config.canPublish
-      ? "Add a GitHub token below. The plan is uploaded to a private gist only your token can read."
-      : "Add a GitHub token below. It is how this device finds and opens the gist your computer published.";
+      ? "Save a GitHub token with gist scope in the publishing section above — it is what publishes the plan to a private gist."
+      : "Save the same GitHub token in the publishing section above — it is how this device finds the gist your computer published.";
   if (config.canPublish)
     return `Publishing automatically. Last published ${when(config.lastPushed)}.`;
   return `Last imported ${when(config.lastPulled)}.`;
@@ -32,10 +34,6 @@ function show(next: PlanSyncStatus): void {
   status = next;
   const config = next.config;
   el<HTMLInputElement>("sync-enabled").checked = config.enabled;
-  el<HTMLInputElement>("sync-token").placeholder = config.hasToken
-    ? "Saved in Keychain"
-    : "GitHub token with gist scope";
-  el<HTMLInputElement>("sync-clear-token").checked = false;
   el("sync-status").textContent = describe(config);
   el("sync-status").classList.toggle("error", !!config.lastError);
   el("sync-code").textContent = next.code
@@ -81,32 +79,23 @@ async function pull(force: boolean): Promise<string | null> {
 }
 
 export function initPlanSync(): void {
-  if (!document.getElementById("plan-sync-form")) return;
-  if (!inTauri) el<HTMLButtonElement>("sync-save").disabled = true;
+  if (!document.getElementById("sync-enabled")) return;
+  const enabled = el<HTMLInputElement>("sync-enabled");
+  if (!inTauri) enabled.disabled = true;
 
-  el("plan-sync-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const button = el<HTMLButtonElement>("sync-save");
-    if (button.disabled) return;
+  // The only setting left in this block is the switch itself — the credential
+  // it needs is the shared GitHub token saved above, so there is nothing else
+  // to save and no save button to press. Toggling writes immediately, which
+  // also means a runner cannot leave the pane with an unsaved switch.
+  enabled.addEventListener("change", async () => {
+    const wanted = enabled.checked;
     el("sync-status").textContent = "Saving…";
-    const token = el<HTMLInputElement>("sync-token");
-    const clear = el<HTMLInputElement>("sync-clear-token");
     try {
-      await withBusy(button, "Saving…", async () => {
-        // Empty string means "remove it"; null means "leave what is stored".
-        const secret = clear.checked ? "" : token.value.trim() || null;
-        return tauri.planSyncConfigure(
-          { enabled: el<HTMLInputElement>("sync-enabled").checked },
-          secret,
-        );
-      }).then((next) => {
-        // Applied outside withBusy: restoring the button would undo the
-        // disabled state this sets.
-        token.value = "";
-        show(next);
-      });
+      show(await tauri.planSyncConfigure({ enabled: wanted }, null));
     } catch (error) {
+      enabled.checked = !wanted;
       el("sync-status").textContent = String(error);
+      el("sync-status").classList.add("error");
     }
   });
 
@@ -145,8 +134,13 @@ export function initPlanSync(): void {
   });
 
   // A sync can publish or import a plan from anywhere in the app, which makes
-  // the timestamps on this pane stale.
-  for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
+  // the timestamps on this pane stale. `runalytics:credential` is the calendar
+  // form above telling us the shared GitHub token changed.
+  for (const event of [
+    "runalytics:sync-completed",
+    "runalytics:calendar-updated",
+    "runalytics:credential",
+  ]) {
     window.addEventListener(event, () => {
       void tauri.planSyncStatus().then(show).catch(fail);
     });

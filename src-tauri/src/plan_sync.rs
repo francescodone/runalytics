@@ -58,9 +58,6 @@ const PROTOCOL: &[u8] = b"runalytics.plan.sync.v1";
 const BLOB_FILE: &str = "plan.json";
 /// Gist description prefix that marks a gist as ours.
 const MARKER: &str = "runalytics-plan:";
-/// Keychain service for the GitHub token used to read/write the gist.
-const KEYRING_SERVICE: &str = "com.fradone.runalytics.plan";
-const KEYRING_TOKEN_USER: &str = "github_token";
 /// Where the COROS OAuth blob lives — the source of the account id.
 const COROS_SERVICE: &str = "com.fradone.runalytics.coros";
 const COROS_USER: &str = "oauth";
@@ -246,13 +243,38 @@ fn save(directory: &std::path::Path, config: &PlanSync) -> Result<()> {
     Ok(())
 }
 
+/// The shared GitHub credential — the same one calendar gist publishing uses.
 fn token_entry() -> Result<keyring_core::Entry> {
-    crate::secure_store::entry(KEYRING_SERVICE, KEYRING_TOKEN_USER)
-        .map_err(|_| AppError::Other("Plan sync Keychain entry unavailable".into()))
+    crate::secure_store::entry(crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
+        .map_err(|_| AppError::Other("GitHub Keychain entry unavailable".into()))
 }
 
+fn legacy_token_entry() -> Option<keyring_core::Entry> {
+    crate::secure_store::entry(
+        crate::secure_store::LEGACY_PLAN_SERVICE,
+        crate::secure_store::LEGACY_PLAN_TOKEN_USER,
+    )
+    .ok()
+}
+
+/// The token to authenticate with, preferring the shared entry. An install
+/// that only ever saved it for plan sync is moved across on first read, so the
+/// merge costs the runner nothing — and moving rather than copying keeps
+/// clearing unambiguous, otherwise a deleted token would come back.
 fn stored_token() -> Option<String> {
-    token_entry().ok()?.get_password().ok()
+    let shared = token_entry().ok()?.get_password().ok();
+    if shared.is_some() {
+        return shared;
+    }
+    let legacy = legacy_token_entry()?.get_password().ok()?;
+    if legacy.is_empty() {
+        return None;
+    }
+    // If the copy fails the legacy read still works, so nothing is lost.
+    if token_entry().ok()?.set_password(&legacy).is_ok() {
+        let _ = legacy_token_entry()?.delete_credential();
+    }
+    Some(legacy)
 }
 
 // ---- identity --------------------------------------------------------------
@@ -586,7 +608,9 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
         return Ok(config);
     }
     let token = stored_token().ok_or_else(|| {
-        AppError::Other("Add your GitHub token in Settings → Plan sync to publish a plan".into())
+        AppError::Other(
+            "Add your GitHub token in Settings → Calendar subscription to publish a plan".into(),
+        )
     })?;
     let sub = account_id().ok_or_else(|| {
         AppError::Other("Connect COROS on both devices first — it is how they find each other".into())
@@ -646,7 +670,9 @@ pub struct PullOutcome {
 pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcome)> {
     let mut config = load(&state.data_dir)?;
     let token = stored_token().ok_or_else(|| {
-        AppError::Other("Add your GitHub token in Settings → Plan sync to fetch a plan".into())
+        AppError::Other(
+            "Add your GitHub token in Settings → Calendar subscription to fetch a plan".into(),
+        )
     })?;
     let sub = account_id().ok_or_else(|| {
         AppError::Other("Connect COROS on this device first — it is how it finds your plan".into())
@@ -809,6 +835,12 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
     // A token change invalidates a discovered gist: the new account may have a
     // different channel, and re-discovery is cheap.
     let token_changed = token.is_some();
+    if token_changed {
+        // Whatever was stored under the old per-feature service is now stale.
+        if let Some(entry) = legacy_token_entry() {
+            let _ = entry.delete_credential();
+        }
+    }
     if let Some(token) = token {
         let entry = token_entry()?;
         if token.is_empty() {

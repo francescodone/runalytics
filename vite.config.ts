@@ -3,14 +3,25 @@ import { defineConfig } from "vite";
 import process from "node:process";
 // @ts-expect-error type error without @types/node package
 import { fileURLToPath } from "node:url";
+// @ts-expect-error type error without @types/node package
+import { readFileSync } from "node:fs";
 
 const host = process.env.TAURI_DEV_HOST;
+
+// package.json is the version source of truth (scripts/bump_version.sh keeps
+// tauri.conf.json and Cargo in step), so the UI reads its version from here.
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"),
+) as { version: string };
 
 // Multi-page build: dashboard, plan, calendar, achievements and settings are
 // separate pages navigated with plain links inside the single webview window.
 //
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   clearScreen: false,
   server: {
     port: 1499,

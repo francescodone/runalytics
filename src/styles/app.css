@@ -863,8 +863,13 @@ nav {
   color: var(--primary-text);
 }
 
-.nav-link[href="settings.html"] {
-  margin-top: var(--space-5);
+/* The nav footer pins the two persistent actions to the bottom of the
+   rail: the sync chip sits directly above the Settings row. */
+#nav-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: auto;
 }
 
 .nav-spacer {
@@ -879,7 +884,6 @@ nav {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: auto;
   margin-left: 0;
   padding: 0 var(--space-3);
   min-height: var(--control-h);
@@ -1183,6 +1187,13 @@ main {
 
   .nav-link[href="settings.html"] {
     margin-top: 0;
+  }
+
+  /* The toolbar has no bottom: the footer box dissolves so the sync chip
+     becomes a plain toolbar item (Settings itself moved back into the
+     dropdown in navigation.ts). */
+  #nav-footer {
+    display: contents;
   }
 
   #nav .nav-spacer {
@@ -4751,23 +4762,57 @@ fieldset.plan-field legend {
   gap: var(--space-1);
 }
 
+/* The grid is laid out in whole weeks, so the first and last row can hold days
+   from the month either side. They are real days now — sessions and pain show
+   on them — but they are not the month on screen, so they sink: the cell falls
+   back toward the canvas, the rim is dropped, and the day number steps down a
+   step in colour. Both rules sit above :hover/:active so the pointer still
+   answers on a neighbour-month day. */
+.cal-cell.cal-outside {
+  background-color: color-mix(in srgb, var(--bg) 55%, var(--glass-surface-2));
+  border-color: color-mix(in srgb, var(--line) 55%, transparent);
+  box-shadow: none;
+}
+
+/* On paper the cells are a barely-grey sheet sitting in a white panel, so
+   "lighter" means losing the sheet: an outside day takes the panel's own
+   white and, with the border and rim gone below, dissolves into the panel the
+   way an adjacent-month day does in every calendar people already know. */
+:root[data-theme="light"] .cal-cell.cal-outside {
+  background-color: var(--panel);
+}
+
+.cal-cell.cal-outside .cal-day {
+  color: var(--text-faint);
+}
+
+/* The sessions on a neighbour-month day are deliberately NOT dimmed: they are
+   real, tappable sessions, and an opacity wash on the chip takes its label
+   below 4.5:1 in the light scheme, where the chip is pale fill with violet
+   text. The receded ground and the faint day number say "not this month"; the
+   session stays as readable as it is in its own month. */
+
+/* This week, wherever in the month it falls: a light accent wash over the whole
+   row, so "now" reads as a span of seven days and not only as today's disc.
+   The wash is a translucent layer rather than a background colour, so it tints
+   whatever ground the cell already has — including the neighbour days of a week
+   that straddles a month boundary — without a rule of its own for that case,
+   and without stealing the press fill from :active below. */
+.cal-cell.cal-this-week {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--accent) 12%, transparent),
+    color-mix(in srgb, var(--accent) 12%, transparent)
+  );
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
 .cal-cell:hover { border-color: var(--line-strong); }
 
 /* Same reason as the history rows: the cell is a tap target (opens the
    day sheet), and every other tap target in the app answers on press-down.
-   The wash deepens; the grid stays put. */
-.cal-cell:active { background: var(--fill); }
-
-/* Days outside the month are not days at all: no fill, no rule, and no
-   rim — the surface atom's box-shadow would otherwise draw an empty outline
-   and the week's leading row would read as six blank appointments. */
-.cal-cell.empty {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
+   The wash deepens; the grid stays put. Colour rather than the shorthand, so
+   pressing a day in the current week doesn't blank the week's wash mid-press. */
+.cal-cell:active { background-color: var(--fill); }
 
 .cal-day {
   display: flex;
@@ -5020,16 +5065,18 @@ fieldset.plan-field legend {
   .calendar-subscription button.btn-busy { padding-inline: var(--space-2); gap: var(--space-1); white-space: normal; }
 }
 
-/* ---- plan sync pane ----
+/* ---- plan sync (a section of the calendar subscription pane) ----
    Publish and import are mutually exclusive by platform — the machine that
    builds plans writes them, the other reads — so exactly one of the two is
    hidden at runtime. `button` sets display:inline-flex, which outranks the UA
    `[hidden]` rule, so hiding has to be re-asserted or both actions show. */
 #sync-push[hidden],
 #sync-pull[hidden] { display: none; }
-#sync-status { margin: 0; color: var(--text-dim); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.plan-sync-form { display: grid; gap: var(--space-3); max-width: 680px; margin-block: var(--space-3); }
+.plan-sync-form .check-label { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); min-height: var(--control-h); }
+#sync-status { margin: var(--space-2) 0 0; color: var(--text-dim); font-size: var(--text-sm); overflow-wrap: anywhere; }
 #sync-status.error { color: var(--bad); }
-#sync-code { margin: 0; font-size: var(--text-sm); }
+#sync-code { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
 
 /* The agenda is the narrow-window twin of the month grid: the same events,
    grouped into a day-by-day list. Seven columns of session text crowd below
@@ -5081,6 +5128,20 @@ fieldset.plan-field legend {
 
 .agenda-today > .agenda-date {
   color: var(--text);
+}
+
+/* The agenda's twins of the grid's two states. Only the date line dims — the
+   session rows underneath are the same tappable rows as anywhere else, and an
+   opacity wash on the block would take their labels below 4.5:1 in the light
+   scheme. No radius on the week's wash either: consecutive days of one week
+   must read as one band, and rounding each day would notch it at every
+   boundary. The day's own hairline still divides it. */
+.agenda-outside > .agenda-date {
+  color: var(--text-faint);
+}
+
+.agenda-this-week {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .agenda-list {
@@ -6464,20 +6525,37 @@ body::after { display: none; }
   letter-spacing: -0.045em;
 }
 
-#nav .brand::before {
-  content: "R";
+/* The brand mark is the app icon, reproduced at 32px (see
+   scripts/generate_app_icon.py): the brand-gradient squircle, the white
+   tile at 640/1024 of the icon with the icon's 12/32 corner ratio, and the
+   italic weight-800 R whose cap fills 0.444 of the tile — 20px font at
+   Geist's 710/1000 cap-height gives 0.444 x 20px on the 20px tile. */
+.brand-mark {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
   flex: none;
-  border-radius: var(--radius-control);
+  border-radius: 8px;
+  background: linear-gradient(155deg, var(--brand-start), var(--brand-mid) 52%, var(--brand-end));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--brand-end) 32%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--on-brand) 14%, transparent);
+}
+
+.brand-tile {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 7.5px;
   background: var(--on-brand);
   color: var(--brand-ink);
-  font-size: var(--text-2xl);
+  font-size: 20px;
+  line-height: 1;
   font-weight: 800;
   font-style: italic;
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--brand-end) 20%, transparent);
+  /* Cap height, not em box, is what the icon centres on. */
+  transform: translateY(-1px);
 }
 
 .nav-destinations { gap: 7px; }
@@ -6498,7 +6576,6 @@ body::after { display: none; }
   box-shadow: 0 8px 24px -12px color-mix(in srgb, var(--brand-end) 50%, transparent);
 }
 .nav-link.active .nav-icon { color: var(--brand-ink); }
-.nav-link[href="settings.html"] { margin-top: 25px; }
 #nav #sync-chip {
   background: color-mix(in srgb, var(--on-brand) 12%, transparent);
   border-color: color-mix(in srgb, var(--on-brand) 20%, transparent);
@@ -6754,7 +6831,6 @@ main {
   #nav .nav-toggle:hover { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 25%, transparent); }
   #nav[data-open="true"] .nav-destinations { display: grid; }
   #nav .nav-destinations { background: var(--brand-mid); border: 1px solid color-mix(in srgb, var(--on-brand) 18%, transparent); }
-  #nav .nav-link[href="settings.html"] { margin-top: 0; }
   main { padding-top: 32px; padding-bottom: calc(80px + var(--safe-b)); }
   /* Pinned heads belong below the toolbar; `top: 0` slid them underneath it. */
   #dash .group > .group-head { top: var(--toolbar-h); }

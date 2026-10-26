@@ -34,11 +34,17 @@ function mount(): HTMLButtonElement | null {
     chip.setAttribute("aria-live", "polite");
     chip.title = "Sync now";
     chip.hidden = true;
-    // Insert before the spacer (or the range toggle) so it sits at the
-    // right edge of the nav, next to the segmented control.
-    const spacer = nav.querySelector(".nav-spacer");
-    if (spacer) nav.insertBefore(chip, spacer);
-    else nav.appendChild(chip);
+    // On the desktop rail the chip lives in the nav footer, directly above
+    // the pinned Settings row (navigation.ts builds the footer). Elsewhere
+    // it falls back to before the spacer / the end of the nav, which on the
+    // mobile toolbar puts it next to the menu button.
+    const footer = nav.querySelector("#nav-footer");
+    if (footer) footer.insertBefore(chip, footer.firstChild);
+    else {
+      const spacer = nav.querySelector(".nav-spacer");
+      if (spacer) nav.insertBefore(chip, spacer);
+      else nav.appendChild(chip);
+    }
   }
   return chip;
 }

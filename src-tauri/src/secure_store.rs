@@ -9,6 +9,22 @@
 
 use keyring_core::{Entry, Error};
 
+/// Service and account for the one GitHub token the app uses.
+///
+/// Both features that talk to GitHub — publishing the calendar to a gist and
+/// the cross-device plan channel — authenticate as the same person, so they
+/// share one entry rather than asking for the same token twice. Keeping it in
+/// its own service (rather than inside either feature's) also means turning one
+/// feature off does not silently take the other one's credential with it.
+pub const GITHUB_SERVICE: &str = "com.fradone.runalytics.github";
+pub const GITHUB_TOKEN_USER: &str = "token";
+
+/// Service and account the plan sync token used before it moved into the shared
+/// entry. Kept here so both the migration in `plan_sync` and the clearing in
+/// `calendar_publish` agree on where the old copy was.
+pub const LEGACY_PLAN_SERVICE: &str = "com.fradone.runalytics.plan";
+pub const LEGACY_PLAN_TOKEN_USER: &str = "github_token";
+
 /// An entry for `service`/`user` in the platform's secure store.
 pub fn entry(service: &str, user: &str) -> Result<Entry, Error> {
     #[cfg(target_os = "ios")]

@@ -35,7 +35,42 @@ if (nav && main) {
     if (link === activeLink) link.setAttribute("aria-current", "page");
     destinations.append(link);
   }
-  nav.querySelector(".brand")?.after(destinations);
+  // The brand mark mirrors the app icon (scripts/generate_app_icon.py): the
+  // brand gradient squircle carrying a white tile with the italic R. Built
+  // here so the eight HTML pages keep a plain <span class="brand">.
+  const brand = nav.querySelector<HTMLElement>(".brand");
+  if (brand) {
+    const name = brand.textContent?.trim() ?? "Runalytics";
+    brand.textContent = "";
+    const mark = document.createElement("span");
+    mark.className = "brand-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const tile = document.createElement("span");
+    tile.className = "brand-tile";
+    tile.textContent = "R";
+    mark.append(tile);
+    const label = document.createElement("span");
+    label.className = "brand-name";
+    label.textContent = name;
+    brand.append(mark, label);
+  }
+  brand?.after(destinations);
+
+  // The footer pins Settings to the bottom of the rail, with the sync chip
+  // (mounted by sync.ts) directly above it. On the mobile toolbar the footer
+  // dissolves — `display: contents` — and Settings moves back into the
+  // dropdown, which is where a secondary destination belongs.
+  const footer = document.createElement("div");
+  footer.id = "nav-footer";
+  const settingsLink = links.find((link) => link.getAttribute("href") === "settings.html");
+  const compact = window.matchMedia("(max-width: 900px)");
+  const placeSettings = () => {
+    if (!settingsLink) return;
+    if (compact.matches) destinations.append(settingsLink);
+    else footer.append(settingsLink);
+  };
+  placeSettings();
+  nav.append(footer);
 
   const toggle = document.createElement("button");
   toggle.type = "button";
@@ -61,10 +96,10 @@ if (nav && main) {
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && !nav.contains(event.target)) setOpen(false);
   });
-  const compact = window.matchMedia("(max-width: 900px)");
   compact.addEventListener("change", () => {
     if (compact.matches && destinations.contains(document.activeElement)) toggle.focus();
     if (!compact.matches && document.activeElement === toggle) activeLink?.focus();
+    placeSettings();
     setOpen(false);
   });
 

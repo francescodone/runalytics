@@ -22,6 +22,7 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "createUpdaterArtifacts": true,
     "category": "Sports",
     "icon": [
       "icons/32x32.png",
@@ -34,6 +35,14 @@
       "infoPlist": "Info.plist",
       "signingIdentity": "-",
       "hardenedRuntime": false
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI0ODAwQjExQjUyOUVDQzAKUldUQTdDbTFFUXVBSk9QWXA4YUFxZ0FXdzJzWWVhVmlXUGxHZXowaHlEeDlTa2lPR2VGbDRpS2UK",
+      "endpoints": [
+        "https://github.com/francescodone/runalytics/releases/latest/download/latest.json"
+      ]
     }
   }
 }

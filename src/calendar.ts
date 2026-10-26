@@ -39,6 +39,21 @@ function todayKey(): string {
   return ymd(new Date());
 }
 
+/// Monday of the week containing `d`, at local midnight. The grid runs Monday
+/// first, so two days are in the same row exactly when this agrees for both.
+function mondayOf(d: Date): Date {
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  return monday;
+}
+
+/// Every day from `from` to `to`, both ends included, at local midnight.
+function* eachDay(from: Date, to: Date): Generator<Date> {
+  for (let day = new Date(from); day <= to; day.setDate(day.getDate() + 1)) {
+    yield new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  }
+}
+
 /// First and last day (YYYY-MM-DD) a session may be moved to: from today to
 /// race day. The week a session was generated into is a suggestion, and the
 /// reason to drag one at all is that real life pushed it out of its slot — so
@@ -65,9 +80,18 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
 
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
+  // The grid is laid out in whole weeks: the first row starts on the Monday of
+  // the week the 1st falls in, the last row ends on the Sunday of the week the
+  // month ends in. Those neighbour-month days are real days rather than blank
+  // gaps, so their sessions are fetched too — a day you can see must never
+  // look empty when something is scheduled on it.
+  const lead = (first.getDay() + 6) % 7;
+  const trail = (6 - ((last.getDay() + 6) % 7)) % 7;
+  const gridStart = new Date(year, month, 1 - lead);
+  const gridEnd = new Date(year, month, last.getDate() + trail);
   const [workouts, painPairs] = await Promise.all([
-    tauri.calendarEvents(ymd(first), ymd(last)),
-    tauri.painDays(ymd(first), ymd(last)).catch(() => [] as [string, number][]),
+    tauri.calendarEvents(ymd(gridStart), ymd(gridEnd)),
+    tauri.painDays(ymd(gridStart), ymd(gridEnd)).catch(() => [] as [string, number][]),
   ]);
   if (version !== renderVersion) return;
   monthEvents = workouts;
@@ -80,11 +104,23 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   const cells: string[] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(
     (d) => `<div class="cal-dow">${d}</div>`,
   );
-  const lead = (first.getDay() + 6) % 7;
-  for (let i = 0; i < lead; i++) cells.push(`<div class="cal-cell empty"></div>`);
   const today = todayKey();
-  for (let day = 1; day <= last.getDate(); day++) {
-    const key = ymd(new Date(year, month, day));
+  // The week the runner is in right now, matched by its Monday. Computed once
+  // so a month viewed from either side highlights the same row, and the row
+  // still highlights when part of it belongs to the month either side.
+  const thisWeek = ymd(mondayOf(new Date()));
+  for (const day of eachDay(gridStart, gridEnd)) {
+    const key = ymd(day);
+    const outside = day.getMonth() !== month;
+    const classes = [
+      "cal-cell",
+      outside ? "cal-outside" : "",
+      ymd(mondayOf(day)) === thisWeek ? "cal-this-week" : "",
+      isDroppableDate(key) ? "cal-droppable" : "",
+      key === today ? "cal-today" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     const ws = byDay.get(key) ?? [];
     const chips = ws
       .map(
@@ -104,7 +140,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
       ? `<span class="cal-pain ${pain >= 7 ? "sev-high" : pain >= 5 ? "sev-mid" : "sev-low"}" title="Pain logged: ${pain}/10"></span>`
       : "";
     cells.push(
-      `<div class="cal-cell${isDroppableDate(key) ? " cal-droppable" : ""}${key === today ? " cal-today" : ""}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
+      `<div class="${classes}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day.getDate()}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
     );
   }
   el("cal-grid").innerHTML = cells.join("");
@@ -113,7 +149,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   // columns of text crowd at narrow widths, so below the breakpoint CSS hides
   // the grid and shows this instead — both are always in the DOM from one
   // render, so the selected month can never disagree between the two layouts.
-  renderAgenda(year, month, last.getDate(), byDay, painByDay);
+  renderAgenda(month, gridStart, gridEnd, byDay, painByDay);
 
   // A month change slides the surface in from the direction you moved — the
   // grid and agenda travel together as one surface. First paint doesn't slide.
@@ -125,22 +161,34 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
   }
 }
 
-/// A day-by-day list of the month's sessions, for narrow windows. Days with
+/// A day-by-day list of the grid's sessions, for narrow windows. Days with
 /// nothing on them are skipped — an agenda of 31 rows where 5 have a run is
-/// noise; the grid already shows the empty days as empty cells.
+/// noise; the grid already shows the empty days as empty cells. Covers exactly
+/// the grid's weeks, so a session on a neighbour-month day is never visible in
+/// one layout and missing from the other.
 function renderAgenda(
-  year: number,
   month: number,
-  daysInMonth: number,
+  from: Date,
+  to: Date,
   byDay: Map<string, CalendarEvent[]>,
   painByDay: Map<string, number>,
 ): void {
   const rows: string[] = [];
   const todayKey = ymd(new Date());
-  for (let day = 1; day <= daysInMonth; day++) {
-    const key = ymd(new Date(year, month, day));
+  const thisWeek = ymd(mondayOf(new Date()));
+  for (const dayDate of eachDay(from, to)) {
+    const key = ymd(dayDate);
     const ws = byDay.get(key) ?? [];
     if (ws.length === 0) continue;
+    const outside = dayDate.getMonth() !== month;
+    const classes = [
+      "agenda-day",
+      outside ? "agenda-outside" : "",
+      ymd(mondayOf(dayDate)) === thisWeek ? "agenda-this-week" : "",
+      key === todayKey ? "agenda-today" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     const pain = painByDay.get(key);
     const painDot = pain
       ? `<span class="cal-pain ${pain >= 7 ? "sev-high" : pain >= 5 ? "sev-mid" : "sev-low"}" title="Pain logged: ${pain}/10"></span>`
@@ -154,9 +202,12 @@ function renderAgenda(
         </button></li>`,
       )
       .join("");
-    const weekday = new Date(year, month, day).toLocaleDateString(undefined, { weekday: "short" });
+    const weekday = dayDate.toLocaleDateString(undefined, { weekday: "short" });
+    const monthLabel = outside
+      ? ` ${dayDate.toLocaleDateString(undefined, { month: "short" })}`
+      : "";
     rows.push(
-      `<div class="agenda-day${key === todayKey ? " agenda-today" : ""}"><h3 class="agenda-date"><span>${day}</span> ${weekday}${painDot}</h3><ul class="agenda-list">${items}</ul></div>`,
+      `<div class="${classes}"><h3 class="agenda-date"><span>${dayDate.getDate()}</span> ${weekday}${monthLabel}${painDot}</h3><ul class="agenda-list">${items}</ul></div>`,
     );
   }
   el("cal-agenda").innerHTML = rows.length

@@ -7,6 +7,10 @@ import { withBusy } from "./feedback";
 /// feed, it is not part of the month view). initPublishing() is a no-op on
 /// pages without the pane, so the sync-completed listener only lives where
 /// the controls are.
+///
+/// The GitHub token saved here is also what the plan sync section below
+/// authenticates with, so a save that added or removed a credential dispatches
+/// `runalytics:credential` and that section re-reads its own status.
 let publishing: CalendarPublishing | null = null;
 
 function showPublishing(config: CalendarPublishing): void {
@@ -75,9 +79,13 @@ export function initPublishing(): void {
           hasPassword: false, lastPublished: null, lastError: null,
         };
         const secret = clear.checked ? "" : password.value || null;
-        showPublishing(await tauri.saveCalendarPublishing(config, secret));
+        const next = await tauri.saveCalendarPublishing(config, secret);
+        showPublishing(next);
         password.value = "";
         clear.checked = false;
+        // The credential this form holds is the one plan sync authenticates
+        // with, so its status line is stale the moment this save lands.
+        window.dispatchEvent(new CustomEvent("runalytics:credential"));
       });
     } catch (error) { el("publish-status").textContent = String(error); }
   });
