@@ -6,7 +6,11 @@
     <title>Runalytics harness</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
     <script>
-      localStorage.setItem("runalytics.onboarding.v1", "done");
+      // ?tour=1 clears the tutorial flag so the onboarding slides can be
+      // walked through in the harness.
+      if (new URLSearchParams(location.search).has("tour"))
+        localStorage.removeItem("runalytics.onboarding.v2");
+      else localStorage.setItem("runalytics.onboarding.v2", "done");
       const day = (n) => new Date(Date.now() - n * 864e5).toISOString();
       // ?offset=-5 gives the plan an accepted pacing adjustment, to check the
       // week plan shows the shifted tempo range rather than the stored one. The
@@ -253,6 +257,16 @@
           // carries every sport — that is the pair the mileage split is tested on.
           if (cmd === "all_activities") return [...activities, ...cross];
           if (cmd === "pain_entries") return painMode ? [painEntry] : [];
+          // This week is a recovery week: the badge on the "This week" panel
+          // and the dip in the mileage chart are the same fact, so the harness
+          // has to show them together.
+          if (cmd === "down_weeks") {
+            const d = new Date();
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            return [`${d.getFullYear()}-${m}-${dd}`];
+          }
           if (cmd === "workouts_between") {
             // A plausible week: easy Mon, tempo Wed, easy Fri, long Sun —
             // keyed by local YYYY-MM-DD like the backend's plan_workouts.
@@ -265,10 +279,13 @@
               return `${d.getFullYear()}-${m}-${dd}`;
             };
             return [
-              { id: "w1", planId: "p1", date: ymd(0), kind: "easy", title: "Easy 6 km", distanceM: 6000, durationMin: 35, paceLoSKm: 360, paceHiSKm: 400, done: false },
-              { id: "w2", planId: "p1", date: ymd(2), kind: "tempo", title: "Tempo 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 300, paceHiSKm: 330, done: true },
-              { id: "w3", planId: "p1", date: ymd(4), kind: "easy", title: "Easy 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 360, paceHiSKm: 400, done: false },
-              { id: "w4", planId: "p1", date: ymd(6), kind: "longRun", title: "Long 14 km", distanceM: 14000, durationMin: 80, paceLoSKm: 370, paceHiSKm: 420, done: false },
+              { id: "w1", planId: "p1", date: ymd(0), plannedDate: ymd(0), status: "planned", movedAt: null, kind: "easy", title: "Easy 6 km", distanceM: 6000, durationMin: 35, paceLoSKm: 360, paceHiSKm: 400, done: false },
+              { id: "w2", planId: "p1", date: ymd(2), plannedDate: ymd(2), status: "planned", movedAt: null, kind: "tempo", title: "Tempo 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 300, paceHiSKm: 330, done: true },
+              { id: "w3", planId: "p1", date: ymd(4), plannedDate: ymd(2), status: "planned", movedAt: "2026-10-01T09:00:00Z", kind: "easy", title: "Easy 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 360, paceHiSKm: 400, done: false },
+              { id: "w4", planId: "p1", date: ymd(6), plannedDate: ymd(6), status: "planned", movedAt: null, kind: "longRun", title: "Long 14 km", distanceM: 14000, durationMin: 80, paceLoSKm: 370, paceHiSKm: 420, done: false },
+              // A session the runner chose to skip: it must show in the
+              // adherence sentence as a decision, not as a miss.
+              { id: "w5", planId: "p1", date: ymd(1), plannedDate: ymd(1), status: "skipped", movedAt: null, kind: "easy", title: "Easy 5 km", distanceM: 5000, durationMin: 30, paceLoSKm: 360, paceHiSKm: 400, done: false },
             ];
           }
           if (cmd === "heat_points") {
@@ -370,6 +387,7 @@
             <div id="week-strip" class="bar-chart week"></div>
             <p class="muted heatmap-legend" id="week-legend" hidden></p>
             <div id="week-tiles" class="tile-grid"></div>
+            <p class="week-adherence" id="week-adherence" hidden></p>
             <div id="week-plan" class="week-plan"></div>
           </section>
         </div>

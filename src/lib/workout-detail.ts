@@ -1,12 +1,24 @@
-import { tauri, fmtKm, ymdLocal } from "./ipc";
+import { tauri, fmtKm, fmtPaceBand, fmtPaceHeld, ymdLocal } from "./ipc";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
+import { EXECUTION_LABEL } from "./plan-bands";
+import { paceTrack } from "./pace-track";
+import { openMoveSheet, setSkipped } from "./schedule";
 import type { CalendarEvent } from "./types";
 
 export function escapeHtml(value: string): string {
   const node = document.createElement("span");
   node.textContent = value;
   return node.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/// What the app says when the plan softened a session on its own. One function
+/// because the chip tooltip, the agenda row and this sheet must word the same
+/// change identically — three phrasings of one event reads as three bugs.
+/// Positive-framed on purpose: the plan gave up a hard day to protect the rest
+/// of the block, so the sentence says what it bought rather than what it took.
+export function adjustedLabel(reason: string): string {
+  return `Adjusted for you — ${reason}`;
 }
 
 export async function openWorkout(workoutId: string, date: string): Promise<void> {
@@ -29,15 +41,39 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
   card.innerHTML = `<header class="workout-detail-head">
     <div><p class="eyebrow">${event.activityId == null ? "Planned session" : "Completed activity"}</p>
       <h2></h2><p class="muted workout-detail-date"></p></div>
-    <button type="button" class="secondary" data-close autofocus>Close</button>
-    </header><div class="workout-detail-body"><div class="workout-notes"></div>
+    <div class="workout-detail-head-actions">
+      <button type="button" class="secondary" data-copy>Copy</button>
+      <button type="button" class="secondary" data-close autofocus>Close</button>
+    </div>
+    </header><div class="workout-detail-body"><p class="workout-adjusted" hidden></p>
+    <div class="workout-notes"></div>
+    <div class="workout-verdict" hidden></div>
+    <div class="workout-actions" hidden>
+      <button type="button" class="secondary" data-move>Move to&hellip;</button>
+      <button type="button" class="secondary" data-skip>Skip this session</button>
+    </div>
     <form class="workout-match" hidden><label for="workout-match-activity">Completed activity</label>
       <select id="workout-match-activity" required></select>
       <button type="submit">Replace planned session</button></form>
     <p class="workout-detail-status" role="status"></p></div>`;
   card.querySelector("h2")!.textContent = event.title;
   card.querySelector(".workout-detail-date")!.textContent = new Date(`${event.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // Above the prescription, not below it: the title the runner just read is the
+  // softened one, so the reason belongs in the same frame as the value it
+  // explains. A scroll away from it is an explanation that never gets read.
+  const adjusted = card.querySelector<HTMLElement>(".workout-adjusted")!;
+  if (event.adjusted) {
+    adjusted.textContent = `${adjustedLabel(event.adjusted)}. An easier day today keeps the rest of the block on schedule.`;
+    adjusted.hidden = false;
+  }
   card.querySelector(".workout-notes")!.textContent = event.notes;
+  // A session the runner moved says so here as well as on the calendar: the
+  // marker in the grid is a fact about the day, and this is the surface where
+  // the question "where was it before?" actually gets asked.
+  if (event.moved && event.activityId == null && event.plannedDate) {
+    card.querySelector(".workout-detail-date")!.textContent +=
+      ` · moved from ${new Date(`${event.plannedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}`;
+  }
 
   // Native <dialog> via the shared modal controller: focus trap, Escape,
   // backdrop click, focus restore and the present/dismiss animation all come
@@ -54,8 +90,92 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
   card.querySelector("[data-close]")!.addEventListener("click", () => modal.close());
   modal.open();
 
-  if (event.activityId != null || !event.workoutId) return;
+  // Declared before anything writes to it: the completed-activity path below
+  // returns early, and the copy button still has to answer.
   const status = card.querySelector<HTMLElement>(".workout-detail-status")!;
+
+  // The prescription is the runner's property, not ours to keep. One button
+  // makes it portable — into a notes app, a group chat, a coach's inbox —
+  // which is the difference between owning a plan and renting one.
+  const copyButton = card.querySelector<HTMLButtonElement>("[data-copy]")!;
+  copyButton.addEventListener("click", async () => {
+    if (copyButton.disabled) return;
+    try {
+      await withBusy(copyButton, "Copying…", () => navigator.clipboard.writeText(event.notes));
+      status.textContent = "Session copied.";
+    } catch {
+      status.textContent = "Clipboard unavailable. Select the text above to copy it.";
+    }
+  });
+
+  // A completed tempo or interval run gets the same verdict the Plan page
+  // shows, but here — on the activity the runner just opened, which is where
+  // the question "did that go well?" is actually being asked.
+  if (event.workoutId && event.activityId != null) {
+    const verdict = card.querySelector<HTMLElement>(".workout-verdict")!;
+    tauri
+      .sessionReview(event.workoutId)
+      .then((review) => {
+        // The sheet is a single reusable surface: opening another session
+        // replaces this card, so a late response must not paint a dead one.
+        if (!review || !card.isConnected) return;
+        // The tone class goes on the container, not the bar: the verdict
+        // sentence and the bar are one read-out, and the colour belongs to both.
+        verdict.className = `workout-verdict exec-${review.execution}`;
+        verdict.hidden = false;
+        verdict.innerHTML = `<p class="workout-verdict-line">Reps ${EXECUTION_LABEL[review.execution]} —
+          <span class="workout-verdict-paces">${fmtPaceBand(review.bandLoSKm, review.bandHiSKm)}${review.actualSKm != null ? `, held ${fmtPaceHeld(review.actualSKm)}` : ", no track synced"}</span></p>
+          ${paceTrack([review.bandLoSKm, review.bandHiSKm], review.actualSKm, review.execution)}`;
+      })
+      .catch(() => {
+        /* No verdict is the normal case — an easy day, or a track that has not
+           synced. Silence is the honest rendering; the match form below is the
+           part of this sheet that can actually fail. */
+      });
+  }
+
+  if (event.activityId != null || !event.workoutId) return;
+
+  // The two things a runner can still decide about a session that has not
+  // happened: when it happens, and whether it happens at all. Race day is the
+  // exception the backend refuses both for, so the controls are not offered.
+  const actions = card.querySelector<HTMLElement>(".workout-actions")!;
+  const moveButton = card.querySelector<HTMLButtonElement>("[data-move]")!;
+  const skipButton = card.querySelector<HTMLButtonElement>("[data-skip]")!;
+  if (event.kind !== "race") {
+    actions.hidden = false;
+    let skipped = event.status === "skipped";
+    const renderSkip = (): void => {
+      skipButton.textContent = skipped ? "Put it back on the plan" : "Skip this session";
+      skipButton.classList.toggle("is-active", skipped);
+    };
+    renderSkip();
+    moveButton.addEventListener("click", () => {
+      // The move sheet replaces this one rather than stacking on it: two
+      // dialogs over the same session is two ways to act on a stale view of it.
+      modal.close();
+      openMoveSheet(event);
+    });
+    skipButton.addEventListener("click", async () => {
+      if (skipButton.disabled) return;
+      const next = !skipped;
+      try {
+        await withBusy(skipButton, next ? "Skipping…" : "Restoring…", () =>
+          setSkipped(event, next),
+        );
+        // Applied after withBusy resolves: its restore() replaces the button's
+        // children, so a label set inside the action would be undone.
+        skipped = next;
+        renderSkip();
+        status.textContent = next
+          ? "Skipped — it won't count as a missed session."
+          : "Back on the schedule.";
+      } catch (error) {
+        status.textContent = String(error);
+      }
+    });
+  }
+
   try {
     const from = new Date(`${event.date}T12:00:00`);
     const to = new Date(from);

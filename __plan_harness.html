@@ -6,9 +6,12 @@
     <title>Runalytics plan harness</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
     <script>
-      localStorage.setItem("runalytics.onboarding.v1", "done");
+      localStorage.setItem("runalytics.onboarding.v2", "done");
       const iso = (n) => new Date(Date.now() - n * 864e5).toISOString();
       const ymd = (n) => iso(n).slice(0, 10);
+      // Matches the backend's receipt date format: "5 Jan", not "2026-12-15".
+      const shortDate = (s) =>
+        new Date(s + "T12:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
       // A plan whose quality sessions were run in the past, so the pacing panel
       // has something to grade. The offset fields are the ones the range bars
@@ -115,6 +118,58 @@
           triggered: streak >= 3,
         };
       };
+      // The receipt, in the order the backend orders it (most influential
+      // first). Mirrors what `plan::receipt` emits for this plan: a 10K race
+      // block, 40 km baseline, 4:45 threshold, 4 days a week, long run on
+      // Sunday. ?offset=-5 adds the eighth line, the accepted adjustment.
+      const receiptLines = () => {
+        const lines = [
+          {
+            input: "10K on " + shortDate(ymd(-49)),
+            sentence:
+              "We have 7 weeks to your 10K, starting the week of 26 Aug, so the long run and the two quality days fit inside every week of the block.",
+          },
+          {
+            input: "40 km a week",
+            sentence:
+              "We start at 40 km a week and build to 44 km, so the first week is the easiest week of the plan.",
+          },
+          {
+            input: "4:45 per km",
+            sentence:
+              "Every pace in the plan is cut from this one number: 4:45 is your threshold, so tempo sits around it and easy days sit well back from it.",
+          },
+          {
+            input: "4 runs a week",
+            sentence:
+              "That is 28 sessions across the block, with the easy days spread so no two hard days sit back to back.",
+          },
+          {
+            input: "Moderate",
+            sentence:
+              "Volume grows by at most 8% a week — the rest of the build comes from the sessions getting harder, not the weeks getting much longer.",
+          },
+          {
+            input: "Sunday",
+            sentence:
+              "The long run is a Sunday — 14 km at its furthest, and it stays on that day all the way through.",
+          },
+          {
+            input: "The shape of the block",
+            sentence:
+              "2 recovery weeks cut the volume back every fourth week, the last week before the race tapers down and race day itself is a shakeout, not a session.",
+          },
+        ];
+        if (plan.qualityOffsetSecKm !== 0) {
+          lines.push({
+            input: "Pacing adjustment",
+            sentence:
+              "Quality paces run sharper by 5 s/km from today — you accepted that after your recent tempo and interval reps.",
+          });
+        }
+        return lines;
+      };
+
       const offer = {
         id: "offer-1",
         bodyPart: "",
@@ -137,6 +192,8 @@
           switch (cmd) {
             case "current_plan":
               return [plan, workouts];
+            case "plan_receipt":
+              return receiptLines();
             case "run_scores":
               // A few done sessions carry a risk delta; the rest (and every
               // future week) render without a badge, which is the real
@@ -219,6 +276,64 @@
               return { connected: true, lastSync: iso(1), plan: "p1", pushed: false };
             case "sync_status":
               return false;
+            // ---- plan sync pill (F-24) ----
+            // `?writer=1` makes this device the publisher, `?pill=` picks the
+            // verdict, so every reading can be checked on either surface.
+            case "plan_sync_status":
+              return {
+                config: {
+                  enabled: true,
+                  gistId: "gist-1",
+                  hasToken: true,
+                  canPublish: params.get("writer") === "1",
+                  lastPushed: iso(1),
+                  lastPulled: iso(2),
+                  installedRev: 1_700_000_000,
+                  lastError: null,
+                },
+                accountLinked: true,
+                code: "abcdef1234567890",
+              };
+            case "plan_sync_check": {
+              const kind = params.get("pill") ?? "update";
+              if (kind === "off") return null;
+              const statuses = {
+                current: "upToDate",
+                update: "updateAvailable",
+                waiting: "importAvailable",
+                other: "otherPlan",
+                unpublished: "unpublished",
+              };
+              return {
+                status: statuses[kind] ?? "upToDate",
+                planName: "Half marathon on 06 Dec 2026",
+                workouts: 36,
+                // Two hours ago: recent enough to read as "min/hours ago".
+                syncedAt: Math.floor(Date.now() / 1000) - 2 * 3600,
+              };
+            }
+            case "plan_sync_push":
+              window.__pushed = (window.__pushed ?? 0) + 1;
+              return {
+                enabled: true,
+                gistId: "gist-1",
+                hasToken: true,
+                canPublish: true,
+                lastPushed: new Date().toISOString(),
+                lastPulled: null,
+                installedRev: 1_700_000_000,
+                lastError: null,
+              };
+            case "plan_sync_pull":
+              window.__pulled = (window.__pulled ?? 0) + 1;
+              return params.get("pill") === "other" && !args?.force
+                ? { installed: false, planName: "", workouts: 0, conflict: "other-plan" }
+                : {
+                    installed: true,
+                    planName: "Half marathon on 06 Dec 2026",
+                    workouts: 36,
+                    conflict: null,
+                  };
             default:
               throw new Error("unstubbed " + cmd + " " + JSON.stringify(args));
           }

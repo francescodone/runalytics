@@ -1,4 +1,13 @@
-import type { PlanWorkout, TrainingPlan } from "./types";
+import type { Execution, PlanWorkout, TrainingPlan } from "./types";
+
+/// How a session landed against its range, in the words the app uses
+/// everywhere. Lives next to [`qualityBand`] so the plan page, the activity
+/// sheet and any later surface cannot each invent their own verdict wording.
+export const EXECUTION_LABEL: Record<Execution, string> = {
+  ahead: "too fast",
+  in: "in range",
+  behind: "too slow",
+};
 
 /// The pace band a session actually asked for, offset included — the range the
 /// runner's reps are graded against, and the one every surface should draw.

@@ -8,7 +8,10 @@ import { icons } from "./icons";
 import { createModal } from "./overlay";
 import { animateSlideIn } from "./motion";
 
-const STORAGE_KEY = "runalytics.onboarding.v1";
+// Bumped to v2 with the U-12 content change (chart literacy + permission to
+// deviate): anyone who finished v1 sees the new slides once on the dashboard,
+// and anyone mid-tour keeps going without a stale key.
+const STORAGE_KEY = "runalytics.onboarding.v2";
 
 interface Slide {
   icon: string;
@@ -39,8 +42,13 @@ const SLIDES: Slide[] = [
   },
   {
     icon: icons.chart,
-    title: "Track your progress",
-    body: "The dashboard shows how ready you are today; the calendar shows what to run next. One step at a time.",
+    title: "Read your charts",
+    body: "The plan graph is a shape, not a score: the ramp is volume building week by week, the dips are down weeks your plan puts in on purpose to absorb the work, and the slide at the end is the taper before race day.",
+  },
+  {
+    icon: icons.map,
+    title: "Plans meet real life",
+    body: "Moving a run is not failing the plan — it is the plan working. Rain, work, a bad night's sleep: shift the session to the day you can actually run it, and the plan keeps its shape around your life.",
   },
 ];
 

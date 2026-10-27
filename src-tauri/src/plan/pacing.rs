@@ -472,6 +472,48 @@ fn fmt_pace(seconds: i64) -> String {
     format!("{sign}{}:{:02}", s / 60, s % 60)
 }
 
+/// Grade a single session, for the surface where the runner opens it.
+///
+/// The plan page shows every session at once; the activity sheet shows one,
+/// and the runner reading it wants the verdict on *that* run rather than a
+/// table they have to find their own day in.
+///
+/// Same rule as [`reviews`], and for the same reason: a session run before an
+/// adjustment took effect is not graded. Its band has moved since, so a verdict
+/// now would tell the runner they missed a target that did not exist on the day
+/// they ran it.
+pub fn review_for_workout(
+    store: &Store,
+    plan: &TrainingPlan,
+    workout_id: &str,
+    th: &Thresholds,
+) -> Result<Option<SessionReview>> {
+    let workout = store
+        .plan_workouts(&plan.id)?
+        .into_iter()
+        .find(|w| w.id == workout_id);
+    let Some(workout) = workout.filter(|w| is_quality(w.kind) && w.done) else {
+        return Ok(None);
+    };
+    if plan.quality_offset_from.is_some_and(|from| workout.date < from) {
+        return Ok(None);
+    }
+    let entry = store
+        .calendar_completions()?
+        .into_iter()
+        .find(|c| c.0 == workout.id);
+    let Some(entry) = entry else {
+        return Ok(None);
+    };
+    Ok(review(
+        store,
+        plan,
+        &workout,
+        entry.1,
+        th.pace_tolerance_sec_km,
+    ))
+}
+
 /// Everything the Plan page needs to show where recent sessions landed, whether
 /// or not an offer exists yet.
 pub fn report(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<PacingReport> {
@@ -862,5 +904,51 @@ mod tests {
         assert_eq!(report.direction, Some(Execution::Ahead));
         assert_eq!(report.needed, 3);
         assert!(!report.triggered, "two is not yet three");
+    }
+
+    /// The activity sheet asks about one session, so the single-session lookup
+    /// has to agree with the report — and stay quiet for the sessions the
+    /// report is quiet about, or the sheet would invent a verdict.
+    #[test]
+    fn a_single_session_can_be_graded_on_its_own() {
+        let s = store();
+        let (plan, quality) = plan_with_quality(&s, &[14, 7]);
+        for w in &quality {
+            complete(&s, &plan, w, -15.0);
+        }
+        let th = Thresholds::default();
+        let graded = reviews(&s, &plan, &th).unwrap();
+        for review in &graded {
+            let alone = review_for_workout(&s, &plan, &review.workout_id, &th)
+                .unwrap()
+                .expect("the report graded it, so the sheet can too");
+            assert_eq!((alone.band_lo_s_km, alone.band_hi_s_km), (review.band_lo_s_km, review.band_hi_s_km));
+            assert_eq!(alone.execution, review.execution);
+        }
+        // An easy day has no verdict to show, and an unknown id is not an error.
+        let all = s.plan_workouts(&plan.id).unwrap();
+        let easy = all.into_iter().find(|w| w.kind == WorkoutKind::Easy).unwrap();
+        assert!(review_for_workout(&s, &plan, &easy.id, &th).unwrap().is_none());
+        assert!(review_for_workout(&s, &plan, "no-such-workout", &th).unwrap().is_none());
+    }
+
+    /// After an adjustment is accepted, sessions run under the old ranges stop
+    /// being evidence. The sheet must apply the same cut: telling a runner they
+    /// missed a target that did not exist on the day they ran it is worse than
+    /// saying nothing.
+    #[test]
+    fn a_single_session_before_the_offset_is_not_graded() {
+        let s = store();
+        let (plan, quality) = plan_with_quality(&s, &[14]);
+        let w = &quality[0];
+        complete(&s, &plan, w, -15.0);
+        let th = Thresholds::default();
+        assert!(review_for_workout(&s, &plan, &w.id, &th).unwrap().is_some());
+        let adjusted = TrainingPlan {
+            quality_offset_sec_km: -5.0,
+            quality_offset_from: Some(w.date + chrono::Duration::days(1)),
+            ..plan.clone()
+        };
+        assert!(review_for_workout(&s, &adjusted, &w.id, &th).unwrap().is_none());
     }
 }

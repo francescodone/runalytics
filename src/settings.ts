@@ -15,6 +15,7 @@ import { setBusy, withBusy, confirmSaved } from "./lib/feedback";
 import { animatePaneChange, scrollIntoViewMotion } from "./lib/motion";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   LlmStatus,
   PaletteId,
@@ -464,9 +465,15 @@ async function renderSetupPane(): Promise<void> {
 /// installed after a second, explicit click, because installing rewrites the
 /// app bundle. iOS is excluded: an IPA is replaced by sideloading, never from
 /// inside the app, so the button would only ever fail there.
+///
+/// The check can only ever offer something *newer* than the running version,
+/// so "You're on the latest version" is the honest steady state — but a
+/// manifest error, a failed install, or a runner who simply wants to look is
+/// pointed at the releases page rather than left with a dead end.
 function initUpdater(): void {
   const button = el<HTMLButtonElement>("check-updates");
   const status = el("update-status");
+  const releases = el<HTMLAnchorElement>("releases-link");
   const isDesktop = inTauri && !/iPhone|iPad|iPod/.test(navigator.userAgent);
   if (!isDesktop) return;
   button.hidden = false;
@@ -476,9 +483,14 @@ function initUpdater(): void {
     status.hidden = false;
     status.textContent = text;
   };
+  const offerReleases = (label: string): void => {
+    releases.textContent = label;
+    releases.hidden = false;
+  };
 
   button.addEventListener("click", async () => {
     if (!pending) {
+      releases.hidden = true;
       try {
         // withBusy's restore() replaces the button's children when the action
         // settles, so the new label is applied only after it resolves.
@@ -489,6 +501,7 @@ function initUpdater(): void {
           say(`Runalytics ${pending.version} is available. The app restarts once it is installed.`);
         } else {
           say(`You're on the latest version (${__APP_VERSION__}).`);
+          offerReleases("Browse all releases on GitHub");
         }
       } catch (e) {
         const reason = typeof e === "string" ? e : String(e);
@@ -502,6 +515,7 @@ function initUpdater(): void {
             ? `Update check failed: no release manifest is published for this app yet. ${reason}`
             : `Update check failed: ${reason}. Check you're online and try again.`,
         );
+        offerReleases("Open releases on GitHub instead");
       }
       return;
     }
@@ -534,7 +548,15 @@ function initUpdater(): void {
         `Install failed: ${typeof e === "string" ? e : String(e)}. ` +
           "You can try again.",
       );
+      offerReleases("Or download the update from GitHub");
     }
+  });
+
+  releases.addEventListener("click", (event) => {
+    event.preventDefault();
+    void openUrl("https://github.com/francescodone/runalytics/releases").catch(
+      () => undefined,
+    );
   });
 }
 

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use tauri::{Emitter, State};
 
 use crate::assistant;
@@ -11,7 +11,8 @@ use crate::calendar;
 use crate::calendar_publish::{self, Publishing};
 use crate::error::{AppError, Result};
 use crate::metrics;
-use crate::plan::{adaptive, engine, pacing};
+use crate::plan::{adaptive, engine, pacing, receipt};
+use crate::plan::receipt::ReceiptLine;
 use crate::plan_sync;
 use crate::proposal;
 use crate::providers::Provider;
@@ -176,7 +177,7 @@ async fn run_full_sync_inner(
             for a in &adjustments {
                 if state
                     .store
-                    .soften_workout(&a.workout_id, a.new_kind, &a.new_title)
+                    .soften_workout(&a.workout_id, a.new_kind, &a.new_title, &a.reason)
                     .is_ok()
                 {
                     messages.push(format!("plan adjusted: {}", a.reason));
@@ -488,6 +489,21 @@ pub async fn current_plan(
     state.store.current_plan()
 }
 
+/// The Mondays of the current plan's recovery weeks, as `YYYY-MM-DD`.
+///
+/// A separate read rather than a field on the plan or on each workout: the
+/// cycle is a property of the plan's schedule, and the two surfaces that label
+/// it (the calendar's week header and the dashboard's week card) both want the
+/// same short list of dates to test a week against.
+#[tauri::command]
+pub async fn down_weeks(state: State<'_, AppState>) -> Result<Vec<NaiveDate>> {
+    Ok(state
+        .store
+        .current_plan()?
+        .map(|(plan, _)| engine::down_weeks(&plan))
+        .unwrap_or_default())
+}
+
 #[tauri::command]
 pub async fn push_plan_to_provider(
     app: tauri::AppHandle,
@@ -652,6 +668,15 @@ pub async fn plan_sync_pull(
     Ok(outcome)
 }
 
+/// Read what the sync channel holds without installing it, for the status
+/// pill. `None` means there is nothing to say (sync off, no channel yet).
+#[tauri::command]
+pub async fn plan_sync_check(
+    state: State<'_, AppState>,
+) -> Result<Option<plan_sync::RemotePlan>> {
+    plan_sync::check_remote(&state).await
+}
+
 #[tauri::command]
 pub async fn match_calendar_activity(
     state: State<'_, AppState>,
@@ -686,10 +711,105 @@ pub async fn move_workout(
             chrono::Local::now().date_naive(),
         )?;
     }
-    calendar_publish::refresh(&state).await?;
-    plan_sync::push_if_enabled(&state).await;
+    after_schedule_change(&app, &state).await
+}
+
+/// What a "reset this week" preview shows for one drifted session: where it
+/// sits now and the day the plan generated it for. A reset that silently moved
+/// four runs is the same surprise as a bad drag, so the sheet names them first.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekDeviation {
+    pub workout_id: String,
+    pub title: String,
+    /// Where the session sits now.
+    pub from: String,
+    /// The day the plan generated it for — where a reset would put it.
+    pub to: String,
+    /// A session already run can never be restored, and a reset refuses
+    /// it — the preview says so rather than promising a move it will skip.
+    pub restorable: bool,
+    /// Restoring this one would land it on today, which is the case a runner
+    /// most wants to know before agreeing: it changes what they are doing now.
+    pub is_today: bool,
+}
+
+/// How many sessions a "reset this week" would put back, and from which days.
+#[tauri::command]
+pub async fn week_deviations(
+    state: State<'_, AppState>,
+    week_start: String,
+) -> Result<Vec<WeekDeviation>> {
+    let monday = crate::store::parse_date_pub(&week_start)?;
+    let today = chrono::Local::now().date_naive();
+    Ok(calendar::week_deviations(&state.store, monday, today)?
+        .into_iter()
+        .map(|(workout, planned, restorable)| WeekDeviation {
+            workout_id: workout.id,
+            title: workout.title,
+            from: workout.date.format("%Y-%m-%d").to_string(),
+            to: planned.format("%Y-%m-%d").to_string(),
+            // A session already run, or whose generated day has already passed,
+            // can never be restored — the preview says so rather than promising
+            // a move the reset will skip.
+            restorable,
+            is_today: planned == today,
+        })
+        .collect())
+}
+
+/// Put one ISO week back onto the days the plan generated it for. The runner
+/// changed their mind, the plan's own layout is still the better answer, and
+/// without this the only way back is to regenerate the whole plan — which would
+/// also throw away every other week's edits.
+#[tauri::command]
+pub async fn reset_week(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    week_start: String,
+) -> Result<usize> {
+    let monday = crate::store::parse_date_pub(&week_start)?;
+    let restored = {
+        let _guard = state.calendar_lock.lock().await;
+        calendar::reset_week(&state.store, monday, chrono::Local::now().date_naive())?
+    };
+    after_schedule_change(&app, &state).await?;
+    Ok(restored)
+}
+
+/// Mark a planned session as deliberately skipped, or undo that. The reason it
+/// is a status rather than a deletion: a skipped session must stop counting
+/// against adherence while still showing the runner what they decided.
+#[tauri::command]
+pub async fn set_workout_skipped(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    workout_id: String,
+    skipped: bool,
+) -> Result<()> {
+    {
+        let _guard = state.calendar_lock.lock().await;
+        calendar::set_skipped(&state.store, &workout_id, skipped)?;
+    }
+    after_schedule_change(&app, &state).await
+}
+
+/// Everything that has to happen after the plan's *days* change, in one place:
+/// the calendar file and its feed, a pushed plan re-sent to the phone, and a
+/// plan already on the watch re-pushed off-thread.
+///
+/// The re-push is spawned rather than awaited because a COROS round-trip takes
+/// tens of seconds and the UI has nothing to show while it waits — the calendar
+/// above is already correct, and the watch catches up.
+async fn after_schedule_change(
+    app: &tauri::AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<()> {
+    calendar_publish::refresh(state).await?;
+    plan_sync::push_if_enabled(state).await;
     if let Some((plan, workouts)) = state.store.current_plan()? {
         if plan.status == PlanStatus::Pushed {
+            let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 use tauri::Manager;
                 let state = app.state::<AppState>();
@@ -702,7 +822,7 @@ pub async fn move_workout(
                         let _ = state.store.set_plan_pushed_id(&plan.id, &id);
                     }
                     Ok(None) => {}
-                    Err(e) => eprintln!("[coros] re-push after move failed: {e}"),
+                    Err(e) => eprintln!("[coros] re-push after schedule change failed: {e}"),
                 }
             });
         }
@@ -798,6 +918,7 @@ async fn apply_workout_edits(
             id: w.id.clone(),
             plan_id: w.plan_id.clone(),
             date: w.date,
+            planned_date: w.planned_date,
             kind: e.kind,
             title: e.title.clone(),
             distance_m: e.distance_m,
@@ -805,6 +926,8 @@ async fn apply_workout_edits(
             pace_lo_s_km: e.pace_lo_s_km,
             pace_hi_s_km: e.pace_hi_s_km,
             done: w.done,
+            status: w.status,
+            moved_at: w.moved_at,
         })?;
     }
     let fresh = state.store.plan_workouts(&plan.id)?;
@@ -1020,6 +1143,32 @@ pub async fn pacing_report(state: State<'_, AppState>) -> Result<Option<PacingRe
         &plan,
         &thresholds(&state),
     )?))
+}
+
+/// The verdict on one session, for the sheet that opens it. `None` when there
+/// is nothing honest to say about it — not a quality session, no run attached,
+/// no track yet, or run before the plan's current ranges took effect.
+#[tauri::command]
+pub async fn session_review(
+    state: State<'_, AppState>,
+    workout_id: String,
+) -> Result<Option<SessionReview>> {
+    let Some((plan, _)) = state.store.current_plan()? else {
+        return Ok(None);
+    };
+    pacing::review_for_workout(&state.store, &plan, &workout_id, &thresholds(&state))
+}
+
+/// What the current plan was built from, said back as ordered input/sentence
+/// pairs. `None` when there is no plan. Rendering only — nothing here is
+/// re-derived from the model, so the receipt cannot drift from the plan.
+#[tauri::command]
+pub async fn plan_receipt(state: State<'_, AppState>) -> Result<Option<Vec<ReceiptLine>>> {
+    let Some((plan, _)) = state.store.current_plan()? else {
+        return Ok(None);
+    };
+    let workouts = state.store.plan_workouts(&plan.id)?;
+    Ok(Some(receipt::receipt(&plan, &workouts)))
 }
 
 // ---- injury assistant -----------------------------------------------------------

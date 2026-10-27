@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use serde::Serialize;
 
 use crate::error::{AppError, Result};
@@ -32,6 +32,29 @@ pub struct CalendarEvent {
     /// Planned sessions are all-day until they are matched to a recorded
     /// run, which replaces them with the activity's real time slot.
     pub all_day: bool,
+    /// True when the runner has dragged this session off the day the plan
+    /// generated it for. The grid marks these cells and the agenda marks these
+    /// rows, because "you moved this" is the one fact the date alone cannot
+    /// tell you.
+    pub moved: bool,
+    /// `planned` or `skipped`. A skipped session stays on the calendar with its
+    /// kind — it was a decision, and hiding it would make the week's planned
+    /// mileage disagree with what the runner can see.
+    pub status: String,
+    /// The day the plan generated this session into, for the marker's tooltip
+    /// and the reset preview. `None` on an event with no plan behind it.
+    pub planned_date: Option<NaiveDate>,
+    /// A planned session whose day has passed without being run or skipped.
+    /// Derived here rather than in each client so the calendar, the adherence
+    /// ratio and the plan page all count a lapse the same way.
+    pub missed: bool,
+    /// Why the plan softened this session on its own, when it did. The chip
+    /// tooltip, the agenda row and the session sheet all read this: an
+    /// adjustment nobody explained reads as a bug, so the reason has to appear
+    /// in the same frame as the softened session. `None` for a session the plan
+    /// left alone, and for a banked run — the run happened, so there is nothing
+    /// left to explain away.
+    pub adjusted: Option<String>,
 }
 
 /// Emoji prefix for calendar titles, so the subscribed calendar reads
@@ -67,19 +90,31 @@ pub fn workout_notes(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
 }
 
 /// Open-ended (easy) steps only have a floor; everything slower is fine.
+///
+/// The ceiling is stated as permission, not as an objective: a cap on an easy
+/// day is the one number in a plan an athlete can be tempted to chase, and the
+/// whole point of an easy day is that it feels easy.
 fn no_faster_than(low: i64) -> String {
-    format!("no faster than {}/km, at conversational pace 🗣️", fmt_pace(low))
+    format!(
+        "no faster than {}/km, at conversational pace 🗣️ — a limit, not a target: \
+         slower is fine, and often better",
+        fmt_pace(low)
+    )
 }
 
+/// Prescribed pace reads as `at`, recorded pace reads as `@` (see
+/// [`ran_line`]). Two notations, two meanings: a plan note and a run log sit
+/// side by side in the same exported event, and one glyph for both makes a
+/// completed week unreadable.
 fn lap_pace(step: &session::WorkoutStep) -> String {
     match (step.open_ended, step.pace_lo_s_km, step.pace_hi_s_km) {
         (true, Some(low), _) => format!(", {}", no_faster_than(low)),
-        (false, Some(low), Some(high)) => format!(" @ {}-{}/km", fmt_pace(low), fmt_pace(high)),
+        (false, Some(low), Some(high)) => format!(" at {}-{}/km", fmt_pace(low), fmt_pace(high)),
         _ => String::new(),
     }
 }
 
-/// One lap of the session, e.g. `3 × 1.6 km Tempo @ 4:45-4:55/km + 400 m recovery`.
+/// One lap of the session, e.g. `3 × 1.6 km Tempo at 4:45-4:55/km + 400 m recovery`.
 fn lap_line(step: &session::WorkoutStep) -> String {
     let (head, tail) = step.label.split_once(" - ").unwrap_or((&step.label, ""));
     let name = if head == "Long run" && !tail.is_empty() { tail } else { head };
@@ -391,6 +426,11 @@ fn average_pace_s_km(activity: &Activity) -> Option<f64> {
 /// of the plan. Plans meet real life: a session missed this week usually
 /// belongs next week, not in the bin. Race day is fixed by the event,
 /// completed runs are history, and the plan's own span bounds the move.
+///
+/// The generated day is *not* touched: `planned_date` stays where the plan put
+/// it and `moved_at` records that the runner overrode that. Without the pair
+/// there is nothing to reset back to, no way to mark a touched day, and no way
+/// to tell that a week has drifted at all.
 pub fn move_workout(
     store: &Store,
     workout_id: &str,
@@ -424,14 +464,151 @@ pub fn move_workout(
             "Sessions can't be moved past the end of your plan".into(),
         ));
     }
+    // Two long runs on consecutive days is the one arrangement the generator
+    // would never produce and a drag can: the spacing it applies is a fixed
+    // weekday, so the invariant holds by construction until something moves
+    // (`ins §7.2` asks for the guard *before* anything can move one).
+    if workout.kind == WorkoutKind::LongRun {
+        let touching = workouts.iter().any(|other| {
+            other.id != workout.id
+                && other.kind == WorkoutKind::LongRun
+                && (other.date - to).num_days().abs() == 1
+        });
+        if touching {
+            return Err(AppError::Other(
+                "That would put two long runs back to back — pick another day".into(),
+            ));
+        }
+    }
     let moved = PlanWorkout {
         date: to,
+        // Stamped only on a real move, so a session that never moved keeps a
+        // clean `moved_at: None` rather than a timestamp from a no-op write.
+        moved_at: if to != workout.date {
+            Some(Utc::now())
+        } else {
+            workout.moved_at
+        },
         ..workout.clone()
     };
     if to != workout.date {
         store.update_workout(&moved)?;
     }
     Ok(moved)
+}
+
+/// The sessions in one ISO week that have drifted off their generated days,
+/// each with the day a reset would restore it to and whether it can be. Feeds
+/// the confirm sheet, which must name the days it is about to move before it
+/// moves them — and must not promise a session it is going to refuse.
+pub fn week_deviations(
+    store: &Store,
+    week_start: NaiveDate,
+    today: NaiveDate,
+) -> Result<Vec<(PlanWorkout, NaiveDate, bool)>> {
+    let completions = store.calendar_completions()?;
+    let (_, workouts) = store
+        .current_plan()?
+        .ok_or_else(|| AppError::Other("No active plan".into()))?;
+    let (from, to) = iso_week_bounds(week_start);
+    Ok(workouts
+        .iter()
+        .filter(|w| w.date >= from && w.date <= to && w.is_moved())
+        .map(|w| {
+            let planned = w.planned_date;
+            let restorable = can_restore(w, planned, today, &completions);
+            (w.clone(), planned, restorable)
+        })
+        .collect())
+}
+
+/// Whether a reset may put one session back. Shared with [`week_deviations`] so
+/// the preview can never promise a move the reset will skip.
+///
+/// The past case is the subtle one: restoring a session to the day the plan
+/// generated is only sensible while that day is still ahead of the runner. A
+/// Tuesday session dragged to Saturday has no Tuesday to go back to, and
+/// pretending otherwise would file a pending run under a day that has already
+/// happened — the one thing the move guards exist to prevent.
+fn can_restore(
+    workout: &PlanWorkout,
+    planned: NaiveDate,
+    today: NaiveDate,
+    completions: &[(String, i64, String)],
+) -> bool {
+    workout.kind != WorkoutKind::Race
+        && !workout.done
+        && workout.status == WorkoutStatus::Planned
+        && planned >= today
+        && !completions.iter().any(|entry| entry.0 == workout.id)
+}
+
+/// Put one ISO week back onto the days the plan generated. Only sessions that
+/// were *moved* return: race day is fixed by the event, a completed run is
+/// history, a deliberately skipped session stays skipped on the day it was
+/// skipped, and a session whose generated day has already passed has nowhere to
+/// come back to (see [`can_restore`]).
+///
+/// Returns how many sessions were restored, so the caller can say so out loud
+/// rather than leaving the calendar to shift silently.
+pub fn reset_week(store: &Store, week_start: NaiveDate, today: NaiveDate) -> Result<usize> {
+    let completions = store.calendar_completions()?;
+    let pending: Vec<PlanWorkout> = {
+        let (_, workouts) = store
+            .current_plan()?
+            .ok_or_else(|| AppError::Other("No active plan".into()))?;
+        let (from, to) = iso_week_bounds(week_start);
+        workouts
+            .iter()
+            .filter(|w| {
+                w.date >= from && w.date <= to && w.is_moved() && can_restore(w, w.planned_date, today, &completions)
+            })
+            .cloned()
+            .collect()
+    };
+    let count = pending.len();
+    for workout in pending {
+        store.update_workout(&PlanWorkout {
+            date: workout.planned_date,
+            moved_at: None,
+            ..workout
+        })?;
+    }
+    Ok(count)
+}
+
+/// Mark a planned session as deliberately skipped, or undo that. Skipping is
+/// the only way a session leaves the schedule *without* becoming a lapse, which
+/// is why the adherence ratio and the missed-workout detector both read it.
+pub fn set_skipped(store: &Store, workout_id: &str, skipped: bool) -> Result<PlanWorkout> {
+    let (_, workouts) = store
+        .current_plan()?
+        .ok_or_else(|| AppError::Other("No active plan".into()))?;
+    let workout = workouts
+        .iter()
+        .find(|workout| workout.id == workout_id)
+        .ok_or_else(|| AppError::Other("Planned workout not found".into()))?;
+    if workout.kind == WorkoutKind::Race {
+        return Err(AppError::Other("Race day is fixed by the event".into()));
+    }
+    if workout.done || store.calendar_completions()?.iter().any(|e| e.0 == workout.id) {
+        return Err(AppError::Other("This session is already completed".into()));
+    }
+    let updated = PlanWorkout {
+        status: if skipped { WorkoutStatus::Skipped } else { WorkoutStatus::Planned },
+        ..workout.clone()
+    };
+    store.update_workout(&updated)?;
+    Ok(updated)
+}
+
+/// The Monday and Sunday bounding the ISO week containing `day`, so a week's
+/// worth of sessions can be selected without teaching SQLite ISO-week
+/// bucketing (which does not survive a year boundary — see `WEEK_START_SQL`).
+fn iso_week_bounds(day: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let offset = (day.weekday().num_days_from_monday()) as i64;
+    let monday = day - Duration::days(offset);
+    (monday, monday + Duration::days(6))
 }
 
 /// The `kind` a calendar event carries, spelled the way the frontend's chip
@@ -447,6 +624,7 @@ fn event_kind(kind: WorkoutKind) -> String {
 pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
     let completions = store.calendar_completions()?;
     let current = store.current_plan()?;
+    let adjustments: HashMap<String, String> = store.workout_adjustments()?.into_iter().collect();
     let snapshots = store.activity_scores()?;
     let snapshot_index: HashMap<i64, usize> = snapshots
         .iter()
@@ -505,6 +683,16 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
             .format("%Y%m%dT%H%M%SZ")
             .to_string(),
             all_day: false,
+            // A banked run is not a deviation: it happened, wherever it
+            // happened, so there is nothing to mark or restore.
+            moved: false,
+            status: "planned".into(),
+            planned_date: None,
+            missed: false,
+            // A softened session that was then run keeps its reason: the title
+            // it inherited still says "(was: …)", and a half-said change is
+            // worse than none.
+            adjusted: completion.and_then(|entry| adjustments.get(entry.0.as_str()).cloned()),
         });
     }
     if let Some((plan, workouts)) = current {
@@ -536,6 +724,11 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
                     .format("%Y%m%d")
                     .to_string(),
                 all_day: true,
+                moved: workout.is_moved(),
+                status: workout_status_name(workout.status).to_string(),
+                planned_date: Some(workout.planned_date),
+                missed: workout.is_missed(Utc::now().date_naive()),
+                adjusted: adjustments.get(workout.id.as_str()).cloned(),
             });
         }
     }
@@ -790,6 +983,240 @@ mod tests {
         );
     }
 
+    /// A moved session keeps the day it was generated for, carries a timestamp,
+    /// and is flagged as moved on the calendar — the three things that make a
+    /// reschedule reversible instead of a silent rewrite of the plan.
+    #[test]
+    fn a_move_keeps_the_generated_day_and_marks_the_session_moved() {
+        let (store, plan, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|w| w.kind != WorkoutKind::Race)
+            .unwrap()
+            .clone();
+        let generated = workout.date;
+        let today = workout.date;
+        let to = workout.date + Duration::days(3);
+
+        let moved = move_workout(&store, &workout.id, to, today).unwrap();
+        assert_eq!(moved.date, to);
+        assert_eq!(
+            moved.planned_date, generated,
+            "the generated day must survive a reschedule"
+        );
+        assert!(moved.moved_at.is_some(), "a real move stamps a time");
+
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        let stored = stored.iter().find(|w| w.id == workout.id).unwrap();
+        assert!(stored.is_moved());
+        assert!(!stored.is_missed(today));
+        let event = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.workout_id.as_deref() == Some(workout.id.as_str()))
+            .unwrap();
+        assert!(event.moved);
+        assert_eq!(event.planned_date, Some(generated));
+
+        // Moving a session to the day it is already on is not a move: it must
+        // not manufacture a timestamp, and it must not clear the marker either.
+        let again = move_workout(&store, &workout.id, to, today).unwrap();
+        assert_eq!(again.moved_at, stored.moved_at);
+    }
+
+    /// The back-to-back long-run guard (F-22): the generator keeps one long
+    /// run a week by construction, but F-03 lets a runner drag one anywhere,
+    /// and two long runs on consecutive days is the arrangement no plan
+    /// should hold. Only long runs guard each other — an easy run may move
+    /// next to a long run freely.
+    #[test]
+    fn a_long_run_cannot_be_moved_next_to_another_long_run() {
+        let (store, plan, workouts) = fixture();
+        let longs: Vec<&PlanWorkout> = workouts
+            .iter()
+            .filter(|w| w.kind == WorkoutKind::LongRun)
+            .collect();
+        assert!(longs.len() >= 2, "fixture should span several long runs");
+        let (first, second) = (longs[0], longs[1]);
+        let today = first.date;
+        let taken =
+            |day: NaiveDate, except: &str| workouts.iter().any(|w| w.date == day && w.id != except);
+
+        // The days either side of the *next* long run are the refusal.
+        for offset in [-1, 1] {
+            let adjacent = second.date + Duration::days(offset);
+            let err = move_workout(&store, &first.id, adjacent, today).unwrap_err();
+            assert!(
+                err.to_string().contains("back to back"),
+                "moving to {adjacent} (offset {offset}) should refuse, got: {err}"
+            );
+        }
+
+        // Two days clear of it, on an unoccupied day, is fine.
+        let clear = (-3..=3)
+            .map(|d| second.date + Duration::days(d))
+            .find(|&day| {
+                day >= today
+                    && day <= plan.target_date
+                    && (day - second.date).num_days().abs() >= 2
+                    && !taken(day, &first.id)
+            })
+            .expect("a day clear of the next long run");
+        let moved = move_workout(&store, &first.id, clear, today).unwrap();
+        assert_eq!(moved.date, clear);
+
+        // An easy run may sit beside a long run — the guard stacks long
+        // efforts, it does not quarantine them.
+        let easy = workouts
+            .iter()
+            .find(|w| w.kind == WorkoutKind::Easy)
+            .unwrap();
+        let beside = [-1, 1]
+            .iter()
+            .map(|&d| second.date + Duration::days(d))
+            .find(|&day| day >= today && !taken(day, &easy.id))
+            .expect("a free day beside the next long run");
+        let moved = move_workout(&store, &easy.id, beside, today).unwrap();
+        assert_eq!(moved.date, beside);
+    }
+
+    /// Skipping is how a session leaves the schedule without becoming a lapse,
+    /// so it has to be a status the plan keeps — not a deletion, and not a
+    /// completion.
+    #[test]
+    fn skipping_a_session_is_a_reversible_status_not_a_deletion() {
+        let (store, plan, workouts) = fixture();
+        let workout = workouts
+            .iter()
+            .find(|w| w.kind != WorkoutKind::Race)
+            .unwrap()
+            .clone();
+        let today = workout.date;
+
+        let skipped = set_skipped(&store, &workout.id, true).unwrap();
+        assert_eq!(skipped.status, WorkoutStatus::Skipped);
+        assert!(!skipped.done, "skipping is not running it");
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        assert!(stored.iter().any(|w| w.id == workout.id));
+        let event = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.workout_id.as_deref() == Some(workout.id.as_str()))
+            .unwrap();
+        assert_eq!(event.status, "skipped");
+        // A skipped session is a decision, so it is never a lapse — which is
+        // what stops a deliberate rest from dragging adherence down.
+        assert!(!skipped.is_missed(today + Duration::days(1)));
+
+        set_skipped(&store, &workout.id, false).unwrap();
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        assert_eq!(
+            stored.iter().find(|w| w.id == workout.id).unwrap().status,
+            WorkoutStatus::Planned
+        );
+
+        // Race day belongs to the event, and a finished run is history.
+        let race = workouts.iter().find(|w| w.kind == WorkoutKind::Race).unwrap();
+        assert!(set_skipped(&store, &race.id, true).is_err());
+        let activity = insert_run(&store, &workout, "running", "skipped-run");
+        match_activity(&store, &workout.id, activity).unwrap();
+        assert!(set_skipped(&store, &workout.id, true).is_err());
+    }
+
+    /// A reset returns a drifted week to the plan's own layout — and refuses the
+    /// sessions where "put it back" is not a meaningful instruction.
+    #[test]
+    fn reset_week_restores_drifted_sessions_and_refuses_the_rest() {
+        let (store, plan, workouts) = fixture();
+        // Two sessions sharing one ISO week, both early enough in it that a
+        // day's slip stays inside the same week — otherwise the test would be
+        // asserting about two different weeks. The plan's opening week can be
+        // partial, so the candidates are grouped by week and the first week
+        // with two of them wins.
+        let monday_of = |d: NaiveDate| {
+            d - Duration::days(d.weekday().num_days_from_monday() as i64)
+        };
+        let early = |w: &&PlanWorkout| {
+            w.kind != WorkoutKind::Race && w.date.weekday().num_days_from_monday() <= 3
+        };
+        let monday = workouts
+            .iter()
+            .filter(early)
+            .map(|w| monday_of(w.date))
+            .find(|week| {
+                workouts.iter().filter(early).filter(|w| monday_of(w.date) == *week).count() >= 2
+            })
+            .expect("a generated plan has a full training week");
+        let pair: Vec<PlanWorkout> = workouts
+            .iter()
+            .filter(early)
+            .filter(|w| monday_of(w.date) == monday)
+            .take(2)
+            .cloned()
+            .collect();
+        let (first, second) = (&pair[0], &pair[1]);
+
+        // `today` is the earlier session's day, so both generated days are
+        // still ahead of the runner and restoring is legal.
+        let today = first.date.min(second.date);
+        for workout in [&first, &second] {
+            move_workout(&store, &workout.id, workout.date + Duration::days(1), today).unwrap();
+        }
+        let deviations = week_deviations(&store, monday, today).unwrap();
+        assert_eq!(deviations.len(), 2);
+        assert!(
+            deviations.iter().all(|(_, _, ok)| *ok),
+            "both drifted sessions are unfinished, so both are restorable"
+        );
+
+        // A completed session is history: it is listed, but not offered.
+        let activity = insert_run(&store, &first, "running", "reset-run");
+        match_activity(&store, &first.id, activity).unwrap();
+        let deviations = week_deviations(&store, monday, today).unwrap();
+        let listed = |id: &str| deviations.iter().find(|(w, _, _)| w.id == id);
+        assert!(listed(&first.id).is_some(), "the drift is still visible");
+        assert!(!listed(&first.id).unwrap().2, "but not restorable");
+        assert!(listed(&second.id).unwrap().2);
+
+        let restored = reset_week(&store, monday, today).unwrap();
+        assert_eq!(restored, 1, "only the unfinished session came back");
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        let back = stored.iter().find(|w| w.id == second.id).unwrap();
+        assert!(!back.is_moved(), "a restored session is no longer a deviation");
+        assert!(back.moved_at.is_none(), "the audit trail is cleared too");
+        let ran = stored.iter().find(|w| w.id == first.id).unwrap();
+        assert!(ran.done, "resetting a week must not undo a run");
+        assert!(ran.is_moved(), "and it stays where the runner ran it");
+
+        // Restoring into a day that has already passed is refused: the plan's
+        // Tuesday is gone, so the session stays where the runner put it. The
+        // drift is written straight to the store because the move guard itself
+        // forbids dragging a session into the past — this state can only arise
+        // from time passing while a session sits moved.
+        let later_today = plan.target_date;
+        let drifted = store
+            .plan_workouts(&plan.id)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.id == second.id)
+            .unwrap()
+            .clone();
+        store
+            .update_workout(&PlanWorkout {
+                date: drifted.planned_date + Duration::days(1),
+                moved_at: Some(Utc::now()),
+                ..drifted
+            })
+            .unwrap();
+        assert_eq!(
+            reset_week(&store, monday, later_today).unwrap(),
+            0,
+            "nothing may be restored into the past"
+        );
+        let stored = store.plan_workouts(&plan.id).unwrap();
+        assert!(stored.iter().find(|w| w.id == second.id).unwrap().is_moved());
+    }
+
     #[test]
     fn notes_are_brand_then_title_then_plan_then_why() {
         let (store, plan, workouts) = fixture();
@@ -807,7 +1234,7 @@ mod tests {
         assert!(notes.lines().nth(4) == Some("Plan:"));
         assert!(!notes.contains("——"));
         let brand = notes.find(BRAND).unwrap();
-        let plan_list = notes.find("\n\nPlan:\n  - ").unwrap();
+        let plan_list = notes.find("\n\nPlan:\n  • ").unwrap();
         let why = notes.find("\n\nWhy: ").unwrap();
         assert_eq!(brand, 0);
         assert!(brand < plan_list && plan_list < why);
@@ -820,7 +1247,7 @@ mod tests {
             .unwrap();
         assert_eq!(done.notes.matches(BRAND).count(), 1);
         assert!(done.notes.contains("\n\nWhy: "));
-        assert!(done.notes.contains("\n\nPlan:\n  - "));
+        assert!(done.notes.contains("\n\nPlan:\n  • "));
         assert!(!done.notes.contains("——"));
     }
 
@@ -835,10 +1262,12 @@ mod tests {
         let notes = workout_notes(workout, &plan);
         let warm = notes
             .lines()
-            .find(|line| line.starts_with("  - ") && line.contains("Warm-up"))
+            .find(|line| line.starts_with("  • ") && line.contains("Warm-up"))
             .unwrap();
         assert!(warm.contains(", no faster than "), "{warm}");
-        assert!(warm.ends_with("at conversational pace 🗣️"), "{warm}");
+        assert!(warm.contains("at conversational pace 🗣️"), "{warm}");
+        // The ceiling must read as permission, never as a target to hit.
+        assert!(warm.contains("a limit, not a target"), "{warm}");
 
         // A plan stored with the old plain titles is renamed in place.
         let mut old = workout.clone();

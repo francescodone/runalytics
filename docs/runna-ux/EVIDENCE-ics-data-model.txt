@@ -1,0 +1,447 @@
+=== 1. EVENT POPULATION ===
+total events      192
+plan workouts     17   sources: {"coros":6,"strava":5,"runna-native":6}
+non-plan imports  175  sources: {"strava-15072594767":1,"strava-15124183156":1,"strava-15135840171":1,"strava-15156604695":1,"strava-15223863094":1,"strava-15250008767":1,"strava-15270683159":1,"strava-15306611024":1,"strava-15327306119":1,"strava-15342979148":1,"strava-15355420383":1,"strava-15379929819":1,"strava-15423519817":1,"strava-15441594176":1,"strava-15452678793":1,"strava-15470053254":1,"strava-15487729585":1,"strava-15526900896":1,"strava-15548871273":1,"strava-15566510676":1,"strava-15627967992":1,"strava-15645443828":1,"strava-15662303635":1,"strava-15697302457":1,"strava-15707315429":1,"strava-15725634502":1,"strava-15738559229":1,"strava-15771877080":1,"strava-15778592777":1,"strava-15794877104":1,"strava-15821477001":1,"strava-15832717616":1,"strava-15844232657":1,"strava-15866917087":1,"strava-15885139130":1,"strava-15906068422":1,"strava-15923052519":1,"strava-15968321802":1,"strava-15983108229":1,"strava-16006194768":1,"strava-16037592009":1,"strava-16040543874":1,"strava-16118603189":1,"strava-16360371965":1,"strava-16381078121":1,"strava-16401916209":1,"strava-16426639903":1,"strava-16437618265":1,"strava-16447420528":1,"strava-16463240954":1,"strava-16497212216":1,"strava-16597350718":1,"strava-16885577959":1,"strava-16901179447":1,"strava-16954267693":1,"strava-16966767496":1,"strava-17010321783":1,"strava-17022045557":1,"strava-17045601132":1,"strava-17057719263":1,"strava-17068400811":1,"strava-17089545445":1,"strava-17105333814":1,"strava-17114787387":1,"strava-17141019765":1,"strava-17151853774":1,"strava-17162652673":1,"strava-17184779888":1,"strava-17191605008":1,"strava-17207175720":1,"strava-17216129564":1,"strava-17248420223":1,"strava-17270510118":1,"strava-17286204143":1,"strava-17297123151":1,"strava-17307864959":1,"strava-17328812974":1,"strava-17348941693":1,"strava-17349012848":1,"strava-17365443112":1,"strava-17431062857":1,"strava-17452990900":1,"strava-17452990997":1,"strava-17453061065":1,"strava-17460025067":1,"strava-17481455650":1,"strava-17497337908":1,"strava-17508708336":1,"strava-17522249835":1,"strava-17550057728":1,"strava-17579680991":1,"strava-17586937971":1,"strava-17604813804":1,"strava-17616277841":1,"strava-17634092770":1,"strava-17662289156":1,"strava-17675514001":1,"strava-17687481250":1,"strava-17698949473":1,"strava-17717275050":1,"strava-17756921457":1,"strava-17770127970":1,"strava-17777980087":1,"strava-17813270715":1,"strava-17830730474":1,"strava-17844639481":1,"strava-17855199868":1,"strava-17868140663":1,"strava-17886930865":1,"strava-17914058922":1,"strava-17926436982":1,"strava-17941154001":1,"strava-17946291821":1,"strava-17985602073":1,"strava-18003467325":1,"strava-18018547804":1,"strava-18031209181":1,"strava-18063349431":1,"strava-18063349642":1,"strava-18079406601":1,"strava-18094120663":1,"strava-18108505830":1,"strava-18227690028":1,"strava-18265107150":1,"strava-18644504626":1,"strava-18752149714":1,"strava-18879508953":1,"strava-18913864586":1,"strava-18953517653":1,"strava-19007412580":1,"strava-19052327426":1,"strava-19085555631":1,"strava-19126892318":1,"strava-19141727908":1,"strava-19227394952":1,"strava-19240898487":1,"strava-19279099099":1,"strava-19283986898":1,"strava-19312188334":1,"strava-19339560699":1,"strava-19376255717":1,"strava-19406205872":1,"strava-19435102971":1,"strava-19455850057":1,"strava-19608134383":1,"strava-19629050886":1,"strava-19639732938":1,"strava-19680800427":1,"strava-19838613280":1,"strava-19876616144":1,"strava-19912525814":1,"strava-19937696908":1,"strava-19945985303":1,"strava-19975067628":1,"strava-20007627144":1,"strava-20035550566":1,"strava-20072001241":1,"strava-20090608597":1,"strava-20119191089":1,"strava-20169103259":1,"strava-20198092074":1,"strava-20249837447":1,"strava-20284195844":1,"strava-20300715032":1,"strava-20326190665":1,"strava-20346328381":1,"strava-20391290047":1,"strava-20409231853":1,"strava-20458579540":1,"strava-20493608840":1,"strava-20545552199":1,"strava-20564218165":1,"strava-20585707901":1,"strava-20631329515":1,"strava-20631330607":1}
+emoji typing      {"🏃":186,"🧘":3,"Stretch":3}
+timezone(s)       ["Europe/Berlin","Europe/Lisbon","Europe/Paris","America/Chicago","Europe/Rome"]
+
+=== 2. PLAN WORKOUTS IN DATE ORDER ===
+20250709  STRUCTURED      Rolling 400s
+20250712  STRUCTURED  PB  18km Long Run
+20250713  prose           Mobility Session 1
+20250716  prose           & Stability Session 2
+20250723  STRUCTURED  PB  Progressive Run
+20250725  STRUCTURED  PB  1km Repeats
+20250730  STRUCTURED      Over and Unders 1km
+20250802  prose           Mobility Session 4
+20250806  STRUCTURED      5.5km Easy Run
+20250809  STRUCTURED      25km Long Run
+20250816  prose           Mobility Session 6
+20250903  STRUCTURED      400m Repeats
+20250910  STRUCTURED      400s into 200s
+20250916  prose           & Stability Session 11
+20250926  STRUCTURED      K200s
+20251108  prose           & Stability Session 14
+20260227  prose           29km Long Run
+
+=== 3. SESSION TYPE VOCABULARY (plan workouts only) ===
+distinct names    17
+  1x  Rolling 400s
+  1x  18km Long Run
+  1x  Mobility Session 1
+  1x  & Stability Session 2
+  1x  Progressive Run
+  1x  1km Repeats
+  1x  Over and Unders 1km
+  1x  Mobility Session 4
+  1x  5.5km Easy Run
+  1x  25km Long Run
+  1x  Mobility Session 6
+  1x  400m Repeats
+  1x  400s into 200s
+  1x  & Stability Session 11
+  1x  K200s
+  1x  & Stability Session 14
+  1x  29km Long Run
+
+=== 4. LAP / STRUCTURE GRAMMAR ===
+distinct lap-line shapes: 5
+  179x  # km @ #:# /km
+   10x  :
+    7x  📲
+    3x  🏆
+    1x  # km @ #:#:# /km
+
+=== 5. PACE NOTATION ===
+pace units        {"km":214}
+pace targets      n=214 fastest 2:50/km  slowest 39:29/km  median 4:28/km
+
+=== 6. COACH VOICE / COPY PATTERNS ===
+   11x  "conversational"
+    7x  "no faster than"
+    6x  "or slower"
+    2x  "feel"
+    1x  "smooth"
+    1x  "easy"
+
+=== 7. RPE / EFFORT LANGUAGE ===
+  effort markers: (none found)
+
+=== 8. DESCRIPTION SECTION ORDER (template) ===
+  117x  Summary > Laps > View in the Runna
+   45x  Summary > View in the Runna
+   12x  Summary > Laps > PBs > View in the Runna
+    7x  Summary > Description > Laps > View in the Runna
+    6x  Description > View in the Runna
+    3x  Summary > Description > Laps > PBs > View in the Runna
+    1x  Summary > Description > View in the Runna
+    1x  Summary > PBs > View in the Runna
+
+=== 9. FULL VERBATIM: every STRUCTURED plan workout ===
+
+----- 20250709  Rolling 400s  [coros] -----
+📊 Summary:
+Distance: 9.00 km
+Time: 40:30
+Avg Pace: 4:29 /km
+
+📋 Description:
+2.4km warm up at a conversational pace (no faster than 4:50/km)
+
+Repeat the following 6x:
+----------
+400m at 3:40/km
+400m at 4:30/km
+----------
+
+1.8km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+2.40 km @ 4:59 /km
+0.40 km @ 3:35 /km
+0.40 km @ 4:32 /km
+0.40 km @ 3:42 /km
+0.40 km @ 4:45 /km
+0.40 km @ 3:35 /km
+0.40 km @ 4:23 /km
+0.40 km @ 3:38 /km
+0.40 km @ 4:30 /km
+0.40 km @ 3:37 /km
+0.40 km @ 4:29 /km
+0.40 km @ 3:33 /km
+0.40 km @ 4:35 /km
+1.80 km @ 4:58 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-470319904201933102
+
+----- 20250712  18km Long Run  [strava] -----
+📊 Summary:
+Distance: 18.01 km
+Time: 1:20:51
+Avg Pace: 4:29 /km
+
+📋 Description:
+18km at a conversational pace
+
+♻️ Laps:
+1.00 km @ 4:33 /km
+1.00 km @ 4:21 /km
+1.00 km @ 4:25 /km
+1.00 km @ 4:40 /km
+1.00 km @ 4:37 /km
+1.00 km @ 4:31 /km
+1.00 km @ 4:26 /km
+1.00 km @ 4:28 /km
+1.00 km @ 4:23 /km
+1.00 km @ 4:31 /km
+1.00 km @ 4:31 /km
+1.00 km @ 4:25 /km
+1.00 km @ 4:28 /km
+1.00 km @ 4:33 /km
+1.00 km @ 4:19 /km
+1.00 km @ 4:30 /km
+1.00 km @ 4:30 /km
+1.00 km @ 4:23 /km
+0.01 km @ 4:31 /km
+🏆 PBs:
+5 mi: 36:06
+10 km: 44:53
+10 mi: 1:20:46
+
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=strava-15088040476
+
+----- 20250723  Progressive Run  [coros] -----
+📊 Summary:
+Distance: 11.00km
+Time: 47:34
+Avg Pace: 4:19 /km
+
+📋 Description:
+1.5km warm up at a conversational pace (no faster than 4:50/km)
+
+2km at 4:30/km
+2km at 4:15/km
+2km at 3:55/km
+2km at 3:45/km
+
+1.5km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+1.50 km @ 4:52 /km
+2.00 km @ 4:27 /km
+2.00 km @ 4:11 /km
+2.00 km @ 3:57 /km
+2.00 km @ 3:43 /km
+1.50 km @ 5:04 /km
+🏆 PBs:
+Kilometer: 3:40
+Mile: 5:59
+2mi: 12:18
+5km: 19:30
+5mi: 32:52
+
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-470645071876751659
+
+----- 20250725  1km Repeats  [strava] -----
+📊 Summary:
+Distance: 9.31km
+Time: 38:46
+Avg Pace: 4:10 /km
+
+📋 Description:
+2km warm up at a conversational pace (no faster than 4:50/km), 90s walking rest
+
+5 reps of:
+• 1km at 3:35/km (3:25-3:45/km), 90s walking rest
+
+1km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+2.00 km @ 4:28 /km
+0.30 km @ 4:56 /km
+1.00 km @ 3:13 /km
+0.27 km @ 5:38 /km
+1.00 km @ 3:07 /km
+0.18 km @ 8:25 /km
+1.00 km @ 3:14 /km
+0.14 km @ 10:41 /km
+1.00 km @ 3:13 /km
+0.19 km @ 7:47 /km
+1.00 km @ 3:01 /km
+0.23 km @ 6:38 /km
+1.00 km @ 4:54 /km
+🏆 PBs:
+Kilometer: 3:00
+
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=strava-15234031423
+
+----- 20250730  Over and Unders 1km  [strava] -----
+📊 Summary:
+Distance: 7.01 km
+Time: 28:20
+Avg Pace: 4:02 /km
+
+📋 Description:
+1km warm up at a conversational pace (no faster than 4:45/km)
+
+Repeat the following 3x:
+----------
+1km at 4:05/km
+1km at 3:40/km
+----------
+
+90s walking rest
+
+♻️ Laps:
+1.00 km @ 4:56 /km
+1.00 km @ 4:02 /km
+1.00 km @ 3:45 /km
+1.00 km @ 4:08 /km
+1.00 km @ 3:36 /km
+1.00 km @ 4:05 /km
+1.00 km @ 3:38 /km
+0.02 km @ 3:20 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=strava-15282590135
+
+----- 20250806  5.5km Easy Run  [strava] -----
+📊 Summary:
+Distance: 5.50 km
+Time: 28:11
+Avg Pace: 5:07 /km
+
+📋 Description:
+5.5km easy run at a conversational pace (no faster than 4:45/km). This is a limit, not a target - run at whatever pace feels truly easy!
+
+♻️ Laps:
+1.00 km @ 5:14 /km
+1.00 km @ 5:06 /km
+1.00 km @ 5:10 /km
+1.00 km @ 5:13 /km
+1.00 km @ 4:54 /km
+0.50 km @ 4:53 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=strava-15360974182
+
+----- 20250809  25km Long Run  [coros] -----
+📊 Summary:
+Distance: 25.01 km
+Time: 1:45:58
+Avg Pace: 4:14 /km
+
+📋 Description:
+25km at a conversational pace
+
+♻️ Laps:
+1.00 km @ 4:55 /km
+1.00 km @ 4:28 /km
+1.00 km @ 4:21 /km
+1.00 km @ 4:27 /km
+1.00 km @ 4:11 /km
+1.00 km @ 4:14 /km
+1.00 km @ 4:20 /km
+1.00 km @ 4:19 /km
+1.00 km @ 4:10 /km
+1.00 km @ 4:12 /km
+1.00 km @ 4:12 /km
+1.00 km @ 4:13 /km
+1.00 km @ 4:09 /km
+1.00 km @ 4:06 /km
+1.00 km @ 4:08 /km
+1.00 km @ 4:06 /km
+1.00 km @ 4:07 /km
+1.00 km @ 4:04 /km
+1.00 km @ 4:08 /km
+1.00 km @ 4:08 /km
+1.00 km @ 4:10 /km
+1.00 km @ 4:08 /km
+1.00 km @ 4:17 /km
+1.00 km @ 4:19 /km
+1.00 km @ 3:54 /km
+0.01 km @ 6:01 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-471030492043444323
+
+----- 20250903  400m Repeats  [coros] -----
+📊 Summary:
+Distance: 10.28km
+Time: 51:36
+Avg Pace: 5:01 /km
+
+📋 Description:
+4km warm up at a conversational pace (no faster than 4:40/km), 90s walking rest
+
+Repeat the following 2x:
+----------
+6 reps of:
+• 400m at 3:05/km (2:55-3:15/km), 60s walking rest
+
+90s walking rest
+----------
+
+3km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+4.00 km @ 4:28 /km
+0.09 km @ 16:27 /km
+0.40 km @ 3:02 /km
+0.04 km @ 24:39 /km
+0.40 km @ 2:50 /km
+0.06 km @ 16:15 /km
+0.40 km @ 2:54 /km
+0.04 km @ 22:55 /km
+0.40 km @ 2:58 /km
+0.04 km @ 24:39 /km
+0.40 km @ 3:00 /km
+0.05 km @ 20:00 /km
+0.40 km @ 3:00 /km
+0.10 km @ 9:57 /km
+0.14 km @ 10:45 /km
+0.23 km @ 5:14 /km
+0.13 km @ 5:56 /km
+0.01 km @ 5:34 /km
+0.01 km @ 5:19 /km
+0.01 km @ 5:00 /km
+0.01 km @ 5:28 /km
+0.01 km @ 4:18 /km
+0.01 km @ 5:05 /km
+0.01 km @ 5:53 /km
+0.01 km @ 5:46 /km
+0.01 km @ 5:56 /km
+0.01 km @ 6:44 /km
+0.01 km @ 10:26 /km
+0.01 km @ 10:53 /km
+2.85 km @ 5:15 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-471619774707696118
+
+----- 20250910  400s into 200s  [coros] -----
+📊 Summary:
+Distance: 12.92km
+Time: 1:12:15
+Avg Pace: 5:35 /km
+
+📋 Description:
+3km warm up at a conversational pace (no faster than 4:40/km), 90s walking rest
+
+12 reps of:
+• 400m at 3:10/km, 60s walking rest
+
+10 reps of:
+• 200m at 3:00/km, 90s walking rest
+
+2.4km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+3.00 km @ 4:47 /km
+0.10 km @ 15:04 /km
+0.40 km @ 3:14 /km
+0.08 km @ 11:56 /km
+0.40 km @ 3:12 /km
+0.08 km @ 11:54 /km
+0.40 km @ 3:11 /km
+0.06 km @ 17:41 /km
+0.00 km @ 25:55 /km
+0.04 km @ 22:15 /km
+0.40 km @ 3:11 /km
+0.08 km @ 12:14 /km
+0.40 km @ 3:14 /km
+0.06 km @ 15:39 /km
+0.40 km @ 3:13 /km
+0.07 km @ 15:17 /km
+0.00 km @ 22:36 /km
+0.03 km @ 39:29 /km
+0.40 km @ 3:13 /km
+0.08 km @ 13:08 /km
+0.40 km @ 3:14 /km
+0.07 km @ 13:51 /km
+0.40 km @ 3:15 /km
+0.03 km @ 36:37 /km
+0.02 km @ 1:05:06 /km
+0.20 km @ 3:01 /km
+0.12 km @ 12:23 /km
+0.20 km @ 3:05 /km
+0.11 km @ 13:29 /km
+0.20 km @ 2:56 /km
+0.12 km @ 12:58 /km
+0.20 km @ 2:57 /km
+0.09 km @ 17:08 /km
+0.20 km @ 3:00 /km
+0.10 km @ 15:25 /km
+0.20 km @ 2:59 /km
+0.12 km @ 12:05 /km
+0.20 km @ 2:59 /km
+0.12 km @ 12:19 /km
+0.20 km @ 3:00 /km
+0.12 km @ 12:13 /km
+0.20 km @ 2:57 /km
+0.13 km @ 11:31 /km
+0.20 km @ 3:04 /km
+0.09 km @ 17:30 /km
+2.40 km @ 4:50 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-471771808228474880
+
+----- 20250926  K200s  [coros] -----
+📊 Summary:
+Distance: 8.68km
+Time: 41:30
+Avg Pace: 4:46 /km
+
+📋 Description:
+2.5km warm up at a conversational pace, add 3x 15s fast bursts towards the end of your warm up jog to inject some pace into your legs before the main session!, 90s walking rest
+
+3 reps of:
+• 1km at 3:25/km
+• 200m at 3:00/km, 120s walking rest
+
+1.8km cool down at a conversational pace (or slower!)
+
+♻️ Laps:
+2.50 km @ 4:54 /km
+0.16 km @ 9:30 /km
+1.00 km @ 3:31 /km
+0.20 km @ 3:17 /km
+0.17 km @ 11:53 /km
+1.00 km @ 3:36 /km
+0.20 km @ 3:16 /km
+0.17 km @ 11:29 /km
+1.00 km @ 3:34 /km
+0.20 km @ 3:14 /km
+0.28 km @ 7:08 /km
+1.80 km @ 5:02 /km
+📲 View in the Runna app: https://club.runna.com/n9Tx/activities?activityId=coros-472144119353868489

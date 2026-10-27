@@ -81,6 +81,19 @@ fn peak_weekly_km(d: RaceDistance, increase: IncreaseMethod, frequency: u32) -> 
 /// Shortest run a plan prescribes (km); shorter easy runs fold into the others.
 const MIN_RUN_KM: f64 = 6.0;
 
+/// Most kilometres the ramp may add to a week, whatever the percentage says.
+///
+/// The percentage cap alone lets a high-mileage runner take huge absolute
+/// jumps (+8 % of 100 km is +8 km), and an absolute cap alone would let a low
+/// base jump a huge percentage (+4 km on 10 km is +40 %). Runna publishes both
+/// limits in force at once — "a fixed increase on top of your current best, or
+/// a set multiple of your current best, whichever is smaller" (`ins §7.3`) —
+/// and the ramp here takes the min of the two the same way. 4 km is the
+/// conventional coaching ceiling, and it sits above every step the reference
+/// marathon builds (50→80 km over 10 build weeks) actually needed, so it binds
+/// only where the percentage would otherwise overshoot.
+const MAX_WEEKLY_STEP_KM: f64 = 4.0;
+
 /// Most of a week's running time that may be quality main sets: the ~80/20
 /// intensity distribution well-trained endurance athletes converge on.
 const MAX_HARD_SHARE: f64 = 0.20;
@@ -135,7 +148,7 @@ fn ceil_km(km: f64) -> f64 {
 /// and both other kind end on an ordinary week: holding the sharpness a
 /// maintenance block works for, or the fitness an improvement block built,
 /// is the point of running on past the horizon, not a reason to shed it.
-fn taper_weeks_for(kind: PlanKind, d: RaceDistance) -> i64 {
+pub(crate) fn taper_weeks_for(kind: PlanKind, d: RaceDistance) -> i64 {
     if !kind.has_race() {
         return 0;
     }
@@ -143,6 +156,64 @@ fn taper_weeks_for(kind: PlanKind, d: RaceDistance) -> i64 {
         RaceDistance::K5 | RaceDistance::K10 => 1,
         _ => 2,
     }
+}
+
+/// How many weeks [`generate`] laid out for a plan, recovered from the plan
+/// itself. The generator derives it from the day it ran, which is the day the
+/// plan was created, so a stored plan can be measured again without the
+/// original request.
+pub(crate) fn weeks_of(plan: &TrainingPlan) -> usize {
+    ((plan.target_date - plan.created_at.date_naive()).num_days() as f64 / 7.0).ceil() as usize
+}
+
+/// Monday of week 0 of a plan — the same expression the generator lays its
+/// weeks out from.
+fn first_monday_of(plan: &TrainingPlan) -> NaiveDate {
+    let weeks = weeks_of(plan);
+    week_start(add_days(plan.target_date, -7 * weeks as i64 + 1))
+}
+
+/// Whether the plan generated `day`'s week as a down (recovery) week.
+///
+/// The generator's cycle is deterministic, so the label can be recomputed
+/// rather than stored: a week is down when it is neither the race week nor a
+/// taper week and it closes a four-week block. A runner looking at a dip in
+/// mileage is looking at the plan working, and the badge is what says so —
+/// which is why this reads the *plan's* schedule rather than the dashboard's
+/// chronic-load recommendation, a different measurement that can disagree.
+///
+/// Weeks before the plan or past its end are not down weeks: there is no
+/// schedule there to label.
+pub fn week_is_down(plan: &TrainingPlan, day: NaiveDate) -> bool {
+    let weeks = weeks_of(plan);
+    if weeks == 0 {
+        return false;
+    }
+    let first_monday = first_monday_of(plan);
+    let offset = (week_start(day) - first_monday).num_days();
+    if offset < 0 || offset / 7 >= weeks as i64 {
+        return false;
+    }
+    let w = offset as usize / 7;
+    let is_race_week = plan.kind.has_race() && w == weeks - 1;
+    let weeks_to_race = (weeks - 1 - w) as i64;
+    let tapering = weeks_to_race < taper_weeks_for(plan.kind, plan.distance) && !is_race_week;
+    !is_race_week && !tapering && (w + 1) % 4 == 0
+}
+
+/// The Mondays of every down (recovery) week a plan contains.
+///
+/// The calendar and the dashboard both want to label the same weeks, and a
+/// client that asked week by week would be a round-trip per week; the whole
+/// list is at most four dates, so it is handed over once and consulted from a
+/// set.
+pub fn down_weeks(plan: &TrainingPlan) -> Vec<NaiveDate> {
+    let weeks = weeks_of(plan);
+    let first_monday = first_monday_of(plan);
+    (0..weeks)
+        .map(|w| add_days(first_monday, 7 * w as i64))
+        .filter(|monday| week_is_down(plan, *monday))
+        .collect()
 }
 
 /// Main-set load (threshold-minutes) a quality session carries at `progress`
@@ -428,7 +499,15 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             // The ramp floors at +2 %/wk so a developing runner always builds,
             // but that floor must not push an already-peaked runner past the
             // peak the plan was sized to: clamp so the ceiling holds.
-            week_volume = (week_volume * ratio).min(peak);
+            // The absolute term sits alongside the ratio, not behind it: a
+            // week may grow by the geometric step, or by MAX_WEEKLY_STEP_KM,
+            // whichever is smaller — Runna's double build limit (`ins §7.3`).
+            // When it binds the plan simply arrives at its peak a week or two
+            // later than the geometric schedule; the receipt measures the peak
+            // from the sessions actually written, so it never overpromises.
+            week_volume = (week_volume * ratio)
+                .min(week_volume + MAX_WEEKLY_STEP_KM)
+                .min(peak);
         }
 
         let target_km = ceil_km(target);
@@ -676,10 +755,15 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
                 Some(pattern) => pattern.pace(thr_w),
                 None => easy_pace,
             };
+            let day = add_days(monday, off as i64);
             let mut workout = PlanWorkout {
                 id: Uuid::new_v4().to_string(),
                 plan_id: plan_id.clone(),
-                date: add_days(monday, off as i64),
+                date: day,
+                // A generated session starts on the day the plan put it in, so
+                // its generated date is its date; a later move changes one and
+                // not the other, and that difference is the deviation.
+                planned_date: day,
                 kind,
                 title: String::new(),
                 distance_m: Some(km * 1000.0),
@@ -687,6 +771,8 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
                 pace_lo_s_km: Some(pace.0),
                 pace_hi_s_km: Some(pace.1),
                 done: false,
+                status: WorkoutStatus::default(),
+                moved_at: None,
             };
             workout.title = match (kind, quality) {
                 (WorkoutKind::LongRun, _) => {
@@ -727,6 +813,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
                     id: Uuid::new_v4().to_string(),
                     plan_id: plan_id.clone(),
                     date: shake,
+                    planned_date: shake,
                     kind: WorkoutKind::Easy,
                     title: format!("Shakeout {MIN_RUN_KM:.0} km"),
                     distance_m: Some(MIN_RUN_KM * 1000.0),
@@ -734,6 +821,8 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
                     pace_lo_s_km: Some(pace.0),
                     pace_hi_s_km: Some(pace.1),
                     done: false,
+                    status: WorkoutStatus::default(),
+                    moved_at: None,
                 });
             }
         }
@@ -742,6 +831,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             id: Uuid::new_v4().to_string(),
             plan_id: plan_id.clone(),
             date: req.target_date,
+            planned_date: req.target_date,
             kind: WorkoutKind::Race,
             title: format!("Race day — {}", req.distance.label()),
             distance_m: Some(req.distance.distance_m()),
@@ -749,6 +839,8 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             pace_lo_s_km: Some((race_pace - 6.0).round() as i64),
             pace_hi_s_km: Some((race_pace + 6.0).round() as i64),
             done: false,
+            status: WorkoutStatus::default(),
+            moved_at: None,
         });
     }
     // An improvement block finishes with a time trial over its target distance:
@@ -761,6 +853,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             id: Uuid::new_v4().to_string(),
             plan_id: plan_id.clone(),
             date: req.target_date,
+            planned_date: req.target_date,
             kind: WorkoutKind::Race,
             title: format!("Time trial — {}", req.distance.label()),
             distance_m: Some(req.distance.distance_m()),
@@ -768,6 +861,8 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
             pace_lo_s_km: Some((trial_pace - 6.0).round() as i64),
             pace_hi_s_km: Some((trial_pace + 6.0).round() as i64),
             done: false,
+            status: WorkoutStatus::default(),
+            moved_at: None,
         });
     }
 
@@ -838,6 +933,36 @@ mod tests {
         );
     }
 
+    /// The recovery-week badge reads the plan's own cycle back out of storage,
+    /// so it must name exactly the weeks the generator cut volume on — and stay
+    /// silent outside the plan's span, where there is no schedule to label.
+    #[test]
+    fn week_is_down_names_the_generated_down_weeks() {
+        let r = req_from_now(RaceDistance::K21, 12);
+        let (plan, workouts) = generate(&r, 30.0).unwrap();
+        // An 8-week build before a 2-week taper and the race week: the cycle
+        // closes on weeks 4 and 8 (indices 3 and 7).
+        assert!(week_is_down(&plan, add_days(first_monday_of(&plan), 7 * 3)));
+        assert!(week_is_down(&plan, add_days(first_monday_of(&plan), 7 * 7)));
+        for w in [0usize, 1, 2, 4, 5, 6, 8] {
+            let monday = add_days(first_monday_of(&plan), 7 * w as i64);
+            assert!(!week_is_down(&plan, monday), "week {w} labelled a recovery week");
+        }
+        // Taper and race weeks dip volume too, but they are not recovery.
+        let last_monday = week_start(plan.target_date);
+        assert!(!week_is_down(&plan, last_monday));
+        assert!(!week_is_down(&plan, add_days(last_monday, -7)));
+        // Outside the plan there is nothing to label, in either direction.
+        assert!(!week_is_down(&plan, add_days(first_monday_of(&plan), -7)));
+        assert!(!week_is_down(&plan, add_days(last_monday, 7)));
+        // Any day inside a week reports that week, not just its Monday.
+        let mid = workouts
+            .iter()
+            .find(|w| week_is_down(&plan, w.date))
+            .expect("a down week has sessions in it");
+        assert!(week_is_down(&plan, add_days(mid.date, 1)));
+    }
+
     #[test]
     fn weekly_volume_respects_increase_cap() {
         let r = req_from_now(RaceDistance::K10, 8);
@@ -868,6 +993,95 @@ mod tests {
                 pair[0],
                 pair[1]
             );
+        }
+    }
+
+    /// The ramp's second limit: no build week adds more than
+    /// [`MAX_WEEKLY_STEP_KM`] over the one before, whatever the percentage
+    /// allows. Runna publishes both limits in force at once, "a fixed increase
+    /// on top of your current best, or a set multiple of your current best,
+    /// whichever is smaller" (`ins §7.3`); the ratio cap alone lets a 60 km
+    /// runner take +4.8 km weeks, which no percentage complaint would catch.
+    #[test]
+    fn the_ramp_never_adds_more_than_the_absolute_step() {
+        // 60 -> 80 km wants +10 %/wk, clamped to the +8 % method cap — and
+        // 8 % of 60 km is 4.8 km, above the absolute step. This is the
+        // configuration where the two limits disagree. Only the opening build
+        // weeks are measured: down, taper and race weeks cut volume by design,
+        // and the shakeout lands in whichever calendar bucket it falls in.
+        let r = PlanRequest {
+            current_weekly_km: Some(60.0),
+            ..req_from_now(RaceDistance::K42, 8)
+        };
+        let (_, workouts) = generate(&r, 60.0).unwrap();
+        let weeks = week_volumes(&workouts);
+        // Weeks 0-2 are build weeks (week 3 is the down week), so every growth
+        // step in there is the ramp's doing.
+        for pair in weeks[..3].windows(2) {
+            let (prev, next) = (pair[0].1, pair[1].1);
+            assert!(
+                next <= prev + MAX_WEEKLY_STEP_KM + 1e-6,
+                "build-week jump {:.1} -> {:.1} km exceeds the {} km absolute step",
+                prev,
+                next,
+                MAX_WEEKLY_STEP_KM
+            );
+        }
+        // Pin the magnitude, not just the ratios: week 2 is the baseline plus
+        // exactly one absolute step. Without the cap it would be 65 km
+        // (ceil of 60 x 1.08), and a ratios-only check cannot tell the two.
+        assert!(
+            (weeks[1].1 - (60.0 + MAX_WEEKLY_STEP_KM)).abs() < 0.5,
+            "week 2 should sit at the 64 km capped step, got {:.1} km",
+            weeks[1].1
+        );
+        // The absolute term must not stall a low-base runner either: at 10 km
+        // the percentage cap binds first and the plan still builds.
+        let (_, small) = generate(&req_from_now(RaceDistance::K10, 8), 10.0).unwrap();
+        let small_weeks = week_volumes(&small);
+        let first = small_weeks[0].1;
+        let peak = small_weeks.iter().map(|(_, v)| *v).fold(0.0, f64::max);
+        assert!(
+            peak > first * 1.2,
+            "a 10 km base should still build past +20 %, peaked at {peak:.1} km"
+        );
+    }
+
+    /// A taper must shave volume without producing token runs: every session
+    /// in a taper week — not just the long run, which the generator floors
+    /// explicitly — stays at or above [`MIN_RUN_KM`]. Runna states the rule
+    /// plainly: "A minimum session length is maintained throughout"
+    /// (`ins §7.4`). The easy runs are the risk: they share whatever the long
+    /// run and quality session leave, so a deep taper cut can starve them.
+    #[test]
+    fn taper_weeks_keep_every_session_above_the_floor() {
+        for distance in [RaceDistance::K10, RaceDistance::K21, RaceDistance::K42] {
+            let r = req_from_now(distance, 12);
+            let (plan, workouts) = generate(&r, 20.0).unwrap();
+            let taper = taper_weeks_for(plan.kind, distance) as usize;
+            let weeks = week_volumes(&workouts);
+            // Taper weeks sit between the first week and the race week; the
+            // race week itself holds the shakeout and the race, and is not a
+            // taper week.
+            let last = weeks.len() - 1;
+            for (i, (monday, _)) in weeks.iter().enumerate().take(last) {
+                if last - i > taper {
+                    continue;
+                }
+                let monday_date = NaiveDate::parse_from_str(monday, "%Y-%m-%d").unwrap();
+                for w in workouts.iter().filter(|w| {
+                    w.kind != WorkoutKind::Race
+                        && w.date >= monday_date
+                        && w.date < monday_date + chrono::Duration::days(7)
+                }) {
+                    let km = w.distance_m.unwrap() / 1000.0;
+                    assert!(
+                        km >= MIN_RUN_KM,
+                        "{distance:?} taper week {monday}: {} is {km:.1} km, under the {MIN_RUN_KM:.0} km floor",
+                        w.title
+                    );
+                }
+            }
         }
     }
 

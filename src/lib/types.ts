@@ -227,6 +227,10 @@ export interface PlanWorkout {
   id: string;
   planId: string;
   date: string;
+  /** The day the plan generated this session into. Never edited, so a
+   *  reschedule stays reversible and visible: `date !== plannedDate` is what
+   *  makes a session a deviation. */
+  plannedDate: string;
   kind: WorkoutKind;
   title: string;
   distanceM: number | null;
@@ -234,6 +238,26 @@ export interface PlanWorkout {
   paceLoSKm: number | null;
   paceHiSKm: number | null;
   done: boolean;
+  /** `skipped` means the runner decided not to run it — which is not the same
+   *  as a lapse, and is why adherence can tell the two apart. */
+  status: "planned" | "skipped";
+  /** When the runner moved it; null if it has never moved. */
+  movedAt: string | null;
+}
+
+/// One session a "reset this week" preview is offering to put back.
+export interface WeekDeviation {
+  workoutId: string;
+  title: string;
+  /** Where the session sits now. */
+  from: string;
+  /** The day the plan generated it for. */
+  to: string;
+  /** False when the session is run, raced, skipped, or its generated day has
+   *  already passed — the reset will refuse it, so the sheet says so. */
+  restorable: boolean;
+  /** Restoring it would land it on today. */
+  isToday: boolean;
 }
 
 /// A banked run's frozen score snapshot (see the backend's `run_scores`).
@@ -261,6 +285,18 @@ export interface CalendarEvent {
   end: string;
   /** Planned sessions are all-day until matched to a recorded run. */
   allDay: boolean;
+  /** The runner dragged this session off its generated day. */
+  moved: boolean;
+  status: "planned" | "skipped";
+  /** The day the plan generated it into; null on a run with no plan behind it. */
+  plannedDate: string | null;
+  /** Its day passed without a run or a skip. Derived in the backend so every
+   *  surface counts a lapse identically. */
+  missed: boolean;
+  /** Why the plan softened this session on its own, when it did. The chip
+   *  tooltip, the agenda row and the sheet all read the same string: an
+   *  adjustment nobody explained reads as a bug. */
+  adjusted: string | null;
 }
 
 export interface CalendarPublishing {
@@ -309,6 +345,25 @@ export interface PullOutcome {
   /// Set when a different plan is already on this device and the import was
   /// not forced — the caller asks before overwriting.
   conflict: string | null;
+}
+
+/// How the published plan relates to this device, as reported by a read-only
+/// check. The writer reads `upToDate` as "published" and `unpublished` as
+/// "not yet pushed"; the importer as "up to date" and "import available".
+export type SyncPillStatus =
+  | "upToDate"
+  | "unpublished"
+  | "updateAvailable"
+  | "otherPlan"
+  | "importAvailable";
+
+export interface RemotePlan {
+  status: SyncPillStatus;
+  /// The published plan described the way an import confirmation names it.
+  planName: string;
+  workouts: number;
+  /// Seconds since epoch when it was published.
+  syncedAt: number;
 }
 
 export interface DashboardScores {
@@ -486,6 +541,14 @@ export interface SessionReview {
   actualSKm: number | null;
   measuredM: number;
   execution: Execution;
+}
+
+/// One line of the plan receipt: the decision the runner made, and what it
+/// did to the plan. Ordered by influence, so the list reads as the plan's
+/// basis rather than a summary of its contents.
+export interface ReceiptLine {
+  input: string;
+  sentence: string;
 }
 
 /// Where recent quality sessions landed, and how many in a row a plan

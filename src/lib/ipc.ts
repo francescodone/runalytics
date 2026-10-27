@@ -20,11 +20,15 @@ import type {
   ProviderKind,
   ProviderStatus,
   PullOutcome,
+  ReceiptLine,
+  RemotePlan,
   RunScore,
+  SessionReview,
   Settings,
   SyncReport,
   TimeRange,
   TrainingPlan,
+  WeekDeviation,
 } from "./types";
 
 /** True when running inside a Tauri webview. */
@@ -108,8 +112,21 @@ export const tauri = {
     call<PlanSyncStatus>("plan_sync_configure", { config, token }),
   planSyncPush: () => call<PlanSync>("plan_sync_push"),
   planSyncPull: (force: boolean) => call<PullOutcome>("plan_sync_pull", { force }),
+  planSyncCheck: () => call<RemotePlan | null>("plan_sync_check"),
   moveWorkout: (workoutId: string, date: string) =>
     call<void>("move_workout", { workoutId, date }),
+  // What a "reset this week" would put back, so the confirm sheet can name the
+  // sessions before any of them moves.
+  weekDeviations: (weekStart: string) =>
+    call<WeekDeviation[]>("week_deviations", { weekStart }),
+  resetWeek: (weekStart: string) => call<number>("reset_week", { weekStart }),
+  setWorkoutSkipped: (workoutId: string, skipped: boolean) =>
+    call<void>("set_workout_skipped", { workoutId, skipped }),
+  /// Mondays of the current plan's recovery weeks. The plan's cycle is
+  /// deterministic, so the label is read back from the schedule rather than
+  /// stored — and it is not the dashboard's chronic-load `downWeek`, which
+  /// measures something else and can disagree with the plan.
+  downWeeks: () => call<string[]>("down_weeks"),
   getSettings: () => call<Settings>("get_settings"),
   saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
   // ---- injury journal ----
@@ -134,6 +151,9 @@ export const tauri = {
   pendingPacingProposal: () =>
     call<PlanProposal | null>("pending_pacing_proposal"),
   pacingReport: () => call<PacingReport | null>("pacing_report"),
+  sessionReview: (workoutId: string) =>
+    call<SessionReview | null>("session_review", { workoutId }),
+  planReceipt: () => call<ReceiptLine[] | null>("plan_receipt"),
   proposals: (limit: number) => call<PlanProposal[]>("proposals", { limit }),
   applyProposal: (provider: ProviderKind, proposalId: string) =>
     call<PlanWorkout[]>("apply_proposal", { provider, proposalId }),
@@ -156,6 +176,20 @@ export function fmtPace(sKm: number | null | undefined): string {
   const m = Math.floor(sKm / 60);
   const s = Math.round(sKm % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/// Two notations, one meaning each: `at` is what the plan asked for, `@` is
+/// what the runner actually held. The calendar export carries both on the same
+/// note, so the glyph is the only thing telling a prescription apart from a
+/// log line — the backend (`calendar.rs`) uses the same split, and every
+/// renderer that prints a pace has to agree with it or plan and log diverge in
+/// the UI as well as the file.
+export function fmtPaceBand(lo: number, hi: number): string {
+  return `at ${fmtPace(lo)}\u2013${fmtPace(hi)}/km`;
+}
+
+export function fmtPaceHeld(sKm: number | null | undefined): string {
+  return `@ ${fmtPace(sKm)}/km`;
 }
 
 export function fmtDuration(s: number): string {

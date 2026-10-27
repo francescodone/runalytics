@@ -6,7 +6,7 @@
     <title>Runalytics calendar harness</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
     <script>
-      localStorage.setItem("runalytics.onboarding.v1", "done");
+      localStorage.setItem("runalytics.onboarding.v2", "done");
       // The page asks "what day is it?" in three places (the drop window, the
       // today ring, the agenda). Pinned to a Monday at the start of a month so
       // this week AND next week both land in the month on screen.
@@ -41,10 +41,67 @@
         { id: "w-easy", day: day(4), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
         { id: "w-long", day: day(6), kind: "longRun", title: "Long run 16 km", distanceM: 16000, done: true },
         { id: "w-next-tempo", day: day(9), kind: "tempo", title: "5 x 1 km tempo", distanceM: 9000, done: false },
-        { id: "w-next-easy", day: day(11), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
+        // Moved by hand: planned Wednesday, dragged to Friday. The marker and
+        // the Reset-week sheet both key off planned_date != day.
+        { id: "w-next-easy", day: day(11), planned: day(9), kind: "easy", title: "Easy run 8 km", distanceM: 8000, done: false },
         { id: "w-next-long", day: day(13), kind: "longRun", title: "Long run 18 km", distanceM: 18000, done: false },
+        // Softened by the adaptive plan: a tempo that became an easy run
+        // because recovery was low. The kind and title are what the backend
+        // actually stores, so the chip reads "Easy" while the reason has to
+        // come from adjusted_reason.
+        {
+          id: "w-softened",
+          day: day(10),
+          kind: "easy",
+          title: "Easy run (was: 6 x 1 km tempo)",
+          distanceM: 8000,
+          done: false,
+          adjusted: "recovery score 38/100",
+        },
+        // A softened session that was then run. The reason travels with it,
+        // but the month banner must not re-announce a change under a
+        // completed run.
+        {
+          id: "w-softened-ran",
+          day: day(1),
+          kind: "easy",
+          title: "Easy run (was: 5 x 1 km tempo)",
+          distanceM: 7000,
+          done: true,
+          adjusted: "training load ratio above 1.50",
+        },
       ];
+      // The backend matches deviations by the week the session currently sits
+      // in, not the week it was planned for — same rule here.
+      const mondayOf = (v) => {
+        const d = new Date(`${v}T12:00:00`);
+        d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        return ymdOf(d);
+      };
+      const inWeek = (v, weekStart) => mondayOf(v) === mondayOf(weekStart);
+      // What the real export writes: brand line, the session, its laps, and
+      // why. The Copy button on the sheet hands this text to the clipboard, so
+      // the harness has to carry a realistic one.
+      const prescription = (w) =>
+        [
+          "Made with Runalytics - a virtual personal vibecoded coach 🏃",
+          "",
+          `🏃 ${w.title} (total ${(w.distanceM / 1000).toFixed(1)} km)`,
+          "",
+          "Plan:",
+          "  • Warm-up 2 km easy",
+          `  • ${w.title} at 4:35–4:45/km`,
+          "  • Cool-down 1.5 km easy",
+          "",
+          "Why: hold a comfortably hard effort and let the pace settle.",
+        ].join("\n");
+      // The backend's is_moved(): a session has drifted only while its day
+      // differs from the day the plan generated. Reset clears that, so the
+      // reset button must disappear afterwards — a stub that kept reporting
+      // the deviation would hide a real gate failure.
+      const isMoved = (w) => w.planned != null && w.planned !== w.day;
       window.__moves = [];
+      window.__skips = new Set();
 
       window.__TAURI_INTERNALS__ = {
         invoke: async (cmd, args) => {
@@ -82,10 +139,15 @@
                   title: w.title,
                   distanceM: w.distanceM,
                   durationMin: Math.round(w.distanceM / 200),
-                  notes: "Harness notes.",
+                  notes: prescription(w),
                   start: w.day,
                   end: w.day,
                   allDay: true,
+                  moved: isMoved(w),
+                  plannedDate: w.planned ?? w.day,
+                  status: window.__skips.has(w.id) ? "skipped" : "planned",
+                  missed: false,
+                  adjusted: w.adjusted ?? null,
                 }));
             }
             case "pain_days":
@@ -100,9 +162,72 @@
                 lastPublished: new Date(Date.now() - 3_600_000).toISOString(),
                 lastError: null,
               };
-            case "move_workout":
+            case "move_workout": {
+              const moved = workouts.find((w) => w.id === args.workoutId);
+              if (moved) {
+                // Mirrors the backend's back-to-back long-run guard so the
+                // refusal path (toast on desktop, status line in the mobile
+                // sheet) can be exercised without a real store.
+                if (moved.kind === "longRun") {
+                  const touches = workouts.some(
+                    (w) =>
+                      w.id !== moved.id &&
+                      w.kind === "longRun" &&
+                      Math.abs(new Date(w.day) - new Date(args.date)) === 86_400_000,
+                  );
+                  if (touches) {
+                    throw new Error(
+                      "That would put two long runs back to back — pick another day",
+                    );
+                  }
+                }
+                if (moved.planned == null) moved.planned = moved.day;
+                moved.day = args.date;
+              }
               window.__moves.push([args.workoutId, args.date]);
               return null;
+            }
+            case "week_deviations":
+              return workouts
+                .filter((w) => isMoved(w) && inWeek(w.day, args.weekStart))
+                .map((w) => ({
+                  workoutId: w.id,
+                  title: w.title,
+                  from: w.planned,
+                  to: w.day,
+                  restorable: true,
+                  isToday: false,
+                }));
+            case "reset_week": {
+              const list = workouts.filter((w) => isMoved(w) && inWeek(w.day, args.weekStart));
+              for (const w of list) w.day = w.planned;
+              return list.length;
+            }
+            case "set_workout_skipped":
+              if (args.skipped) window.__skips.add(args.workoutId);
+              else window.__skips.delete(args.workoutId);
+              return null;
+            case "session_review":
+              // Only the tempo run has a gradeable main set, matching the
+              // backend: an easy or long day returns null and the sheet stays
+              // silent rather than inventing a verdict.
+              return args.workoutId === "w-tempo"
+                ? {
+                    workoutId: "w-tempo",
+                    date: day(2),
+                    kind: "tempo",
+                    title: "4 x 1 km tempo",
+                    bandLoSKm: 275,
+                    bandHiSKm: 285,
+                    actualSKm: 268,
+                    measuredM: 4000,
+                    execution: "ahead",
+                  }
+                : null;
+            case "down_weeks":
+              // This week is a recovery week, next week is not — so the badge
+              // and its absence are both on screen at once.
+              return [day(0)];
             case "get_settings":
               return { theme: "system", llmEnabled: false, thresholds: {} };
             case "provider_status":

@@ -397,12 +397,32 @@ pub struct PacingReport {
     pub triggered: bool,
 }
 
+/// What the runner has decided about a planned session. Only these two states
+/// are stored; `missed` is *derived* (see [`PlanWorkout::is_missed`]) because it
+/// is a fact about the calendar, not a decision anyone made — a session nobody
+/// skipped and nobody ran simply lapsed, and storing that as a column would let
+/// a stale row claim a lapse that a late sync then disproves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkoutStatus {
+    /// Still on the schedule, whether or not its day has slipped.
+    #[default]
+    Planned,
+    /// The runner said "not this one" — never counted as a lapse.
+    Skipped,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanWorkout {
     pub id: String,
     pub plan_id: String,
     pub date: NaiveDate,
+    /// The day the plan generated this session into. Immutable: `date` is what
+    /// the runner has moved it to, and the pair is the only way a deviation is
+    /// visible at all. Before this column existed a reschedule destroyed the
+    /// generated date, so there was nothing to reset to and nothing to count.
+    pub planned_date: NaiveDate,
     pub kind: WorkoutKind,
     pub title: String,
     pub distance_m: Option<f64>,
@@ -410,6 +430,47 @@ pub struct PlanWorkout {
     pub pace_lo_s_km: Option<i64>,
     pub pace_hi_s_km: Option<i64>,
     pub done: bool,
+    pub status: WorkoutStatus,
+    /// When the runner moved this session, if they ever did. `None` means the
+    /// session still sits on its generated day, which is what the moved marker
+    /// and the reset offer both read.
+    pub moved_at: Option<DateTime<Utc>>,
+}
+
+impl PlanWorkout {
+    /// Whether the runner has moved this session off the day it was generated
+    /// for. Compared as dates rather than against `moved_at` so a plan imported
+    /// from another device — which carries the dates but not this device's
+    /// timestamps — still shows its deviations.
+    pub fn is_moved(&self) -> bool {
+        self.date != self.planned_date
+    }
+
+    /// A lapse: the day has gone by, it was never run, and it was never
+    /// skipped. `today` is passed in rather than read from the clock so the
+    /// callers that already fix a day (a month view, a test) agree with the
+    /// number the UI prints.
+    pub fn is_missed(&self, today: NaiveDate) -> bool {
+        !self.done && self.status == WorkoutStatus::Planned && self.date < today
+    }
+}
+
+/// Storage name for a workout status.
+pub fn workout_status_name(status: WorkoutStatus) -> &'static str {
+    match status {
+        WorkoutStatus::Planned => "planned",
+        WorkoutStatus::Skipped => "skipped",
+    }
+}
+
+/// Storage name → status. Anything unrecognised is `Planned`, the same rule the
+/// schema's own default states: a row written before statuses existed was on the
+/// schedule.
+pub fn workout_status_from(name: &str) -> WorkoutStatus {
+    match name {
+        "skipped" => WorkoutStatus::Skipped,
+        _ => WorkoutStatus::Planned,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

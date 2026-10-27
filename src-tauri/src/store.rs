@@ -96,13 +96,25 @@ const MIGRATIONS: &[(u32, &str)] = &[
         id TEXT PRIMARY KEY,
         plan_id TEXT NOT NULL REFERENCES training_plans (id) ON DELETE CASCADE,
         day TEXT NOT NULL,
+        -- The day the plan generated this session into, kept beside `day` so a
+        -- reschedule stays visible. `day` is where the runner put it; this is
+        -- where the plan said to. Databases created before these columns
+        -- existed gain them through the drift repair in `migrate`.
+        planned_date TEXT,
         kind TEXT NOT NULL,
         title TEXT NOT NULL,
         distance_m REAL,
         duration_min REAL,
         pace_lo_s_km INTEGER,
         pace_hi_s_km INTEGER,
-        done INTEGER NOT NULL DEFAULT 0
+        done INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'planned',
+        moved_ts INTEGER,
+        -- Why the plan softened this session on its own, in the words the
+        -- softener used. Kept beside the session it explains rather than in a
+        -- log table so the reason cannot outlive the session it belongs to, and
+        -- so the calendar can say why without a second query per day.
+        adjusted_reason TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_workouts_day ON plan_workouts (day);
 
@@ -264,7 +276,20 @@ const MIGRATIONS: &[(u32, &str)] = &[
     -- instead of the factor-sum half alone — which is why a description
     -- could say 15% while the dashboard showed 12% for the same day. The
     -- cache is derived, so it is cleared and recomputed on first refresh.
-    DELETE FROM activity_scores;
+    --
+    -- Rebuilt rather than emptied: a DELETE on a table whose parent
+    -- `activities` is missing aborts the whole open under
+    -- `PRAGMA foreign_keys=ON`, and a database in exactly that drifted state
+    -- has to keep opening (that is what the schema-drift repair below exists
+    -- for). Dropping and recreating has the same effect on a derived cache
+    -- and is legal DDL even with the parent absent.
+    DROP TABLE IF EXISTS activity_scores;
+    CREATE TABLE IF NOT EXISTS activity_scores (
+        activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+        load REAL,
+        risk INTEGER NOT NULL,
+        risk_delta INTEGER NOT NULL DEFAULT 0
+    );
     "#,
     ),
     (
@@ -275,6 +300,19 @@ const MIGRATIONS: &[(u32, &str)] = &[
     -- region-keyed messages are adopted by the newest entry for that region
     -- rather than dropped — the thread a runner already had must survive
     -- the upgrade.
+    --
+    -- The table is re-stated first because this migration cannot assume it is
+    -- there: a database whose `user_version` is ahead of its actual schema (the
+    -- drifted state the repair below exists to survive) can reach here with
+    -- pain_messages absent, and an ALTER on a missing table aborts the whole
+    -- open. CREATE IF NOT EXISTS is a no-op on every healthy database.
+    CREATE TABLE IF NOT EXISTS pain_messages (
+        id TEXT PRIMARY KEY,
+        body_part TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        ts INTEGER NOT NULL
+    );
     ALTER TABLE pain_messages ADD COLUMN entry_id TEXT;
     UPDATE pain_messages SET entry_id = (
         SELECT pe.id FROM pain_entries pe
@@ -354,6 +392,72 @@ fn parse_date_row(s: &str) -> std::result::Result<NaiveDate, rusqlite::Error> {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
     })
 }
+
+/// The column list every `plan_workouts` read uses, in the order
+/// [`workout_from_row`] expects. A SELECT that names its columns instead of
+/// `SELECT *` and still forgets one of these fails loudly at read time rather
+/// than silently handing back a workout missing its generated date.
+const WORKOUT_COLS: &str = "id, plan_id, day, planned_date, kind, title, distance_m, \
+     duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts";
+
+/// Map one `plan_workouts` row (see [`WORKOUT_COLS`]) onto a workout.
+///
+/// A NULL `planned_date` falls back to the session's day: a row written before
+/// the column existed has no recorded generated day, and the only honest
+/// reading of that is that it was never moved.
+fn workout_from_row(r: &rusqlite::Row<'_>) -> std::result::Result<PlanWorkout, rusqlite::Error> {
+    let day = parse_date_row(&r.get::<_, String>(2)?)?;
+    let planned_date = match r.get::<_, Option<String>>(3)? {
+        Some(s) => parse_date_row(&s)?,
+        None => day,
+    };
+    Ok(PlanWorkout {
+        id: r.get(0)?,
+        plan_id: r.get(1)?,
+        date: day,
+        planned_date,
+        kind: kind_from(&r.get::<_, String>(4)?),
+        title: r.get(5)?,
+        distance_m: r.get(6)?,
+        duration_min: r.get(7)?,
+        pace_lo_s_km: r.get(8)?,
+        pace_hi_s_km: r.get(9)?,
+        done: r.get::<_, i64>(10)? != 0,
+        status: workout_status_from(&r.get::<_, String>(11)?),
+        moved_at: r.get::<_, Option<i64>>(12)?.map(ts_to_dt),
+    })
+}
+
+/// The `plan_workouts` values a workout writes, in the order of
+/// [`WORKOUT_INSERT_COLS` / the UPDATE in `update_workout`]. Returned as one
+/// list so an INSERT and an UPDATE of the same workout cannot disagree about
+/// which value belongs in which column.
+fn workout_params(w: &PlanWorkout) -> Vec<rusqlite::types::Value> {
+    let opt_real = |v: Option<f64>| v.map(rusqlite::types::Value::Real).unwrap_or(rusqlite::types::Value::Null);
+    let opt_int = |v: Option<i64>| v.map(rusqlite::types::Value::Integer).unwrap_or(rusqlite::types::Value::Null);
+    vec![
+        rusqlite::types::Value::Text(w.id.clone()),
+        rusqlite::types::Value::Text(w.plan_id.clone()),
+        rusqlite::types::Value::Text(w.date.format("%Y-%m-%d").to_string()),
+        rusqlite::types::Value::Text(w.planned_date.format("%Y-%m-%d").to_string()),
+        rusqlite::types::Value::Text(kind_name(w.kind).to_string()),
+        rusqlite::types::Value::Text(w.title.clone()),
+        opt_real(w.distance_m),
+        opt_real(w.duration_min),
+        opt_int(w.pace_lo_s_km),
+        opt_int(w.pace_hi_s_km),
+        rusqlite::types::Value::Integer(w.done as i64),
+        rusqlite::types::Value::Text(workout_status_name(w.status).to_string()),
+        w.moved_at
+            .map(|t| rusqlite::types::Value::Integer(t.timestamp()))
+            .unwrap_or(rusqlite::types::Value::Null),
+    ]
+}
+
+/// An INSERT column list and its matching `?1..?13` placeholders.
+const WORKOUT_INSERT_COLS: &str = "INSERT INTO plan_workouts (id, plan_id, day, planned_date, \
+     kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts) \
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)";
 
 fn ts_to_dt(ts: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now)
@@ -449,6 +553,11 @@ impl Store {
             "REAL NOT NULL DEFAULT 0",
         )?;
         add_column_if_missing(&conn, "training_plans", "quality_offset_from", "TEXT")?;
+        // Why the plan softened a session on its own. Added as a repair rather
+        // than a numbered migration for the usual reason, and nullable rather
+        // than defaulted: a session nobody softened genuinely has no reason,
+        // and "no reason" must not be renderable as an empty explanation.
+        add_column_if_missing(&conn, "plan_workouts", "adjusted_reason", "TEXT")?;
         // What generated an offer. Pain offers and pacing offers apply through
         // the same path but belong on different pages, so the distinction has
         // to survive a restart; a pacing offer also carries the offset to store
@@ -461,6 +570,27 @@ impl Store {
         )?;
         add_column_if_missing(&conn, "plan_proposals", "plan_offset_sec_km", "REAL")?;
         add_column_if_missing(&conn, "plan_proposals", "plan_offset_from", "TEXT")?;
+        // Every session keeps the day the plan generated it into, so a
+        // reschedule stays visible: without it there is nothing to reset to and
+        // no way to tell a moved session from a generated one. Added as a repair
+        // rather than a numbered migration for the usual reason, and `planned_date`
+        // is nullable in the schema precisely because a row written before the
+        // column existed genuinely has no recorded generated day — the backfill
+        // below says "it was never moved", which is the only honest reading, and
+        // readers fall back to `day` for any row that somehow lacks one.
+        if add_column_if_missing(&conn, "plan_workouts", "planned_date", "TEXT")? {
+            conn.execute(
+                "UPDATE plan_workouts SET planned_date = day WHERE planned_date IS NULL",
+                [],
+            )?;
+        }
+        add_column_if_missing(
+            &conn,
+            "plan_workouts",
+            "status",
+            "TEXT NOT NULL DEFAULT 'planned'",
+        )?;
+        add_column_if_missing(&conn, "plan_workouts", "moved_ts", "INTEGER")?;
         Ok(())
     }
 
@@ -1047,23 +1177,7 @@ impl Store {
     pub fn insert_workouts(&self, workouts: &[PlanWorkout]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         for w in workouts {
-            conn.execute(
-                "INSERT INTO plan_workouts (id, plan_id, day, kind, title, distance_m,
-                    duration_min, pace_lo_s_km, pace_hi_s_km, done)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                params![
-                    w.id,
-                    w.plan_id,
-                    w.date.format("%Y-%m-%d").to_string(),
-                    kind_name(w.kind),
-                    w.title,
-                    w.distance_m,
-                    w.duration_min,
-                    w.pace_lo_s_km,
-                    w.pace_hi_s_km,
-                    w.done as i64
-                ],
-            )?;
+            conn.execute(WORKOUT_INSERT_COLS, rusqlite::params_from_iter(workout_params(w)))?;
         }
         Ok(())
     }
@@ -1140,25 +1254,9 @@ impl Store {
 
     pub fn plan_workouts(&self, plan_id: &str) -> Result<Vec<PlanWorkout>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, plan_id, day, kind, title, distance_m, duration_min,
-                    pace_lo_s_km, pace_hi_s_km, done
-             FROM plan_workouts WHERE plan_id=?1 ORDER BY day",
-        )?;
-        let rows = stmt.query_map(params![plan_id], |r| {
-            Ok(PlanWorkout {
-                id: r.get(0)?,
-                plan_id: r.get(1)?,
-                date: parse_date_row(&r.get::<_, String>(2)?)?,
-                kind: kind_from(&r.get::<_, String>(3)?),
-                title: r.get(4)?,
-                distance_m: r.get(5)?,
-                duration_min: r.get(6)?,
-                pace_lo_s_km: r.get(7)?,
-                pace_hi_s_km: r.get(8)?,
-                done: r.get::<_, i64>(9)? != 0,
-            })
-        })?;
+        let sql = format!("SELECT {WORKOUT_COLS} FROM plan_workouts WHERE plan_id=?1 ORDER BY day");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![plan_id], workout_from_row)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1226,83 +1324,71 @@ impl Store {
             ],
         )?;
         for w in workouts {
-            tx.execute(
-                "INSERT INTO plan_workouts (id, plan_id, day, kind, title, distance_m,
-                    duration_min, pace_lo_s_km, pace_hi_s_km, done)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                params![
-                    w.id,
-                    w.plan_id,
-                    w.date.format("%Y-%m-%d").to_string(),
-                    kind_name(w.kind),
-                    w.title,
-                    w.distance_m,
-                    w.duration_min,
-                    w.pace_lo_s_km,
-                    w.pace_hi_s_km,
-                    w.done as i64
-                ],
-            )?;
+            tx.execute(WORKOUT_INSERT_COLS, rusqlite::params_from_iter(workout_params(w)))?;
         }
         tx.commit()?;
         Ok(())
     }
 
     /// Replace a workout's kind/title (used by adaptive downgrades).
-    pub fn soften_workout(&self, id: &str, kind: WorkoutKind, title: &str) -> Result<()> {
+    /// Soften a session the plan decided was too much, and record *why* on the
+    /// same row. The reason has to travel with the session: an adjustment the
+    /// runner cannot see the reason for reads as a bug, and a reason stored
+    /// somewhere else is a second thing that can go missing.
+    pub fn soften_workout(
+        &self,
+        id: &str,
+        kind: WorkoutKind,
+        title: &str,
+        reason: &str,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE plan_workouts SET kind=?2, title=?3 WHERE id=?1",
-            params![id, kind_name(kind), title],
+            "UPDATE plan_workouts SET kind=?2, title=?3, adjusted_reason=?4 WHERE id=?1",
+            params![id, kind_name(kind), title, reason],
         )?;
         Ok(())
+    }
+
+    /// Every session the plan softened, with the reason it gave. Read by the
+    /// calendar so the chip, the agenda row and the session sheet can all say
+    /// why the day changed without each of them re-deriving it.
+    pub fn workout_adjustments(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, adjusted_reason FROM plan_workouts WHERE adjusted_reason IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.flatten().collect())
     }
 
     /// Rewrite a planned day. The date is part of the row: a caller that
     /// reschedules a session (or a test that re-dates one to simulate the
     /// past) must not have the change silently dropped while every other
     /// field lands.
+    ///
+    /// `planned_date` is written too, and callers must pass it through
+    /// unchanged — it is the day the plan generated, not a field anything
+    /// downstream is allowed to move.
     pub fn update_workout(&self, w: &PlanWorkout) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE plan_workouts SET day=?9, kind=?2, title=?3, distance_m=?4, duration_min=?5,
-                pace_lo_s_km=?6, pace_hi_s_km=?7, done=?8 WHERE id=?1",
-            params![
-                w.id,
-                kind_name(w.kind),
-                w.title,
-                w.distance_m,
-                w.duration_min,
-                w.pace_lo_s_km,
-                w.pace_hi_s_km,
-                w.done as i64,
-                w.date.format("%Y-%m-%d").to_string()
-            ],
+            "UPDATE plan_workouts SET plan_id=?2, day=?3, planned_date=?4, kind=?5,
+                title=?6, distance_m=?7, duration_min=?8, pace_lo_s_km=?9,
+                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13
+             WHERE id=?1",
+            rusqlite::params_from_iter(workout_params(w)),
         )?;
         Ok(())
     }
 
     pub fn workouts_between(&self, from: &str, to: &str) -> Result<Vec<PlanWorkout>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, plan_id, day, kind, title, distance_m, duration_min,
-                    pace_lo_s_km, pace_hi_s_km, done
-             FROM plan_workouts WHERE day BETWEEN ?1 AND ?2 ORDER BY day",
-        )?;
-        let rows = stmt.query_map(params![from, to], |r| {
-            Ok(PlanWorkout {
-                id: r.get(0)?,
-                plan_id: r.get(1)?,
-                date: parse_date_row(&r.get::<_, String>(2)?)?,
-                kind: kind_from(&r.get::<_, String>(3)?),
-                title: r.get(4)?,
-                distance_m: r.get(5)?,
-                duration_min: r.get(6)?,
-                pace_lo_s_km: r.get(7)?,
-                pace_hi_s_km: r.get(8)?,
-                done: r.get::<_, i64>(9)? != 0,
-            })
-        })?;
+        let sql =
+            format!("SELECT {WORKOUT_COLS} FROM plan_workouts WHERE day BETWEEN ?1 AND ?2 ORDER BY day");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![from, to], workout_from_row)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -2959,6 +3045,103 @@ mod tests {
                 .unwrap(),
             MIGRATIONS.last().unwrap().0
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The adaptive plan's reason must land on the session it explains and be
+    /// readable in one query, because the calendar reads every day's events at
+    /// once — a reason stored anywhere else is a second thing that can go
+    /// missing, and a per-day lookup would be N queries per month view.
+    ///
+    /// The test opens a database whose `plan_workouts` predates the column,
+    /// which is what every existing install looks like: the column arrives as
+    /// an open-time repair, not a numbered migration, so a shipped database
+    /// must gain it without losing its rows.
+    #[test]
+    fn soften_workout_records_the_reason_and_survives_the_repair() {
+        let path = std::env::temp_dir().join(format!("rk-adjust-{}.sqlite", uuid::Uuid::new_v4()));
+        let day = Utc::now().date_naive() + chrono::Duration::days(3);
+
+        // Seed the pre-repair schema: a plan_workouts row without the column.
+        // The parent plan is seeded too — `open` turns foreign keys on, so a
+        // workout naming a plan that never existed would be rejected.
+        {
+            let conn = Connection::open(&path).expect("open raw");
+            conn.execute_batch(
+                "CREATE TABLE training_plans (
+                    id TEXT PRIMARY KEY,
+                    distance TEXT NOT NULL,
+                    target_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    weekly_frequency INTEGER NOT NULL,
+                    longrun_day INTEGER NOT NULL,
+                    increase TEXT NOT NULL,
+                    threshold_sec_km REAL NOT NULL,
+                    created_ts INTEGER NOT NULL,
+                    pushed_id TEXT
+                 );
+                 INSERT INTO training_plans
+                    VALUES ('p1','K10','2026-08-01','active',4,6,'moderate',285.0,1735948800,NULL);
+                 CREATE TABLE plan_workouts (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL REFERENCES training_plans (id) ON DELETE CASCADE,
+                    day TEXT NOT NULL,
+                    planned_date TEXT,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    distance_m REAL,
+                    duration_min REAL,
+                    pace_lo_s_km INTEGER,
+                    pace_hi_s_km INTEGER,
+                    done INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'planned',
+                    moved_ts INTEGER
+                 );
+                 INSERT INTO plan_workouts (id, plan_id, day, kind, title, distance_m)
+                    VALUES ('w1','p1','2026-06-01','tempo','6 x 1 km tempo',8000.0);",
+            )
+            .expect("seed pre-repair schema");
+            assert!(conn
+                .prepare("SELECT adjusted_reason FROM plan_workouts")
+                .is_err());
+        }
+
+        let s = Store::open(&path).expect("open repairs the schema");
+        // The repair kept the row and made the column readable as NULL.
+        assert!(s.workout_adjustments().expect("adjustments").is_empty());
+
+        s.soften_workout("w1", WorkoutKind::Easy, "Easy run (was: 6 x 1 km tempo)", "recovery score 38/100")
+            .expect("soften_workout");
+        assert_eq!(
+            s.workout_adjustments().expect("adjustments"),
+            vec![("w1".to_string(), "recovery score 38/100".to_string())],
+            "the reason reads back with the session it explains"
+        );
+
+        // A session nobody softened never appears, so the calendar's map
+        // stays sparse and a clean month shows no banner.
+        let quiet = PlanWorkout {
+            id: "w2".into(),
+            plan_id: "p1".into(),
+            date: day,
+            planned_date: day,
+            kind: WorkoutKind::LongRun,
+            title: "Long run 18 km".into(),
+            distance_m: Some(18000.0),
+            duration_min: None,
+            pace_lo_s_km: None,
+            pace_hi_s_km: None,
+            done: false,
+            status: WorkoutStatus::Planned,
+            moved_at: None,
+        };
+        s.update_workout(&quiet).expect("seed second workout");
+        assert_eq!(s.workout_adjustments().expect("still one").len(), 1);
+
+        // Reopening must not fail on the column that is now there.
+        drop(s);
+        let again = Store::open(&path).expect("reopen is idempotent");
+        assert_eq!(again.workout_adjustments().expect("adjustments").len(), 1);
         let _ = std::fs::remove_file(&path);
     }
 

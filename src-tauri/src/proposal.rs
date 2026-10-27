@@ -351,17 +351,23 @@ mod tests {
         s.insert_plan(&plan).unwrap();
         let ws = days
             .iter()
-            .map(|(off, kind, km)| PlanWorkout {
-                id: uuid::Uuid::new_v4().to_string(),
-                plan_id: plan.id.clone(),
-                date: today + chrono::Duration::days(*off),
-                kind: *kind,
-                title: format!("{kind:?} run"),
-                distance_m: Some(*km * 1000.0),
-                duration_min: Some(*km * 6.0),
-                pace_lo_s_km: if is_hard(*kind) { Some(270) } else { None },
-                pace_hi_s_km: if is_hard(*kind) { Some(290) } else { None },
-                done: false,
+            .map(|(off, kind, km)| {
+                let day = today + chrono::Duration::days(*off);
+                PlanWorkout {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    plan_id: plan.id.clone(),
+                    date: day,
+                    planned_date: day,
+                    kind: *kind,
+                    title: format!("{kind:?} run"),
+                    distance_m: Some(*km * 1000.0),
+                    duration_min: Some(*km * 6.0),
+                    pace_lo_s_km: if is_hard(*kind) { Some(270) } else { None },
+                    pace_hi_s_km: if is_hard(*kind) { Some(290) } else { None },
+                    done: false,
+                    status: WorkoutStatus::default(),
+                    moved_at: None,
+                }
             })
             .collect::<Vec<_>>();
         s.insert_workouts(&ws).unwrap();

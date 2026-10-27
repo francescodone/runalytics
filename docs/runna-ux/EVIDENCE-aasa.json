@@ -1,0 +1,12 @@
+{
+  "_source": "https://club.runna.com/.well-known/apple-app-site-association",
+  "_retrieved": "2026-10-26, re-verified via web fetch (the shell itself has no outbound network)",
+  "appclips": { "apps": ["L27UJU3HDT.com.runbuddy.prod.Clip", "ZR4D267DH2.com.runbuddy.prod.Clip"] },
+  "applinks": {
+    "apps": [],
+    "details": [
+      { "appID": "L27UJU3HDT.com.runbuddy.prod", "paths": ["/n9Tx/*"] },
+      { "appID": "ZR4D267DH2.com.runbuddy.prod", "paths": ["/n9Tx/*"] }
+    ]
+  }
+}

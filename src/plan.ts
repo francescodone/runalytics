@@ -1,17 +1,18 @@
-import { tauri, el, fail, fmtPace, fmtClock, fmtDate, parsePace, inTauri, ymdLocal } from "./lib/ipc";
+import { tauri, el, fail, fmtPace, fmtPaceBand, fmtPaceHeld, fmtClock, fmtDate, parsePace, inTauri, ymdLocal } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
 import { scrollIntoViewMotion } from "./lib/motion";
 import { initGroupProgress, initScrollReveal } from "./lib/reveal";
 import { escapeHtml } from "./lib/workout-detail";
-import { qualityBand } from "./lib/plan-bands";
+import { EXECUTION_LABEL, qualityBand } from "./lib/plan-bands";
+import { paceTrack } from "./lib/pace-track";
+import { initSyncPill } from "./lib/plan-sync-pill";
 import { requirePlanOrRedirect, initNavGate } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
 import "./lib/theme";
 import "./lib/navigation";
 import type {
-  Execution,
   IncreaseMethod,
   PacingReport,
   PlanDefaults,
@@ -20,6 +21,7 @@ import type {
   PlanSyncProgress,
   PlanWorkout,
   RaceDistance,
+  ReceiptLine,
   SessionReview,
   TrainingPlan,
 } from "./lib/types";
@@ -376,10 +378,10 @@ function updatePaceBands(thresholdSecKm: number | null): void {
     thresholdSecKm * Math.pow(metres / 1000 / oneHourKm, 0.06);
   const mp = derived(42_195);
   const interval = derived(3_000);
-  set("pace-easy", `${fmtPace(thresholdSecKm + 45)}\u2013${fmtPace(thresholdSecKm + 75)}/km`);
-  set("pace-tempo", `${fmtPace(thresholdSecKm - 5)}\u2013${fmtPace(thresholdSecKm + 5)}/km`);
-  set("pace-intervals", `${fmtPace(interval - 5)}\u2013${fmtPace(interval + 5)}/km`);
-  set("pace-mp", `${fmtPace(mp - 8)}\u2013${fmtPace(mp + 8)}/km`);
+  set("pace-easy", fmtPaceBand(thresholdSecKm + 45, thresholdSecKm + 75));
+  set("pace-tempo", fmtPaceBand(thresholdSecKm - 5, thresholdSecKm + 5));
+  set("pace-intervals", fmtPaceBand(interval - 5, interval + 5));
+  set("pace-mp", fmtPaceBand(mp - 8, mp + 8));
 }
 
 /**
@@ -539,6 +541,7 @@ async function refresh(): Promise<void> {
   if (current) {
     renderPlan(current[0]);
     setCreateFormEnabled(false);
+    void refreshReceipt().catch(() => undefined);
     void refreshPacing(current[0], current[1]).catch(fail);
   } else {
     el("plan-status").innerHTML = `<p class="muted">No active plan — create one above.</p>`;
@@ -546,7 +549,28 @@ async function refresh(): Promise<void> {
     el<HTMLButtonElement>("abort-plan").disabled = true;
     setCreateFormEnabled(true);
     el("pacing-section").hidden = true;
+    el("plan-receipt").hidden = true;
   }
+}
+
+/// The receipt: what the plan was built from, in the order the inputs shaped
+/// it. The backend already orders the lines by influence, so the list is
+/// rendered verbatim — the page's job is to make the input scannable and the
+/// consequence readable, not to re-rank or summarise it.
+async function refreshReceipt(): Promise<void> {
+  const lines = await tauri.planReceipt();
+  const section = el("plan-receipt");
+  if (!lines || lines.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  el("plan-receipt-list").innerHTML = lines
+    .map(
+      (l: ReceiptLine) =>
+        `<li><span class="plan-receipt-input">${escapeHtml(l.input)}</span><span class="plan-receipt-sentence">${escapeHtml(l.sentence)}</span></li>`,
+    )
+    .join("");
+  section.hidden = false;
 }
 
 // ---- pacing: did the reps land in their range? -----------------------------
@@ -554,12 +578,6 @@ async function refresh(): Promise<void> {
 /// The plan currently rendered, kept so the range bars can apply its quality
 /// offset to future sessions exactly the way the backend does.
 let currentPlan: TrainingPlan | null = null;
-
-const EXECUTION_LABEL: Record<Execution, string> = {
-  ahead: "too fast",
-  in: "in range",
-  behind: "too slow",
-};
 
 /// A plan date (`YYYY-MM-DD`) as a short label. Parsed at local noon: `new
 /// Date("2026-10-20")` is UTC midnight, which is still the 19th west of
@@ -644,29 +662,18 @@ function renderPacing(report: PacingReport, workouts: PlanWorkout[]): void {
 }
 
 /// One session: its prescribed band drawn to a shared pace axis, with a marker
-/// where the reps actually landed. Pace runs left = faster, so the row reads
-/// "too fast · in range · too slow" in the order you would say it.
+/// where the reps actually landed. The bar itself comes from `paceTrack`, the
+/// same helper the activity sheet uses, so the two surfaces cannot disagree
+/// about what the same session looked like.
 function pacingRow(r: SessionReview, band: [number, number]): string {
-  const lo = Math.min(band[0], r.actualSKm ?? band[0]) - 15;
-  const hi = Math.max(band[1], r.actualSKm ?? band[1]) + 15;
-  const pos = (p: number) => ((p - lo) / (hi - lo)) * 100; // slower pace → right
-  const bandLeft = pos(band[0]).toFixed(1);
-  const bandWidth = (pos(band[1]) - pos(band[0])).toFixed(1);
-  const marker =
-    r.actualSKm != null
-      ? `<span class="pacing-marker" style="left:${pos(r.actualSKm).toFixed(1)}%" title="held ${fmtPace(r.actualSKm)}/km"></span>`
-      : "";
-  const held = r.actualSKm != null ? `held ${fmtPace(r.actualSKm)}/km` : "no track synced";
+  const held = r.actualSKm != null ? `held ${fmtPaceHeld(r.actualSKm)}` : "no track synced";
   return `<div class="pacing-row exec-${r.execution}">
     <span class="pacing-day">${escapeHtml(fmtDay(r.date))}</span>
     <span class="pacing-what">
       <span class="pacing-title">${escapeHtml(r.title)}</span>
-      <span class="pacing-paces">${fmtPace(band[0])}–${fmtPace(band[1])} · ${held}</span>
+      <span class="pacing-paces">${fmtPaceBand(band[0], band[1])} · ${held}</span>
     </span>
-    <span class="pacing-track" role="img" aria-label="Range ${fmtPace(band[0])} to ${fmtPace(band[1])} per km, reps held ${r.actualSKm != null ? fmtPace(r.actualSKm) : "unknown"} per km — ${EXECUTION_LABEL[r.execution]}">
-      <span class="pacing-band" style="left:${bandLeft}%;width:${bandWidth}%"></span>
-      ${marker}
-    </span>
+    ${paceTrack(band, r.actualSKm, r.execution)}
     <span class="pacing-verdict">${EXECUTION_LABEL[r.execution]}</span>
   </div>`;
 }
@@ -742,6 +749,9 @@ async function main(): Promise<void> {
   // below the form.
   initGroupProgress();
   initScrollReveal();
+  // The channel's status belongs next to the plan it describes, not only in
+  // Settings where the channel is configured.
+  initSyncPill();
   // The kind decides which fields exist at all, so it is applied before
   // anything reads the form — and re-applied on every change.
   applyKind();

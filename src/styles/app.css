@@ -236,19 +236,36 @@
   --glass-blur: blur(20px) saturate(180%);
   /* Content-surface glass: cards, panels, tables. Lighter than the chrome
      glass on purpose — the nav and sheets float *above* the cards, so they
-     stay the more opaque (heavier) layer in the depth order. */
-  --glass-surface: var(--panel);
-  --glass-surface-2: var(--panel-2);
+     stay the more opaque (heavier) layer in the depth order. Held just shy
+     of solid so the ambient light has something to show through; over a
+     fully opaque fill a backdrop blur is invisible. */
+  --glass-surface: color-mix(in srgb, var(--panel) 88%, transparent);
+  --glass-surface-2: color-mix(in srgb, var(--panel-2) 88%, transparent);
   /* Softer than --glass-blur: a card is wide, and a heavy blur on a wide
-     panel smears the ambient glow into mush instead of reading as depth. */
-  --glass-blur-soft: none;
+     panel smears the ambient glow into mush instead of reading as depth.
+     A light blur (rather than none) is what makes the translucent sheets
+     read as glass over the drifting ambient instead of flat paint. */
+  --glass-blur-soft: blur(10px) saturate(140%);
   /* Tinted glass for button fills (danger = red; primary is plain ink). */
   --glass-danger: var(--bad);
   /* Hairline top highlight that sells the raised surface on cards. */
   --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  /* Keep the canvas quiet so the brand gradient and data surfaces carry the
-     visual hierarchy without a competing ambient wash. */
-  --ambient: none;
+  /* The ambient layer: two brand-lit pools of light behind every glass
+     surface. Kept faint so the data surfaces still carry the hierarchy, but
+     present so translucency has something to reveal — over a flat fill a
+     translucent panel is indistinguishable from a solid one. Drifts slowly
+     (see html::before); the glow moving under a fixed panel is exactly the
+     parallax that sells depth. */
+  --ambient: radial-gradient(
+        58% 48% at 18% 10%,
+        color-mix(in srgb, var(--brand-mid) 12%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        52% 44% at 86% 88%,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 70%
+      );
 
   font-size: var(--text-lg);
 }
@@ -318,13 +335,23 @@
   --glass-bg: var(--panel);
   --glass-bg-strong: var(--panel);
   --glass-bg-2: color-mix(in srgb, var(--panel-2) 88%, transparent);
-  --glass-surface: var(--panel);
-  --glass-surface-2: var(--panel-2);
+  --glass-surface: color-mix(in srgb, var(--panel) 92%, transparent);
+  --glass-surface-2: color-mix(in srgb, var(--panel-2) 92%, transparent);
   --glass-danger: var(--bad);
   --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  /* The light canvas also stays flat; elevation comes from the surface
-     shadows and violet accents instead. */
-  --ambient: none;
+  /* The light canvas carries the same ambient light, fainter: paper shows a
+     violet wash much more readily than ink, and the blur only reads where
+     there is light to blur. */
+  --ambient: radial-gradient(
+        58% 48% at 18% 10%,
+        color-mix(in srgb, var(--brand-mid) 5%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        52% 44% at 86% 88%,
+        color-mix(in srgb, var(--accent) 4%, transparent),
+        transparent 70%
+      );
 
   /* Soft and far, lightened: a black 0.85 shadow on paper reads as a bruise. */
   --shadow-sm: 0 12px 32px -20px rgba(55, 36, 120, 0.22);
@@ -654,17 +681,36 @@
   box-sizing: border-box;
 }
 
-/* The ambient layer every glass surface blurs. Painting it on <html> makes it
-   the canvas background — the image every backdrop-filter samples — and over
-   a flat fill translucency is indistinguishable from solid, so this is what
-   makes the panels read as glass at all. `fixed` pins each gradient to the
-   viewport so panels slide over a steady light rather than a scrolling one,
-   and keeps the percentage stops relative to the screen instead of a page
-   that can be thousands of pixels tall. */
+/* The ambient layer every glass surface blurs. Painted on a fixed pseudo-
+   element rather than <html>'s own background so it can drift: over a flat
+   fill translucency is indistinguishable from solid, so this light is what
+   makes the panels read as glass at all, and the slow drift under a fixed
+   panel is the parallax that sells the depth. Oversized (inset:-20%) so the
+   translate never exposes an edge, and behind everything (z-index:-1) so it
+   is what every backdrop-filter samples. `prefers-reduced-motion` stops the
+   drift through the global animation kill-switch; reduced transparency and
+   more-contrast empty --ambient itself. */
 html {
-  background: var(--ambient), var(--bg);
-  background-attachment: fixed, fixed;
-  background-repeat: no-repeat, no-repeat;
+  background: var(--bg);
+}
+
+html::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--ambient);
+  animation: ambient-drift 90s ease-in-out infinite alternate;
+}
+
+@keyframes ambient-drift {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(2%, 1.5%, 0) scale(1.06);
+  }
 }
 
 body {
@@ -1772,7 +1818,9 @@ form {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  background: var(--panel);
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
   box-shadow: var(--shadow-sm);
 }
 
@@ -2233,6 +2281,16 @@ body::after {
    column is a fixed measure so the chips form a column and the eye can scan
    the week top to bottom; the kind chip keeps the SAME colour vocabulary the
    calendar and plan table already use. */
+/* Why the percentage is what it is. Deliberately no `display` rule: the
+   element hides itself with [hidden] and a UA rule is enough — adding one
+   here would mean re-asserting the sibling again. */
+.week-adherence {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
 .week-plan {
   display: flex;
   flex-direction: column;
@@ -2572,8 +2630,15 @@ body::after {
 .cards .card:nth-child(5) { animation-delay: calc(var(--stagger) * 4); }
 .cards .card:nth-child(n + 6) { animation-delay: calc(var(--stagger) * 5); }
 
+.card {
+  transition: transform var(--transition-control), border-color var(--transition-control),
+    box-shadow var(--transition-control);
+}
+
 .card:hover {
   border-color: var(--line-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--glass-rim), var(--shadow-md);
 }
 
 .card-value {
@@ -3107,8 +3172,8 @@ tbody tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--control-h);
+  height: var(--control-h);
   min-height: 0;
   padding: 0;
   border: 0;
@@ -3165,8 +3230,29 @@ tbody tr:last-child td {
   border-radius: var(--radius) !important;
 }
 
+/* Vite emits maplibre-gl.css after app.css, so the library's
+   `.maplibregl-ctrl-attrib a { color: #000000bf }` wins at equal specificity —
+   1.23:1 against a dark panel. Same reason the border-radius override above
+   needs `!important`. */
 .maplibregl-ctrl-attrib a {
-  color: var(--text-dim);
+  color: var(--text-dim) !important;
+}
+
+/* The attribution renders 51x14 — a link you have to aim at on a map you are
+   already tapping to move. The pseudo-element grows the hit area to control
+   height without touching the compact pill's layout, same recipe as the plan
+   page's inline link. */
+.maplibregl-ctrl-attrib a {
+  position: relative;
+}
+.maplibregl-ctrl-attrib a::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  right: -6px;
+  height: var(--control-h);
+  translate: 0 -50%;
 }
 
 /* ---- forms ---- */
@@ -3334,6 +3420,12 @@ a.btn {
   text-decoration: none;
 }
 
+/* Author display beats the UA [hidden] rule — re-assert it, or a hidden
+   call-to-action link stays on screen. */
+a.btn[hidden] {
+  display: none;
+}
+
 button:hover,
 .btn:hover {
   filter: brightness(0.96);
@@ -3405,13 +3497,15 @@ button.btn-saved:disabled:hover {
   .btn-spinner { animation: none; }
 }
 
-button.secondary {
+button.secondary,
+a.btn.secondary {
   background: var(--panel);
   color: var(--text);
   border-color: var(--line-strong);
 }
 
-button.secondary:hover {
+button.secondary:hover,
+a.btn.secondary:hover {
   background: var(--fill);
 }
 
@@ -3639,13 +3733,160 @@ button.lg,
   font-size: var(--text-xs);
   color: var(--text-faint);
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  /* No text-transform: uppercase. Nowhere else in the app shouts its labels,
+     and the weight of a fact is carried by the value under it — the spacing
+     and the faint ink are enough to read as a label. */
 }
 
 .plan-fact dd {
   margin: 2px 0 0;
   font-weight: 700;
   color: var(--text);
+}
+
+/* ---- the plan receipt ----
+   The list is ordered by how much each input shaped the plan, so the order is
+   shown rather than implied: an ordered list, numbered, heaviest influence
+   first. The input is the scannable half (a label), the sentence the readable
+   half, so they sit in two columns on a wide window and stack on a phone.
+   The separators are hairlines rather than card gaps because the eight lines
+   are one statement, not eight facts to compare. */
+.plan-receipt {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: plan-receipt;
+}
+
+.plan-receipt li {
+  counter-increment: plan-receipt;
+  display: grid;
+  grid-template-columns: minmax(112px, 168px) 1fr;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-receipt li:first-child {
+  padding-top: 0;
+}
+
+.plan-receipt li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.plan-receipt-input {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* The position in the list is information — it says what mattered most — so
+   it is printed, faintly, rather than left for a screen reader alone. */
+.plan-receipt-input::before {
+  content: counter(plan-receipt) ". ";
+  color: var(--text-faint);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-receipt-sentence {
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* One column on a phone: the label is short and the sentence is long, so
+   side-by-side would leave the sentence a narrow ribbon. */
+@media (max-width: 560px) {
+  .plan-receipt li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+/* ---- the plan-sync status pill ----
+   A verdict about the sync channel, so it reads as chrome (the shared
+   good/warn tones) rather than the chart scale — it is a status, not a
+   measurement. The dot carries the tone at a glance and the sentence carries
+   the detail; the action only appears when there is something to do here,
+   which is why the writer sees "Publish now" and the phone "Import". */
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Author display beats the UA [hidden] rule — re-assert it, or a pill with
+   nothing to report stays on screen. */
+.sync-pill[hidden] {
+  display: none;
+}
+
+.sync-pill-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--text-faint);
+}
+
+.sync-pill[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--good) 45%, var(--line));
+}
+
+.sync-pill[data-tone="ok"] .sync-pill-dot {
+  background: var(--good);
+}
+
+.sync-pill[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.sync-pill[data-tone="info"] .sync-pill-dot {
+  background: var(--accent);
+}
+
+.sync-pill[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
+}
+
+.sync-pill[data-tone="warn"] .sync-pill-dot {
+  background: var(--warn);
+}
+
+.sync-pill-text {
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* The action is part of a sentence, not a page action, so it is a compact
+   control — but it stays a real button on touch, where the global 44px
+   minimum is what makes it pressable. */
+.sync-pill-action {
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+}
+
+@media (pointer: coarse) {
+  .sync-pill-action {
+    min-height: var(--control-h);
+  }
 }
 
 /* The one link on this page sits inside a faint caption, where the browser's
@@ -4512,8 +4753,8 @@ fieldset.plan-field legend {
   z-index: 2;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: var(--control-h);
+  height: var(--control-h);
   min-height: 0;
   padding: 0;
   border-radius: 50%;
@@ -5011,7 +5252,10 @@ fieldset.plan-field legend {
 }
 
 .workout-chip {
-  min-height: 40px;
+  /* 44, not 40: the chip is the calendar's only control on desktop and the
+     grid is where a session gets moved. Four pixels short of the platform
+     minimum is four pixels of mis-taps on every drag start. */
+  min-height: var(--control-h);
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -5091,7 +5335,7 @@ fieldset.plan-field legend {
 }
 
 .workout-link {
-  min-height: 40px;
+  min-height: var(--control-h);
   padding: 4px 0;
   border: 0;
   border-radius: 0;
@@ -5171,10 +5415,63 @@ fieldset.plan-field legend {
 }
 .workout-detail-head > div { min-width: 0; }
 .workout-detail-head h2 { font-size: var(--text-xl); text-transform: none; overflow-wrap: anywhere; }
+.workout-detail-head-actions { display: flex; gap: var(--space-2); flex: none; }
+.workout-detail-head-actions button { min-height: var(--control-h); }
 .workout-detail-body { padding: var(--space-5); }
 .workout-notes { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-variant-numeric: tabular-nums; }
+
+/* The reason the plan softened this session, printed above the prescription
+   it explains. Same treatment as the calendar's banner so the same event looks
+   like the same thing wherever it is read. */
+.workout-adjusted {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* The lap verdict, on the activity it describes. The bar is the shared
+   `.pacing-track` from the Plan page — same drawing, same accessible label —
+   so a runner who has seen both surfaces reads it the same way twice. */
+.workout-verdict {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+.workout-verdict[hidden] { display: none; }
+.workout-verdict-line { margin: 0 0 var(--space-3); font-weight: 600; }
+.workout-verdict-paces {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* Outside the Plan page's grid the track is a bare span, and an inline box
+   ignores the 10px height the bar is drawn at. */
+.workout-verdict .pacing-track { display: block; }
+.exec-in .workout-verdict-line { color: var(--scale-3); }
+.exec-ahead .workout-verdict-line,
+.exec-behind .workout-verdict-line { color: var(--warn); }
 .workout-match { display: grid; gap: var(--space-3); margin-top: var(--space-5); }
 .workout-match[hidden] { display: none; }
+/* The two decisions a runner can still make about a session that has not
+   happened. Re-asserting [hidden] is not optional: the author `display: flex`
+   below beats the UA stylesheet's [hidden] rule, so without the sibling the
+   actions would be visible on a completed activity — where both are refused. */
+.workout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+.workout-actions[hidden] { display: none; }
+.workout-actions button { min-height: var(--control-h); flex: 1 1 auto; }
+.workout-actions button.is-active {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
 /* The match result is a live region that is empty until someone tries to
    match a session. Same read-out type as .setup-status, and it takes no room
    at all until it has something to say — otherwise every workout card carried
@@ -5424,6 +5721,254 @@ fieldset.plan-field legend {
   font-variant-numeric: tabular-nums;
   color: inherit;
   background: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+/* The band that opens a week in the agenda. On a phone this is the week
+   header the desktop grid gets from the strip above it, so it carries the same
+   two facts: how the week is going, and whether the plan meant it to be quiet. */
+.agenda-week {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 2px solid var(--line-strong);
+}
+
+.agenda-week:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.agenda-week-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.agenda-week-ratio {
+  margin-left: auto;
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.agenda-week-reset {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.agenda-week + .agenda-day {
+  border-top: none;
+}
+
+/* ---- rescheduling: markers, states, and the sheets that drive them ---- */
+
+/* A session the runner moved. The marker is a corner fold rather than a
+   colour: the chip's colour already answers "what kind of run is this", and a
+   second colour-language on the same element would read as a second verdict.
+   A fold is the universal mark for "this page has been touched". */
+.cal-cell.moved-day {
+  position: relative;
+}
+
+.cal-cell.moved-day::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 11px 11px 0;
+  border-color: transparent var(--accent) transparent transparent;
+}
+
+.chip.moved::before,
+.agenda-row.moved .agenda-title::after {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 0.4em;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--accent);
+}
+
+.agenda-row.moved .agenda-title::after {
+  margin: 0 0 0 0.45em;
+  border-width: 4px 6px 4px 0;
+  border-color: transparent var(--accent) transparent transparent;
+  vertical-align: 0.15em;
+}
+
+/* A session the runner chose to skip. It stays on the calendar — the decision
+   was made, and hiding it would make the week's planned mileage disagree with
+   what is on screen — but it is visibly out of the running: struck through,
+   and the chip drops to the neutral ink so it stops competing with the
+   sessions still live. */
+.chip.chip-skipped {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  color: var(--text-dim);
+  background: var(--glass-bg-2);
+  border-color: transparent;
+  cursor: pointer;
+}
+
+.agenda-row.chip-skipped .agenda-title {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  color: var(--text-dim);
+}
+
+/* A lapse: the day went past with the session neither run nor skipped. Stated
+   in ink and a rule rather than red — --bad is reserved for signals that ask
+   the runner to change what they are doing, and a Tuesday that already
+   happened asks for nothing. */
+.chip.chip-missed {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
+  color: var(--text-dim);
+}
+
+.agenda-row.chip-missed .agenda-meta {
+  color: var(--warn);
+}
+
+/* The one line that names the two verbs. Both mechanisms exist and the
+   guards enforce the boundary silently, which is worse than saying it. */
+.cal-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+/* The plan changed a day by itself, and says why. Deliberately quieter than a
+   `.notice`: it is not an alert asking for a decision, it is the plan
+   explaining a decision already made in the runner's favour. The accent rule
+   marks it as ours rather than a warning, and it sits directly above the grid
+   so the reason and the softened session are on screen together.
+   No `display` rule: the element hides with [hidden] and the UA rule is
+   enough. */
+.cal-adjusted {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* The week's own controls, sitting with the numbers they act on. Renders only
+   when the week has drifted, so a clean week shows nothing. */
+.cal-week-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.cal-week-actions button {
+  min-height: var(--control-h);
+}
+
+/* "Recovery week": the plan's own deload, named. Reads as a fact about the
+   week rather than an alert, so it takes the accent wash the week strip
+   already uses rather than a warning tone. */
+.week-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 1px 0.6em;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
+  font-size: var(--label-size);
+  font-weight: 700;
+  letter-spacing: var(--label-track);
+  white-space: nowrap;
+}
+
+/* The toast gains a button when the message offers a way back. The toast is
+   pointer-events: none while it is plain text, so only the interactive
+   variant opens hit-testing. */
+#toast.has-action {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.toast-action {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  flex: none;
+}
+
+/* ---- the move / reset sheets ---- */
+
+.move-field {
+  display: grid;
+  gap: var(--space-1);
+  margin-block: var(--space-3);
+  font-weight: 600;
+}
+
+.move-status {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.move-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.reset-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.reset-list > li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.reset-list > li:last-child {
+  border-bottom: none;
+}
+
+.reset-title {
+  overflow-wrap: anywhere;
+}
+
+.reset-days {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reset-list > li.not-restorable {
+  color: var(--text-faint);
 }
 
 @media (max-width: 560px) {
@@ -6130,7 +6675,12 @@ fieldset.plan-field legend {
 .bodymap-region path {
   fill: var(--muscle-fill);
   stroke: transparent;
-  stroke-width: 2;
+  /* The stroke is transparent in this state and `pointer-events: all`, so its
+     width is pure hit area — the smallest regions here are 11 SVG units wide,
+     and the picture is drawn at roughly half the viewBox. Widening it grows
+     the target without moving a pixel of visible geometry; the states that
+     actually paint a stroke set their own narrower width. */
+  stroke-width: 9;
   stroke-linejoin: round;
   paint-order: stroke fill;
   pointer-events: all;
@@ -7189,6 +7739,8 @@ a.btn:active { transform: scale(var(--press-scale)); }
   }
   .card:hover {
     border-color: var(--line);
+    transform: none;
+    box-shadow: var(--shadow-sm);
   }
   tbody tr:hover {
     background: transparent;

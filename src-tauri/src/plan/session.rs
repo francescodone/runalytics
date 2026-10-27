@@ -1156,6 +1156,7 @@ mod tests {
             id: "rounding-test".into(),
             plan_id: "test".into(),
             date: chrono::NaiveDate::from_ymd_opt(2027, 1, 5).unwrap(),
+            planned_date: chrono::NaiveDate::from_ymd_opt(2027, 1, 5).unwrap(),
             kind: WorkoutKind::Intervals,
             title: "Intervals".into(),
             distance_m: Some(6870.0),
@@ -1163,6 +1164,8 @@ mod tests {
             pace_lo_s_km: Some(245),
             pace_hi_s_km: Some(260),
             done: false,
+            status: WorkoutStatus::default(),
+            moved_at: None,
         };
         for kind in [WorkoutKind::Intervals, WorkoutKind::Tempo] {
             let workout = PlanWorkout {

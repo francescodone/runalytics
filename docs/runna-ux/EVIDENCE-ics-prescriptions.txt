@@ -1,0 +1,280 @@
+=== A. WHICH SECTION PRESENT, BY KIND ===
+plan      n= 17  summary=11  prescription=17  laps=10  pbs=3
+non-plan  n=175  summary=175  prescription=0  laps=129  pbs=13
+
+=== B. PRESCRIPTION GRAMMAR (line shapes in 📋 Description) ===
+    6x  ----------
+    6x  #km <w> <w> at <w> <w> <w> (<w> slower!)
+    6x  #km at #:#/km
+    5x  # <w> of:
+    3x  #km <w> <w> at <w> <w> <w> (<w> <w> <w> #:#/km)
+    3x  R<w> <w> <w> #x:
+    3x  #km at <w> <w> <w>
+    3x  #km <w> <w> at <w> <w> <w> (<w> <w> <w> #:#/km), #<w> <w> <w>
+    3x  • #m at #:#/km, #<w> <w> <w>
+    2x  #m at #:#/km
+    2x  N<w> <w> <w> <w> needed.
+    2x  #<w> <w> <w>
+    1x  T<w> <w> <w> # <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> core. Y<w> <w> T<w> <w> <w> <w> <w> <w> <w> <w> <w> way! Today'<w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> series.
+    1x  G<w> <w> <w> <w> <w> <w> core, <w> <w> spine, <w> <w> <w> hips. A <w> <w> <w> <w> <w> <w> <w> <w> <w> spots. P<w> <w> <w> <w> <w> <w> <w> day, <w> <w> <w> <w> post-run. You'<w> <w> <w> <w> <w> <w> <w> <w> deeper.
+    1x  • #km at #:#/km (#:#-#:#/km), #<w> <w> <w>
+    1x  T<w> <w> <w> # <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> core. Y<w> <w> T<w> <w> <w> <w> <w> <w> <w> <w> <w> way! T<w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> mat.
+    1x  #km <w> <w> at <w> <w> <w> (<w> <w> <w> #:#/km). T<w> <w> <w> limit, <w> <w> <w> - <w> at <w> <w> <w> <w> easy!
+    1x  T<w> <w> <w> # <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> core. Y<w> <w> T<w> <w> <w> <w> <w> <w> <w> <w> <w> way! I<w> today'<w> <w> <w> <w> <w> <w> <w> <w> <w> sequences.
+    1x  • #m at #:#/km (#:#-#:#/km), #<w> <w> <w>
+    1x  T<w> <w> <w> hip-<w> stability, <w> mobility, <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> session. You’<w> <w> <w> <w> strain. It'<w> <w> <w> <w> <w> <w> <w> often.
+    1x  #km <w> <w> at <w> <w> pace, <w> #x #<w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> <w> session!, #<w> <w> <w>
+    1x  • #km at #:#/km
+    1x  T<w> S<w> & S<w> <w> <w> <w> <w> strength, <w> awareness, <w> <w> <w> <w> <w> <w> wall-<w> <w> <w> <w> stability. T<w> <w> <w> <w> <w> strength. P<w> <w> you’<w> <w> <w> <w> <w> <w> overworked.
+    1x  You’<w> <w> <w> wall.
+
+=== C. PRESCRIPTION VOCABULARY: the structural primitives ===
+   7/17  warm up
+   6/17  cool down
+   3/17  repeat Nx
+   3/17  separator ----------
+   0/17  recovery
+   0/17  stride
+   7/17  at <pace>
+   7/17  pace cap (no faster than)
+  11/17  effort cue (conversational)
+   6/17  or slower
+   0/17  tempo/threshold
+  11/17  km distance
+   4/17  m distance
+   0/17  time duration
+
+=== D. EVERY PRESCRIPTION, VERBATIM (plan workouts) ===
+
+--- 20250709  🏃 Rolling 400s  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+2.4km warm up at a conversational pace (no faster than 4:50/km)
+
+Repeat the following 6x:
+----------
+400m at 3:40/km
+400m at 4:30/km
+----------
+
+1.8km cool down at a conversational pace (or slower!)
+
+--- 20250712  🏃 18km Long Run  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+18km at a conversational pace
+PBs:
+5 mi: 36:06
+10 km: 44:53
+10 mi: 1:20:46
+
+--- 20250713  🧘 Mobility Session 1  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+This is a 30 minute yoga for runners session focusing on mobilising all the key running muscles whilst also building stability through the core. Your coach Torzi will be with you every step of the way! Today's class introduces many of the key movements in this mobility series.
+
+--- 20250716  Stretch & Stability Session 2  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+Get ready to fire up your core, mobilize your spine, and unlock your hips. A smooth flow to build postural strength and ease tight spots. Perfect as a reset after a long day, or a light flush post-run. You'll leave this one standing taller and breathing deeper.
+
+No wall or equipment needed.
+
+--- 20250723  🏃 Progressive Run  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+1.5km warm up at a conversational pace (no faster than 4:50/km)
+
+2km at 4:30/km
+2km at 4:15/km
+2km at 3:55/km
+2km at 3:45/km
+
+1.5km cool down at a conversational pace (or slower!)
+PBs:
+Kilometer: 3:40
+Mile: 5:59
+2mi: 12:18
+5km: 19:30
+5mi: 32:52
+
+--- 20250725  🏃 1km Repeats  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+2km warm up at a conversational pace (no faster than 4:50/km), 90s walking rest
+
+5 reps of:
+• 1km at 3:35/km (3:25-3:45/km), 90s walking rest
+
+1km cool down at a conversational pace (or slower!)
+PBs:
+Kilometer: 3:00
+
+--- 20250730  🏃 Over and Unders 1km  [plan]  tz=Europe/Lisbon  loc=Parque das Nações, Portugal ---
+PRESCRIBED:
+1km warm up at a conversational pace (no faster than 4:45/km)
+
+Repeat the following 3x:
+----------
+1km at 4:05/km
+1km at 3:40/km
+----------
+
+90s walking rest
+
+--- 20250802  🧘 Mobility Session 4  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+This is a 30 minute yoga for runners session focusing on mobilising all the key running muscles whilst also building stability through the core. Your coach Torzi will be with you every step of the way! This class encourages you to move mindfully with your breath to find presence on the mat.
+
+--- 20250806  🏃 5.5km Easy Run  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+5.5km easy run at a conversational pace (no faster than 4:45/km). This is a limit, not a target - run at whatever pace feels truly easy!
+
+--- 20250809  🏃 25km Long Run  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+25km at a conversational pace
+
+--- 20250816  🧘 Mobility Session 6  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+This is a 30 minute yoga for runners session focusing on mobilising all the key running muscles whilst also building stability through the core. Your coach Torzi will be with you every step of the way! In today's class we begin to build upon our standing sequences.
+
+--- 20250903  🏃 400m Repeats  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+4km warm up at a conversational pace (no faster than 4:40/km), 90s walking rest
+
+Repeat the following 2x:
+----------
+6 reps of:
+• 400m at 3:05/km (2:55-3:15/km), 60s walking rest
+
+90s walking rest
+----------
+
+3km cool down at a conversational pace (or slower!)
+
+--- 20250910  🏃 400s into 200s  [plan]  tz=Europe/Lisbon  loc=Parque das Nações, Portugal ---
+PRESCRIBED:
+3km warm up at a conversational pace (no faster than 4:40/km), 90s walking rest
+
+12 reps of:
+• 400m at 3:10/km, 60s walking rest
+
+10 reps of:
+• 200m at 3:00/km, 90s walking rest
+
+2.4km cool down at a conversational pace (or slower!)
+
+--- 20250916  Stretch & Stability Session 11  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+This session blends hip-focused stability, ankle mobility, and deep core engagement to set you up for your next session. You’ll build steadiness without strain. It's a great foundation session to revisit often.
+
+No wall or equipment needed.
+
+--- 20250926  🏃 K200s  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+2.5km warm up at a conversational pace, add 3x 15s fast bursts towards the end of your warm up jog to inject some pace into your legs before the main session!, 90s walking rest
+
+3 reps of:
+• 1km at 3:25/km
+• 200m at 3:00/km, 120s walking rest
+
+1.8km cool down at a conversational pace (or slower!)
+
+--- 20251108  Stretch & Stability Session 14  [plan]  tz=Europe/Berlin  loc=Oberbilk, Germany ---
+PRESCRIBED:
+This Stretch & Stability session focuses on hip strength, core awareness, and lower leg support with some wall-supported holds to build stability. This is where stretch meets strength. Perfect if you’re feeling a little wobbly or overworked.
+
+You’ll need a wall.
+
+--- 20260227  🏃 29km Long Run  [plan]  tz=Europe/Berlin  loc=Neuhausen, Munich, BY, Germany ---
+PRESCRIBED:
+29km at a conversational pace
+
+=== E. PRESCRIPTION vs EXECUTION, PAIRED ===
+
+20250709 🏃 Rolling 400s
+  prescribed lines : 7
+  recorded laps    : 14
+  first laps       : 2.40 km @ 4:59 /km | 0.40 km @ 3:35 /km | 0.40 km @ 4:32 /km
+  summary          : Distance: 9.00 km · Time: 40:30 · Avg Pace: 4:29 /km
+
+20250712 🏃 18km Long Run
+  prescribed lines : 1
+  recorded laps    : 19
+  first laps       : 1.00 km @ 4:33 /km | 1.00 km @ 4:21 /km | 1.00 km @ 4:25 /km
+  summary          : Distance: 18.01 km · Time: 1:20:51 · Avg Pace: 4:29 /km
+
+20250723 🏃 Progressive Run
+  prescribed lines : 6
+  recorded laps    : 6
+  first laps       : 1.50 km @ 4:52 /km | 2.00 km @ 4:27 /km | 2.00 km @ 4:11 /km
+  summary          : Distance: 11.00km · Time: 47:34 · Avg Pace: 4:19 /km
+
+20250725 🏃 1km Repeats
+  prescribed lines : 4
+  recorded laps    : 13
+  first laps       : 2.00 km @ 4:28 /km | 0.30 km @ 4:56 /km | 1.00 km @ 3:13 /km
+  summary          : Distance: 9.31km · Time: 38:46 · Avg Pace: 4:10 /km
+
+20250730 🏃 Over and Unders 1km
+  prescribed lines : 7
+  recorded laps    : 8
+  first laps       : 1.00 km @ 4:56 /km | 1.00 km @ 4:02 /km | 1.00 km @ 3:45 /km
+  summary          : Distance: 7.01 km · Time: 28:20 · Avg Pace: 4:02 /km
+
+20250806 🏃 5.5km Easy Run
+  prescribed lines : 1
+  recorded laps    : 6
+  first laps       : 1.00 km @ 5:14 /km | 1.00 km @ 5:06 /km | 1.00 km @ 5:10 /km
+  summary          : Distance: 5.50 km · Time: 28:11 · Avg Pace: 5:07 /km
+
+20250809 🏃 25km Long Run
+  prescribed lines : 1
+  recorded laps    : 26
+  first laps       : 1.00 km @ 4:55 /km | 1.00 km @ 4:28 /km | 1.00 km @ 4:21 /km
+  summary          : Distance: 25.01 km · Time: 1:45:58 · Avg Pace: 4:14 /km
+
+20250903 🏃 400m Repeats
+  prescribed lines : 8
+  recorded laps    : 30
+  first laps       : 4.00 km @ 4:28 /km | 0.09 km @ 16:27 /km | 0.40 km @ 3:02 /km
+  summary          : Distance: 10.28km · Time: 51:36 · Avg Pace: 5:01 /km
+
+20250910 🏃 400s into 200s
+  prescribed lines : 6
+  recorded laps    : 46
+  first laps       : 3.00 km @ 4:47 /km | 0.10 km @ 15:04 /km | 0.40 km @ 3:14 /km
+  summary          : Distance: 12.92km · Time: 1:12:15 · Avg Pace: 5:35 /km
+
+20250926 🏃 K200s
+  prescribed lines : 5
+  recorded laps    : 12
+  first laps       : 2.50 km @ 4:54 /km | 0.16 km @ 9:30 /km | 1.00 km @ 3:31 /km
+  summary          : Distance: 8.68km · Time: 41:30 · Avg Pace: 4:46 /km
+
+=== F. PB SECTION (what Runna decides is worth celebrating) ===
+events with PBs: 16
+    8x  #km: #:#
+    7x  Half Marathon: #:#:#
+    6x  #mi: #:#
+    6x  #mi: #:#:#
+    4x  Kilometer: #:#
+    4x  Mile: #:#
+    1x  Marathon: #:#:#
+
+sample PB blocks:
+  [🏃 18km Long Run]
+  5 mi: 36:06
+  10 km: 44:53
+  10 mi: 1:20:46
+  [🏃 Progressive Run]
+  Kilometer: 3:40
+  Mile: 5:59
+  2mi: 12:18
+  5km: 19:30
+  5mi: 32:52
+  [🏃 1km Repeats]
+  Kilometer: 3:00
+  [🏃 Evening Run]
+  5 km: 20:48
+
+=== G. TIMEZONE / TRAVEL ===
+  Europe/Berlin      n=176  20250709..20261013
+  Europe/Lisbon      n= 11  20250729..20261018
+  Europe/Paris       n=  1  20251105..20251105
+  America/Chicago    n=  1  20251230..20251230
+  Europe/Rome        n=  3  20260101..20260107

@@ -10,6 +10,7 @@ import {
   fmtDuration,
   fmtKm,
   fmtPace,
+  fmtPaceBand,
   inTauri,
 } from "./lib/ipc";
 import { fetchFlowState, nextAction, currentStreak } from "./lib/flow";
@@ -70,6 +71,11 @@ interface DashExtras {
   planWorkouts: PlanWorkout[];
   activePain: PainEntry[];
   lastSync: string | null;
+  /// Mondays of the plan's recovery weeks, as YYYY-MM-DD. The plan's cycle is
+  /// deterministic, so the label is read back from the schedule. Distinct from
+  /// `loadRecommendation.downWeek`, which measures chronic load and can
+  /// disagree with what the plan actually generated.
+  downWeeks: string[];
 }
 
 // ---- today hero ------------------------------------------------------------
@@ -678,7 +684,13 @@ function renderWeek(extras: DashExtras): void {
   sunday.setDate(monday.getDate() + 6);
   const dow = (x: Date) =>
     x.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  el("week-meta").textContent = `${dow(monday)} – ${dow(sunday)}`;
+  // The plan's own deload, named where the dip it causes is on screen. Without
+  // this the mileage chart shows a week that drops for no stated reason, and a
+  // dip nobody explained reads as a problem rather than the plan working.
+  const recovery = extras.downWeeks.includes(ymd(monday))
+    ? ` <span class="week-badge" title="Your plan cuts volume this week on purpose.">Recovery week</span>`
+    : "";
+  el("week-meta").innerHTML = `${dow(monday)} – ${dow(sunday)}${recovery}`;
   el("week-strip").innerHTML = `
     <div class="bar-axis">
       ${days.map((d) => `<span class="bar-cap${d.today ? " now" : ""}">${d.dow}</span>`).join("")}
@@ -743,6 +755,64 @@ function renderWeek(extras: DashExtras): void {
       : "",
     pace ? `<div class="tile center"><b>${fmtPace(pace.avgPaceSKm)}</b><span>latest pace</span></div>` : "",
   ].join("");
+  renderWeekAdherence(extras, days, weekActual, weekPlan, todayKey);
+}
+
+/// One sentence under the tiles saying *why* the ratio is what it is. The
+/// percentage alone invites a runner to fix the wrong thing: 78% is a skipped
+/// session you decided to skip, a long run that simply hasn't happened yet
+/// today, or 6 km you ran on a rest day that the plan never asked for — and
+/// only the first of those is a miss. So the strip names the parts, and stays
+/// silent when the week is simply on schedule.
+function renderWeekAdherence(
+  extras: DashExtras,
+  days: { key: string; planKm: number; actualKm: number }[],
+  weekActual: number,
+  weekPlan: number,
+  todayKey: string,
+): void {
+  const node = el("week-adherence");
+  const planned = extras.weekPlan.filter((w) => w.kind !== "rest");
+  if (!planned.length || weekPlan <= 0) {
+    node.hidden = true;
+    node.textContent = "";
+    return;
+  }
+  const parts: string[] = [];
+  const skipped = planned.filter((w) => w.status === "skipped");
+  if (skipped.length) {
+    const km = skipped.reduce((s, w) => s + (w.distanceM ?? 0), 0) / 1000;
+    parts.push(
+      `${skipped.length} skipped on purpose (${km.toFixed(1)} km not counted against you)`,
+    );
+  }
+  const lapses = planned.filter(
+    (w) => !w.done && w.status !== "skipped" && w.date <= todayKey,
+  );
+  if (lapses.length) {
+    const km = lapses.reduce((s, w) => s + (w.distanceM ?? 0), 0) / 1000;
+    parts.push(`${lapses.length} missed (${km.toFixed(1)} km)`);
+  }
+  const pending = planned.filter((w) => !w.done && w.status !== "skipped" && w.date > todayKey);
+  if (pending.length) {
+    const km = pending.reduce((s, w) => s + (w.distanceM ?? 0), 0) / 1000;
+    parts.push(`${pending.length} still to come (${km.toFixed(1)} km)`);
+  }
+  // Running on a day the plan left empty is unlinked by definition — the
+  // ratio counts it, so the sentence has to say so or a week reads as
+  // over-done when the plan simply asked for less on those days.
+  const extraKm = days
+    .filter((d) => d.planKm === 0)
+    .reduce((s, d) => s + d.actualKm, 0);
+  if (extraKm >= 1) parts.push(`${extraKm.toFixed(1)} km you added yourself`);
+  const short = weekPlan - weekActual;
+  if (!parts.length) {
+    node.hidden = short > 1;
+    node.textContent = short > 1 ? `${short.toFixed(1)} km still to run this week.` : "";
+    return;
+  }
+  node.hidden = false;
+  node.textContent = parts.join(" · ") + ".";
 }
 
 /// The week's plan, day by day — the detail the bar chart cannot carry.
@@ -795,7 +865,7 @@ function renderWeekPlan(extras: DashExtras): void {
               w.paceLoSKm,
               w.paceHiSKm,
             ];
-            bits.push(`${fmtPace(band[0])}–${fmtPace(band[1])}/km`);
+            bits.push(fmtPaceBand(band[0], band[1]));
           }
           return `<div class="wp-session">
             <span class="chip chip-${w.kind}${w.done ? " chip-done" : ""}">${label}</span>
@@ -947,7 +1017,10 @@ function renderPlanTimeline(extras: DashExtras): void {
   )} · ${progress}`;
   const legend = el("plan-timeline-legend");
   legend.hidden = false;
-  legend.textContent = "Dashed line: the week's planned mileage · filled bar: what was run";
+  legend.textContent =
+    "Dashed line: the week's planned mileage · filled bar: what was run · " +
+    "the shape to read: a ramp building week by week, dips where the plan cuts " +
+    "volume on purpose, and the taper beside the flag.";
   panel.hidden = false;
 }
 
@@ -1992,7 +2065,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
     const monday = mondayThisWeek();
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
-    const [data, points, settings, allActivities, planPair, weekPlan, painEntries] = await Promise.all([
+    const [data, points, settings, allActivities, planPair, weekPlan, painEntries, downWeeks] = await Promise.all([
       tauri.dashboard(currentRange),
       tauri.heatPoints(),
       tauri.getSettings(),
@@ -2000,6 +2073,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
       tauri.currentPlan().catch(() => null),
       tauri.workoutsBetween(ymd(monday), ymd(sunday)).catch(() => [] as PlanWorkout[]),
       tauri.painEntries().catch(() => [] as PainEntry[]),
+      tauri.downWeeks().catch(() => [] as string[]),
     ]);
     if (data.activities.length === 0 && data.load == null && data.fitness == null) {
       renderEmptyState(step);
@@ -2013,6 +2087,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
       planWorkouts: planPair?.[1] ?? [],
       activePain: activePain.length ? activePain : data.activePain ? [data.activePain] : [],
       lastSync: flow.lastSync,
+      downWeeks,
     };
     showDataSections();
     renderDashboard(data, extras);

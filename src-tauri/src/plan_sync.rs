@@ -129,6 +129,12 @@ struct WorkoutWire {
     id: String,
     plan_id: String,
     date: NaiveDate,
+    /// The day the plan generated this session into. Optional because a blob
+    /// published before this field existed has no such record, and the honest
+    /// reading of one is "it was never moved" — so an absent value means the
+    /// date *is* the generated date, which `to_workout` applies.
+    #[serde(default)]
+    planned_date: Option<NaiveDate>,
     kind: crate::types::WorkoutKind,
     title: String,
     #[serde(default)]
@@ -139,6 +145,10 @@ struct WorkoutWire {
     pace_lo_s_km: Option<i64>,
     #[serde(default)]
     pace_hi_s_km: Option<i64>,
+    /// A skip is a decision the runner made, not something this device can
+    /// derive from its own syncs, so — unlike `done` — it belongs on the wire.
+    #[serde(default)]
+    status: crate::types::WorkoutStatus,
 }
 
 impl PlanWire {
@@ -187,12 +197,14 @@ impl WorkoutWire {
             id: w.id.clone(),
             plan_id: w.plan_id.clone(),
             date: w.date,
+            planned_date: Some(w.planned_date),
             kind: w.kind,
             title: w.title.clone(),
             distance_m: w.distance_m,
             duration_min: w.duration_min,
             pace_lo_s_km: w.pace_lo_s_km,
             pace_hi_s_km: w.pace_hi_s_km,
+            status: w.status,
         }
     }
 
@@ -200,11 +212,15 @@ impl WorkoutWire {
     /// derived locally by matching synced activities, and copying another
     /// device's flag would fight that matcher. This re-applies *this* device's
     /// answer for workouts it has already graded.
+    /// `moved_at` is deliberately not on the wire either: it records *when this
+    /// device* saw the move, which a pull cannot know. The moved marker reads
+    /// the date pair instead, so it survives the trip regardless.
     fn to_workout(&self, done_here: bool) -> PlanWorkout {
         PlanWorkout {
             id: self.id.clone(),
             plan_id: self.plan_id.clone(),
             date: self.date,
+            planned_date: self.planned_date.unwrap_or(self.date),
             kind: self.kind,
             title: self.title.clone(),
             distance_m: self.distance_m,
@@ -212,6 +228,8 @@ impl WorkoutWire {
             pace_lo_s_km: self.pace_lo_s_km,
             pace_hi_s_km: self.pace_hi_s_km,
             done: done_here,
+            status: self.status,
+            moved_at: None,
         }
     }
 }
@@ -771,6 +789,126 @@ fn plan_summary(plan: &TrainingPlan) -> String {
     )
 }
 
+/// What the sync channel holds, as seen from this device. The read-only
+/// counterpart of [`pull`]: a status pill has to be honest without installing
+/// anything, and `pull` is the only path that mutates the plan.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePlan {
+    pub status: PillStatus,
+    /// The published plan described the way a confirmation would name it.
+    pub plan_name: String,
+    pub workouts: usize,
+    /// Seconds since epoch when the blob was published, for "2 hours ago".
+    pub synced_at: i64,
+}
+
+/// How the published plan relates to *this* device, phrased so each surface
+/// can say it in its own voice: the writer reads `UpToDate` as "published",
+/// the importer as "up to date".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PillStatus {
+    /// The channel holds exactly what this device has.
+    UpToDate,
+    /// Desktop only: the channel holds a different plan than the one here, so
+    /// the current one has not been published (or the last push failed).
+    Unpublished,
+    /// The channel holds a newer revision of this same plan to import.
+    UpdateAvailable,
+    /// The channel holds a different plan than the one here; importing it
+    /// replaces the local plan, which needs a confirmation.
+    OtherPlan,
+    /// Nothing is installed here and the channel has a plan waiting.
+    ImportAvailable,
+}
+
+/// The relation between the published blob and this device's plan, computed
+/// from the same revision rule [`pull`] enforces — the pill must never
+/// promise an import that the monotonic guard would then refuse.
+fn pill_status(
+    is_mobile: bool,
+    local: Option<(&TrainingPlan, i64)>,
+    installed_rev: Option<i64>,
+    blob_plan_id: &str,
+    blob_rev: i64,
+) -> PillStatus {
+    let Some((plan, created_rev)) = local else {
+        return PillStatus::ImportAvailable;
+    };
+    if plan.id != blob_plan_id {
+        // The writer's stale remote and the importer's foreign plan are the
+        // same fact seen from opposite ends; only the importer can act on it.
+        return if is_mobile {
+            PillStatus::OtherPlan
+        } else {
+            PillStatus::Unpublished
+        };
+    }
+    if is_mobile {
+        // Same plan, same revision is the steady state after an import; only
+        // a strictly higher revision is news, exactly as in `pull`.
+        if blob_rev > installed_rev.unwrap_or(i64::MIN) {
+            PillStatus::UpdateAvailable
+        } else {
+            PillStatus::UpToDate
+        }
+    } else if blob_rev == created_rev {
+        // The desktop stamps `rev` from the plan's own creation time, so an
+        // equal revision means the remote is byte-for-byte this plan.
+        PillStatus::UpToDate
+    } else {
+        PillStatus::Unpublished
+    }
+}
+
+/// Fetch, decrypt and *report* the published plan without installing it.
+///
+/// Returns `None` when there is nothing to report — sync off, a prerequisite
+/// missing, or no gist yet — so the pill stays hidden instead of announcing a
+/// channel that does not exist. A real failure (GitHub unreachable) is an
+/// error the caller hides quietly: a status pill is never worth an alert.
+pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
+    let config = load(&state.data_dir)?;
+    if !config.enabled {
+        return Ok(None);
+    }
+    let (Some(token), Some(sub)) = (stored_token(), account_id()) else {
+        return Ok(None);
+    };
+    let client = github_client()?;
+    let gist_id = match config.gist_id.clone() {
+        Some(id) => id,
+        None => match find_gist(&client, &token, &sync_code(&sub)).await? {
+            Some(id) => id,
+            None => return Ok(None),
+        },
+    };
+    let sealed = fetch_blob(&client, &token, &gist_id).await?;
+    let blob: PlanBlob = serde_json::from_slice(&open(&sub, &sealed)?)?;
+    // Same refusals as `pull`, reported as "nothing to say" rather than an
+    // error: a pill cannot act on an unreadable blob any better than on none.
+    if blob.v > WIRE_VERSION || blob.workouts.is_empty() {
+        return Ok(None);
+    }
+    let current = state.store.current_plan()?;
+    let local = current
+        .as_ref()
+        .map(|(plan, _)| (plan, plan.created_at.timestamp()));
+    Ok(Some(RemotePlan {
+        status: pill_status(
+            mobile(),
+            local,
+            config.installed_rev,
+            &blob.plan.id,
+            blob.rev,
+        ),
+        plan_name: plan_summary(&blob.plan.to_plan()),
+        workouts: blob.workouts.len(),
+        synced_at: blob.synced_at,
+    }))
+}
+
 /// Called after a sync completes on mobile: if this device has no plan but a
 /// sync channel is configured, fetch the one the desktop published.
 ///
@@ -963,19 +1101,136 @@ mod tests {
                 id: "w-1".into(),
                 plan_id: "plan-1".into(),
                 date: NaiveDate::from_ymd_opt(2026, 10, 26).unwrap(),
+                // Left as `None` on purpose: this blob stands for one written
+                // before `planned_date` existed, so the round-trip below also
+                // proves an old device's plan still lands on a sane day.
+                planned_date: None,
                 kind: crate::types::WorkoutKind::Tempo,
                 title: "Tempo 6km".into(),
                 distance_m: Some(6000.0),
                 duration_min: None,
                 pace_lo_s_km: Some(245),
                 pace_hi_s_km: Some(252),
+                status: crate::types::WorkoutStatus::Planned,
             }],
         }
     }
 
+    fn shipped_plan() -> TrainingPlan {
+        TrainingPlan {
+            id: "plan-1".into(),
+            distance: crate::types::RaceDistance::K21,
+            kind: crate::types::PlanKind::Race,
+            target_date: NaiveDate::from_ymd_opt(2026, 12, 6).unwrap(),
+            status: crate::types::PlanStatus::Active,
+            weekly_frequency: 4,
+            longrun_day: 7,
+            increase: crate::types::IncreaseMethod::Conservative,
+            threshold_sec_km: 250.0,
+            created_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            pushed_id: None,
+            baseline_weekly_km: None,
+            quality_offset_sec_km: 0.0,
+            quality_offset_from: None,
+        }
+    }
+
     #[test]
-    fn sync_code_is_stable_and_account_specific() {
-        let a = sync_code("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    fn pill_reports_the_writer_as_up_to_date_only_at_its_own_revision() {
+        let plan = shipped_plan();
+        // The desktop stamps rev from the plan's creation time, so an equal
+        // revision is the published copy of this very plan.
+        assert_eq!(
+            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_700_000_000),
+            PillStatus::UpToDate
+        );
+        // Anything else on the channel means what is here has not been
+        // published — including an *older* remote, which the writer must not
+        // be told to import.
+        assert_eq!(
+            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_699_000_000),
+            PillStatus::Unpublished
+        );
+        assert_eq!(
+            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_700_000_500),
+            PillStatus::Unpublished
+        );
+    }
+
+    #[test]
+    fn pill_only_offers_an_import_for_a_strictly_newer_revision() {
+        let plan = shipped_plan();
+        // The steady state after an import: same plan, revision we installed.
+        assert_eq!(
+            pill_status(
+                true,
+                Some((&plan, 1_699_000_000)),
+                Some(1_700_000_000),
+                "plan-1",
+                1_700_000_000
+            ),
+            PillStatus::UpToDate
+        );
+        // A newer revision of the same plan is the update the pill is for.
+        assert_eq!(
+            pill_status(
+                true,
+                Some((&plan, 1_699_000_000)),
+                Some(1_700_000_000),
+                "plan-1",
+                1_700_000_001
+            ),
+            PillStatus::UpdateAvailable
+        );
+        // An older remote must never be advertised — pull would refuse it, and
+        // a pill that promises a revert is worse than no pill.
+        assert_eq!(
+            pill_status(
+                true,
+                Some((&plan, 1_699_000_000)),
+                Some(1_700_000_000),
+                "plan-1",
+                1_699_999_999
+            ),
+            PillStatus::UpToDate
+        );
+    }
+
+    #[test]
+    fn pill_distinguishes_a_foreign_plan_from_a_waiting_import() {
+        let plan = shipped_plan();
+        // Nothing installed here: the channel has something to take.
+        assert_eq!(
+            pill_status(true, None, None, "plan-1", 1_700_000_000),
+            PillStatus::ImportAvailable
+        );
+        // A different plan, seen by the importer: importing replaces it.
+        assert_eq!(
+            pill_status(
+                true,
+                Some((&plan, 1_700_000_000)),
+                Some(1_700_000_000),
+                "plan-2",
+                1_700_000_000
+            ),
+            PillStatus::OtherPlan
+        );
+        // The same fact on the writer reads as "yours is not published",
+        // because the other plan is somebody else's channel content.
+        assert_eq!(
+            pill_status(
+                false,
+                Some((&plan, 1_700_000_000)),
+                None,
+                "plan-2",
+                1_700_000_000
+            ),
+            PillStatus::Unpublished
+        );
+    }
+
+    #[test]
+    fn sync_code_is_stable_and_account_specific() {        let a = sync_code("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(a.len(), 16);
         assert_eq!(a, sync_code("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         assert_ne!(a, sync_code("baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
