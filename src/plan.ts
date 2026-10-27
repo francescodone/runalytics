@@ -1,4 +1,4 @@
-import { tauri, el, fail, fmtPace, fmtPaceBand, fmtPaceHeld, fmtClock, fmtDate, parsePace, inTauri, ymdLocal } from "./lib/ipc";
+import { tauri, el, fail, fmtPace, fmtPaceBand, fmtPaceHeld, fmtClock, fmtDateDMY, fmtDateTime, parsePace, inTauri, ymdLocal } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
@@ -579,11 +579,11 @@ async function refreshReceipt(): Promise<void> {
 /// offset to future sessions exactly the way the backend does.
 let currentPlan: TrainingPlan | null = null;
 
-/// A plan date (`YYYY-MM-DD`) as a short label. Parsed at local noon: `new
-/// Date("2026-10-20")` is UTC midnight, which is still the 19th west of
-/// Greenwich, so a session would be labelled the day before it was run.
+/// A plan date (`YYYY-MM-DD`) in the app's date notation. Parsed at local
+/// noon: `new Date("2026-10-20")` is UTC midnight, which is still the 19th
+/// west of Greenwich, so a session would be labelled the day before it was run.
 function fmtDay(day: string): string {
-  return fmtDate(`${day}T12:00:00`);
+  return fmtDateDMY(day);
 }
 
 /// Fetch and paint the pacing panel. Called from `refresh` so a sync or a
@@ -793,7 +793,7 @@ async function main(): Promise<void> {
     const warn = el("plan-pain-warning");
     warn.hidden = false;
     warn.innerHTML =
-      `<p>You logged ${region} pain at ${p.intensity}/10 since ${fmtDate(p.startedOn)} and it is not resolved. ` +
+      `<p>You logged ${region} pain at ${p.intensity}/10 since ${fmtDateDMY(p.startedOn)} and it is not resolved. ` +
       `Consider healing it first — <a href="injury.html">review the injury</a>.</p>`;
   }
   const thresholdInput = el<HTMLInputElement>("plan-threshold");
@@ -818,7 +818,7 @@ async function main(): Promise<void> {
       parts.push(`${defaults.thisWeekKm.toFixed(1)} km so far this week`);
     }
     if (defaults.lastSync) {
-      parts.push(`synced ${fmtDate(defaults.lastSync)}`);
+      parts.push(`synced ${fmtDateTime(defaults.lastSync)}`);
     }
     mileageHint.textContent = `${parts.join(" · ")}.`;
   } else if (defaults.totalKm > 0) {

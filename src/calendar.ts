@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri, fmtPace } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtPace, fmtDateDMY, fmtDateTime } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -106,14 +106,10 @@ function eventTitle(w: CalendarEvent): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-/// A `YYYY-MM-DD` rendered as a short local date. Parsed at noon so a
+/// A `YYYY-MM-DD` rendered in the app's date notation. Parsed at noon so a
 /// west-of-UTC reader does not see the previous day.
 function fromYmdLabel(value: string): string {
-  return new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
+  return fmtDateDMY(value);
 }
 
 async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void> {
@@ -351,7 +347,7 @@ function weekHeader(weekMonday: string, byDay: Map<string, CalendarEvent[]>, cur
   const reset = drifted
     ? `<button type="button" class="secondary agenda-week-reset" data-reset-week="${weekMonday}" title="Put this week's sessions back on the days your plan generated">Reset</button>`
     : "";
-  const range = `${monday.toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${sunday.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+  const range = `${fmtDateDMY(ymd(monday))} – ${fmtDateDMY(ymd(sunday))}`;
   return `<div class="agenda-week${current ? " agenda-this-week" : ""}"><h3 class="agenda-week-head" title="${escapeHtml(range)}">${escapeHtml(range)}${badge}<span class="agenda-week-ratio">${ratio.ran} / ${ratio.planned} km</span>${reset}</h3></div>`;
 }
 
@@ -396,11 +392,11 @@ async function renderWeekStats(): Promise<void> {
   // and one 16 km long run did not happen equally.
   const ranMin = ran.reduce((s, e) => s + (e.durationMin ?? 0), 0);
   const avgPace = ranM > 0 && ranMin > 0 ? (ranMin * 60) / (ranM / 1000) : null;
-  const range = `${monday.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${sunday.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const range = `${fmtDateDMY(ymd(monday))} – ${fmtDateDMY(ymd(sunday))}`;
   const published = publishing
     ? publishing.lastPublished
-      ? // The stored stamp is UTC; toLocaleString renders it in local time.
-        new Date(publishing.lastPublished).toLocaleString()
+      ? // The stored stamp is UTC; the formatter renders it in local time.
+        fmtDateTime(publishing.lastPublished)
       : publishing.enabled
         ? "not yet published"
         : "publishing off"

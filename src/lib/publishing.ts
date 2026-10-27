@@ -1,5 +1,5 @@
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { tauri, el, fail, inTauri } from "./ipc";
+import { tauri, el, fail, inTauri, fmtDateTime } from "./ipc";
 import type { CalendarPublishing } from "./types";
 import { withBusy } from "./feedback";
 
@@ -29,7 +29,7 @@ function showPublishing(config: CalendarPublishing): void {
     : !config.enabled
       ? "Remote publishing is off."
       : config.lastPublished
-        ? `Published ${new Date(config.lastPublished).toLocaleString()}`
+        ? `Published ${fmtDateTime(config.lastPublished)}`
         : "Not yet published.";
   el("publish-status").classList.toggle("error", !!config.lastError);
 }

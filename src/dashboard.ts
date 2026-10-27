@@ -1,17 +1,16 @@
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Protocol } from "pmtiles";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   tauri,
   el,
   fail,
   fmtDate,
+  fmtDateDMY,
+  fmtDateTime,
   fmtDuration,
   fmtKm,
   fmtPace,
   fmtPaceBand,
-  inTauri,
 } from "./lib/ipc";
 import { fetchFlowState, nextAction, currentStreak } from "./lib/flow";
 import type { FlowState } from "./lib/flow";
@@ -26,6 +25,8 @@ import { countUp, initGroupProgress, initScrollReveal } from "./lib/reveal";
 import { openWorkout } from "./lib/workout-detail";
 import { createSheet } from "./lib/overlay";
 import type { Sheet } from "./lib/overlay";
+import { buildMapStyle, followMapTheme, heatmapColors, mapControls, mountRouteMap } from "./lib/route-map";
+import { renderLapChart, renderSplitsTable } from "./lib/run-review";
 import { crossPhrase, crossTraining, isRun, runKm } from "./lib/sport";
 import { regionLabel } from "./lib/bodymap";
 import type { CrossTraining } from "./lib/sport";
@@ -36,6 +37,7 @@ import { initNavGate } from "./lib/navgate";
 import type {
   Activity,
   ActivityDetail,
+  ActivityReview,
   DashboardPayload,
   HealthDaily,
   HeatPoint,
@@ -306,7 +308,7 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
         <p>${escapeHtml(decision.detail)}</p>
         <div class="decision-meta">
           <span>Readiness <strong class="count-up" data-count-to="${scores.globalScore}">${scores.globalScore}</strong>/100</span>
-          ${extras.lastSync ? `<span>${icons.sync} Last synced ${fmtDate(extras.lastSync)}</span>` : ""}
+          ${extras.lastSync ? `<span>${icons.sync} Last synced ${fmtDateTime(extras.lastSync)}</span>` : ""}
           ${extras.activePain.length ? `<a class="decision-review" href="injury.html">Review pain journal</a>` : ""}
         </div>
       </div>
@@ -641,7 +643,6 @@ function renderWeek(extras: DashExtras): void {
   const days: {
     key: string;
     dow: string;
-    date: number;
     actualKm: number;
     cross: CrossTraining | null;
     planKm: number;
@@ -665,7 +666,6 @@ function renderWeek(extras: DashExtras): void {
     days.push({
       key,
       dow: DOW[i],
-      date: d.getDate(),
       actualKm,
       cross: crossTraining(dayActs),
       planKm,
@@ -682,15 +682,13 @@ function renderWeek(extras: DashExtras): void {
   // as the previous day. The loop's dates are already local.
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
-  const dow = (x: Date) =>
-    x.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   // The plan's own deload, named where the dip it causes is on screen. Without
   // this the mileage chart shows a week that drops for no stated reason, and a
   // dip nobody explained reads as a problem rather than the plan working.
   const recovery = extras.downWeeks.includes(ymd(monday))
     ? ` <span class="week-badge" title="Your plan cuts volume this week on purpose.">Recovery week</span>`
     : "";
-  el("week-meta").innerHTML = `${dow(monday)} – ${dow(sunday)}${recovery}`;
+  el("week-meta").innerHTML = `${fmtDateDMY(monday)} – ${fmtDateDMY(sunday)}${recovery}`;
   el("week-strip").innerHTML = `
     <div class="bar-axis">
       ${days.map((d) => `<span class="bar-cap${d.today ? " now" : ""}">${d.dow}</span>`).join("")}
@@ -729,7 +727,7 @@ function renderWeek(extras: DashExtras): void {
     </div>`;
 
   bindChartInspection(el("week-strip").querySelector<HTMLElement>(".bar-plot")!, days.map((day, index) => ({
-    label: `${day.dow} ${day.date}`,
+    label: `${day.dow} ${fmtDateDMY(day.key)}`,
     value: `${day.actualKm.toFixed(1)} km${day.planKm ? ` / ${day.planKm.toFixed(1)} km planned` : ""}`,
     x: (index + 0.5) / days.length * 100,
   })), "Running distance this week", days.findIndex((day) => day.today));
@@ -846,7 +844,7 @@ function renderWeekPlan(extras: DashExtras): void {
     d.setDate(monday.getDate() + i);
     const key = ymd(d);
     const dow = DOW[i];
-    const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const date = fmtDateDMY(d);
     const cls = key === todayKey ? " is-today" : key < todayKey ? " is-past" : " is-future";
     const ws = (byDay.get(key) ?? []).sort((a, b) => a.date.localeCompare(b.date));
 
@@ -994,7 +992,7 @@ function renderPlanTimeline(extras: DashExtras): void {
         ),
       );
       return {
-        label: `Week of ${mondayOf(c.key).getDate()}/${mondayOf(c.key).getMonth() + 1}`,
+        label: `Week of ${fmtDateDMY(mondayOf(c.key))}`,
         value: c.key > thisMonday
           ? `${c.planKm.toFixed(1)} km planned`
           : `${actual.toFixed(1)} km run of ${c.planKm.toFixed(1)} planned`,
@@ -1011,9 +1009,9 @@ function renderPlanTimeline(extras: DashExtras): void {
       ? `week ${nowIdx + 1} of ${cols.length}`
       : thisMonday > ymd(lastMonday)
         ? "final week"
-        : `starts ${fmtDate(`${keys[0]}T12:00:00`)}`;
-  el("plan-timeline-meta").textContent = `${lineLabel} ${fmtDate(
-    plan.targetDate.length === 10 ? `${plan.targetDate}T12:00:00` : plan.targetDate,
+        : `starts ${fmtDateDMY(keys[0])}`;
+  el("plan-timeline-meta").textContent = `${lineLabel} ${fmtDateDMY(
+    plan.targetDate,
   )} · ${progress}`;
   const legend = el("plan-timeline-legend");
   legend.hidden = false;
@@ -1031,6 +1029,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
   const monday = mondayThisWeek();
   const weeks: {
     label: string;
+    full: string;
     km: number;
     cross: CrossTraining | null;
     current: boolean;
@@ -1049,6 +1048,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
     // on top, so a week of cycling cannot become a week of running mileage.
     weeks.push({
       label: `${from.getDate()}/${from.getMonth() + 1}`,
+      full: fmtDateDMY(from),
       km: runKm(inWeek),
       cross: crossTraining(inWeek),
       current: i === 0,
@@ -1076,7 +1076,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
       ${weeks
         .map(
           (w) =>
-            `<span class="bar-label${w.current ? " now" : ""}" title="Week of ${w.label}${
+            `<span class="bar-label${w.current ? " now" : ""}" title="Week of ${w.full}${
               w.cross ? ` — ${escapeHtml(crossDays(w.cross))} (not run)` : ""
             }">${w.km ? w.km.toFixed(0) : "—"}${
               w.cross ? `<i class="cross-flag">${icons.dumbbell}</i>` : ""
@@ -1085,7 +1085,7 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
         .join("")}
     </div>`;
   bindChartInspection(el("volume-panel").querySelector<HTMLElement>(".bar-plot")!, weeks.map((week, index) => ({
-    label: `Week of ${week.label}`,
+    label: `Week of ${week.full}`,
     value: `${week.km.toFixed(1)} km`,
     x: (index + 0.5) / weeks.length * 100,
   })), "Weekly running mileage");
@@ -1142,7 +1142,7 @@ function renderRiskPanel(data: DashboardPayload): void {
       ? `<div class="risk-chart">
           ${bandChart(series, [30, 55], ["zone-risk-low", "zone-risk-moderate", "zone-risk-high"], 0, 100, (v) => `${Math.round(v)}%`, data.scoreHistory.map((point) => point.date))}
           <div class="band-foot">
-            <span class="chart-axis">Injury risk · ${fmtDate(data.scoreHistory[0].date)} → today</span>
+            <span class="chart-axis">Injury risk · ${fmtDateDMY(data.scoreHistory[0].date)} → today</span>
             <div class="zone-legend">
               <span class="zone-key"><i class="zone-risk-high"></i>High</span>
               <span class="zone-key"><i class="zone-risk-moderate"></i>Moderate</span>
@@ -1351,7 +1351,7 @@ function renderStatusPanel(data: DashboardPayload): void {
     <div class="band-chart">
       ${statusChart(history, data.thresholds)}
       <div class="band-foot">
-        <span class="chart-axis">Acute ÷ chronic · ${fmtDate(history[0].date)} → today</span>
+        <span class="chart-axis">Acute ÷ chronic · ${fmtDateDMY(history[0].date)} → today</span>
         <div class="zone-legend">${legend}</div>
       </div>
     </div>
@@ -1398,7 +1398,7 @@ function renderRecoveryPanel(data: DashboardPayload): void {
         data.scoreHistory.map((point) => point.date),
       )}
       <div class="band-foot">
-        <span class="chart-axis">Recovery score · ${fmtDate(data.scoreHistory[0].date)} → today</span>
+        <span class="chart-axis">Recovery score · ${fmtDateDMY(data.scoreHistory[0].date)} → today</span>
         <div class="zone-legend">${legend}</div>
       </div>
     </div>
@@ -1440,8 +1440,8 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   tbody.innerHTML = activities
     .map(
       (a) => `<tr data-id="${a.id}" tabindex="0" role="button" title="Open details"
-        aria-label="${escapeHtml(a.sport)} on ${fmtDate(a.startTime)}, open details">
-        <td>${fmtDate(a.startTime)}</td>
+        aria-label="${escapeHtml(a.sport)} on ${fmtDateTime(a.startTime)}, open details">
+        <td>${fmtDateDMY(a.startTime)}</td>
         <td>${escapeHtml(a.sport)}</td>
         <td>${fmtKm(a.distanceM)}</td>
         <td>${fmtDuration(a.durationS)}</td>
@@ -1509,132 +1509,6 @@ function timeHms(s: number): string {
   return h > 0
     ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
     : `${m}:${String(sec).padStart(2, "0")}`;
-}
-
-function mapColor(token: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-}
-
-function heatmapColors(): maplibregl.ExpressionSpecification {
-  return [
-    "interpolate", ["linear"], ["heatmap-density"],
-    0, "rgba(0,0,0,0)",
-    0.25, mapColor("--map-heat-low"),
-    0.55, mapColor("--map-heat-mid"),
-    0.8, mapColor("--map-heat-high"),
-    1, mapColor("--map-heat-peak"),
-  ];
-}
-
-function followMapTheme(map: maplibregl.Map): void {
-  const update = () => {
-    if (!map.isStyleLoaded()) return;
-    map.setPaintProperty("bg", "background-color", mapColor("--bg"));
-    if (map.getLayer("heat")) map.setPaintProperty("heat", "heatmap-color", heatmapColors());
-    if (map.getLayer("track-glow")) map.setPaintProperty("track-glow", "line-color", mapColor("--map-outline"));
-    if (map.getLayer("track-line")) map.setPaintProperty("track-line", "line-color", mapColor("--scale-3"));
-    if (map.getLayer("track-ends")) {
-      map.setPaintProperty("track-ends", "circle-color", [
-        "match", ["get", "kind"], "start", mapColor("--scale-2"), "finish", mapColor("--scale-5"), mapColor("--scale-4"),
-      ]);
-      map.setPaintProperty("track-ends", "circle-stroke-color", mapColor("--map-outline"));
-    }
-  };
-  const observer = new MutationObserver(update);
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-palette"] });
-  map.on("load", update);
-  map.on("remove", () => observer.disconnect());
-}
-
-/// Basemap style for the configured pmtiles archive (offline) or OSM raster
-/// tiles. Shared by the heatmap and the activity detail route map.
-function buildMapStyle(settings: Settings): maplibregl.StyleSpecification {
-  const pmtiles = settings.pmtilesPath;
-  if (pmtiles && inTauri) {
-    // Offline tiles: the pmtiles Protocol serves range requests from the
-    // archive exposed through Tauri's asset protocol (supports HTTP Range).
-    const protocol = new Protocol();
-    maplibregl.addProtocol("pmtiles", protocol.tile);
-    const archiveUrl = pmtiles.startsWith("~/")
-      ? pmtiles // unlikely; backend resolves absolute paths only
-      : convertFileSrc(pmtiles);
-    const tileUrl = `pmtiles://${archiveUrl}/{z}/{x}/{y}`;
-    return {
-      version: 8,
-      sources: {
-        basemap: {
-          type: "raster",
-          tiles: [tileUrl],
-          tileSize: 256,
-          attribution: "PMTiles",
-        },
-      },
-      layers: [
-        { id: "bg", type: "background", paint: { "background-color": mapColor("--bg") } },
-        { id: "basemap", type: "raster", source: "basemap" },
-      ],
-    };
-  }
-  return {
-    version: 8,
-    sources: {
-      osm: {
-        type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        attribution: "© OpenStreetMap contributors",
-      },
-    },
-    layers: [
-      { id: "bg", type: "background", paint: { "background-color": mapColor("--bg") } },
-      { id: "osm", type: "raster", source: "osm" },
-    ],
-  };
-}
-
-/// The map's own zoom/compass/fit controls, drawn in the app's material.
-/// MapLibre's built-ins are unusable here: their icons are baked into CSS
-/// background images with a hardcoded colour, so they cannot follow the
-/// light/dark scheme (the app themes off `[data-theme]`, not the media query),
-/// and the global glass-pill `button` rule would restyle their boxes. This
-/// control draws the same three actions with the app's Tabler icons and glass
-/// tokens. `fit` is the one the library has no equivalent for: it returns the
-/// view to the data the map was built around — the heatmap points, or the
-/// run's track — which is the question a runner actually asks after panning
-/// away. The object is structural (maplibre's `IControl` is not exported as a
-/// type); `addControl` accepts anything with this shape.
-function mapControls(fit: () => void) {
-  const specs: { icon: string; title: string; run: (map: maplibregl.Map) => void }[] = [
-    { icon: icons.plus, title: "Zoom in", run: (m) => m.zoomIn() },
-    { icon: icons.minus, title: "Zoom out", run: (m) => m.zoomOut() },
-    { icon: icons.fit, title: "Fit to data", run: () => fit() },
-    { icon: icons.locate, title: "Reset north", run: (m) => m.resetNorth() },
-  ];
-  let container: HTMLElement | null = null;
-  return {
-    onAdd(map: maplibregl.Map): HTMLElement {
-      const group = document.createElement("div");
-      // `.maplibregl-ctrl` earns pointer-events and the corner margin from the
-      // library; `.map-ctrl` is the app's own glass box.
-      group.className = "maplibregl-ctrl map-ctrl";
-      for (const s of specs) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.title = s.title;
-        btn.setAttribute("aria-label", s.title);
-        btn.innerHTML = s.icon;
-        btn.addEventListener("click", () => s.run(map));
-        group.appendChild(btn);
-      }
-      container = group;
-      return group;
-    },
-    onRemove(): void {
-      container?.remove();
-      container = null;
-    },
-    getDefaultPosition: () => "top-right" as const,
-  };
 }
 
 async function initMap(points: HeatPoint[], settings: Settings): Promise<void> {
@@ -1719,15 +1593,18 @@ function statTile(value: string, label: string): string {
 
 /// Fill the sheet with one activity and return the (fresh) map container so
 /// the caller can mount the route map into it.
-function renderActivitySheet(sheet: Sheet, d: ActivityDetail): HTMLElement {
+function renderActivitySheet(
+  sheet: Sheet,
+  d: ActivityDetail,
+  review: ActivityReview | null,
+): HTMLElement {
   const a = d.activity;
-  sheet.setTitle(
-    `${a.sport} · ${new Date(a.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`,
-    new Date(a.startTime).toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" }),
-  );
+  sheet.setTitle(a.sport, fmtDateTime(a.startTime));
   sheet.body.innerHTML = `
     <section><h3>Route</h3><div class="sheet-map"></div></section>
     <section><h3>Session data</h3><div class="sheet-data tile-grid"></div></section>
+    <section><h3>Laps</h3><div class="sheet-laps"></div></section>
+    <section><h3>Splits</h3><div class="sheet-splits"></div></section>
     <section><h3>Injury risk that day</h3><div class="sheet-risk risk-panel"></div></section>`;
   // Look these up within the sheet's own subtree, never document-wide: the
   // sheet is a detached-then-attached component, so a global getElementById is
@@ -1735,6 +1612,18 @@ function renderActivitySheet(sheet: Sheet, d: ActivityDetail): HTMLElement {
   const mapEl = sheet.body.querySelector<HTMLElement>(".sheet-map")!;
   const dataEl = sheet.body.querySelector<HTMLElement>(".sheet-data")!;
   const riskEl = sheet.body.querySelector<HTMLElement>(".sheet-risk")!;
+  // The lap breakdown is a second command, and a run whose review failed to
+  // build should still show its route and stats — so it arrives as an optional
+  // argument and says so in the two panes it owns when it is missing.
+  const lapsEl = sheet.body.querySelector<HTMLElement>(".sheet-laps")!;
+  const splitsEl = sheet.body.querySelector<HTMLElement>(".sheet-splits")!;
+  if (review) {
+    renderLapChart(lapsEl, review);
+    renderSplitsTable(splitsEl, review);
+  } else {
+    lapsEl.innerHTML = `<p class="muted">Laps could not be read for this run.</p>`;
+    splitsEl.innerHTML = `<p class="muted">Splits could not be read for this run.</p>`;
+  }
 
   // Session data + that day's recovery signals + fitness as of the day.
   const tiles: string[] = [
@@ -1796,93 +1685,7 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
     mapEl.innerHTML = `<div class="map-empty">No GPS track for this activity.</div>`;
     return;
   }
-  mapEl.innerHTML = "";
-  const first = d.track[0];
-  const coords = d.track.map((p) => [p.lon, p.lat]) as [number, number][];
-  // Built before the map so the fit control can restore the run's own extent.
-  const bounds = new maplibregl.LngLatBounds(coords[0], coords[0]);
-  for (const c of coords) bounds.extend(c);
-  sheetMap = new maplibregl.Map({
-    container: mapEl,
-    style: buildMapStyle(settings),
-    center: [first.lon, first.lat],
-    zoom: 12,
-  });
-  sheetMap.addControl(mapControls(() => sheetMap?.fitBounds(bounds, { padding: 36, maxZoom: 16 })));
-  followMapTheme(sheetMap);
-  sheetMap.on("load", () => {
-    if (!sheetMap) return;
-    // Start / finish markers carry a `kind` property so the circle layer can
-    // colour them differently from the line.
-    sheetMap.addSource("track", {
-      type: "geojson",
-      data: {
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            properties: { kind: "line" },
-            geometry: { type: "LineString", coordinates: coords },
-          },
-          {
-            type: "Feature",
-            properties: { kind: "start" },
-            geometry: { type: "Point", coordinates: coords[0] },
-          },
-          {
-            type: "Feature",
-            properties: { kind: "finish" },
-            geometry: { type: "Point", coordinates: coords[coords.length - 1] },
-          },
-        ],
-      },
-    });
-    sheetMap.addLayer({
-      id: "track-glow",
-      type: "line",
-      source: "track",
-      filter: ["==", ["get", "kind"], "line"],
-      paint: {
-        "line-color": mapColor("--map-outline"),
-        "line-width": 6,
-        "line-opacity": 0.55,
-      },
-    });
-    sheetMap.addLayer({
-      id: "track-line",
-      type: "line",
-      source: "track",
-      filter: ["==", ["get", "kind"], "line"],
-      paint: {
-        "line-color": mapColor("--scale-3"),
-        "line-width": 2.5,
-        "line-opacity": 0.95,
-      },
-    });
-    sheetMap.addLayer({
-      id: "track-ends",
-      type: "circle",
-      source: "track",
-      filter: ["!=", ["get", "kind"], "line"],
-      paint: {
-        "circle-radius": 5,
-        // Start and finish use opposite ends of the shared violet data ramp,
-        // keeping the route legible without introducing another meaning by hue.
-        "circle-color": [
-          "match",
-          ["get", "kind"],
-          "start",
-          mapColor("--scale-2"),
-          "finish",
-          mapColor("--scale-5"),
-          mapColor("--scale-4"),
-        ],
-        "circle-stroke-color": mapColor("--map-outline"),
-        "circle-stroke-width": 1.5,
-      },
-    });
-    sheetMap.fitBounds(bounds, { padding: 36, maxZoom: 16 });
-  });
+  sheetMap = mountRouteMap(mapEl, d.track, settings);
 }
 
 async function openActivitySheet(activityId: number): Promise<void> {
@@ -1894,13 +1697,17 @@ async function openActivitySheet(activityId: number): Promise<void> {
   sheet.open();
   const token = sheet.beginLoad();
   try {
-    const [detail, settings] = await Promise.all([
+    // The review is fetched alongside the detail rather than after it: it is
+    // the part of the sheet a runner came for, and a review that fails must
+    // not take the route and stats down with it.
+    const [detail, settings, review] = await Promise.all([
       tauri.activityDetail(activityId, currentRange),
       tauri.getSettings(),
+      tauri.activityReview(activityId).catch(() => null),
     ]);
     // A close/reopen happened while we were fetching — this response is stale.
     if (!sheet.isCurrent(token)) return;
-    const mapEl = renderActivitySheet(sheet, detail);
+    const mapEl = renderActivitySheet(sheet, detail, review);
     renderSheetMap(detail, settings, mapEl);
   } catch (e) {
     if (!sheet.isCurrent(token)) return;

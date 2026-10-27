@@ -561,6 +561,60 @@ export interface PacingReport {
   triggered: boolean;
 }
 
+/// What a stretch of a recorded run was for. Decides how a lap is drawn: only
+/// a work lap is given a target cap, an easy or recovery lap is not.
+export type LapKind = "easy" | "work" | "recovery" | "kilometre";
+
+/// How one lap landed against the range it asked for. Only the work asks for a
+/// range, so a warm-up, cool-down, or jog recovery never carries a verdict.
+export type LapVerdict = "ahead" | "in" | "behind";
+
+/// One stretch of a recorded run, cut where the prescription says the shape of
+/// the run changes. `bandLoSKm`/`bandHiSKm` are set on the work only, which is
+/// why an easy or recovery lap is drawn without a target cap.
+export interface LapSlice {
+  index: number;
+  label: string;
+  kind: LapKind;
+  startM: number;
+  meters: number;
+  durationS: number;
+  avgPaceSKm: number | null;
+  avgHr: number | null;
+  bandLoSKm: number | null;
+  bandHiSKm: number | null;
+  verdict: LapVerdict | null;
+}
+
+/// One kilometre of a run, cut by the distance rather than by the plan.
+/// `deltaPrevSKm` is against the PREVIOUS kilometre — positive means the pace
+/// dropped. The UI must name that reference in the column header.
+export interface KmSplit {
+  km: number;
+  meters: number;
+  durationS: number;
+  avgPaceSKm: number | null;
+  avgHr: number | null;
+  deltaPrevSKm: number | null;
+  /// Set only under a prescribed work lap — a kilometre under a warm-up,
+  /// recovery, or cool-down stays unmarked.
+  bandLoSKm: number | null;
+  bandHiSKm: number | null;
+}
+
+/// The review of one recorded run: the run cut into laps and kilometres.
+/// Every run gets one; `prescribed` says whether the laps carry target caps.
+export interface ActivityReview {
+  activity: Activity;
+  hasTrack: boolean;
+  /** The route, so a review surface can draw the map without a second fetch. */
+  track: TrackPoint[];
+  workoutId: string | null;
+  prescribed: boolean;
+  laps: LapSlice[];
+  splits: KmSplit[];
+}
+
 /// An offered plan change, generated deterministically from the pain entry
 /// and the current plan. The assistant can explain it, never author it.
 export interface PlanProposal {

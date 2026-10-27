@@ -16,7 +16,7 @@
 // on the phone in the page header, where it is the first thing read — iOS is
 // pull-only, so this is the surface where a stale plan is most likely.
 
-import { tauri, inTauri } from "./ipc";
+import { tauri, inTauri, fmtDateDMY } from "./ipc";
 import type { RemotePlan, SyncPillStatus } from "./types";
 import { withBusy } from "./feedback";
 
@@ -41,7 +41,7 @@ function ago(epochSeconds: number): string {
   if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
-  return new Date(epochSeconds * 1000).toLocaleDateString();
+  return fmtDateDMY(new Date(epochSeconds * 1000));
 }
 
 interface Copy {

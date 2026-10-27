@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Runalytics calendar harness</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
+    <script src="/__review_stub.js"></script>
     <script>
       localStorage.setItem("runalytics.onboarding.v2", "done");
       // The page asks "what day is it?" in three places (the drop window, the
@@ -133,7 +134,7 @@
                 .map((w) => ({
                   id: w.id,
                   workoutId: w.id,
-                  activityId: w.done ? 1 : null,
+                  activityId: w.done ? 1 + workouts.indexOf(w) : null,
                   date: w.day,
                   kind: w.kind,
                   title: w.title,
@@ -224,6 +225,34 @@
                     execution: "ahead",
                   }
                 : null;
+            case "activity_review": {
+              // The review of the run behind a completed session. Distinct ids
+              // per session so the tempo run and the easy days can each show
+              // their own shape: the tempo carries the prescribed laps with
+              // their target caps, everything else falls back to per-kilometre
+              // bars with no caps — the state most runs are actually in.
+              const owner = workouts.find(
+                (w) => w.done && 1 + workouts.indexOf(w) === args.activityId,
+              );
+              if (!owner) throw new Error("no activity " + args.activityId);
+              const activity = {
+                id: args.activityId,
+                provider: "coros",
+                providerRecordId: "cal-" + owner.id,
+                sport: "Run",
+                startTime: `${owner.day}T07:30:00.000Z`,
+                durationS: Math.round((owner.distanceM / 1000) * 350),
+                distanceM: owner.distanceM,
+                avgHr: owner.kind === "tempo" ? 165 : 141,
+                maxHr: owner.kind === "tempo" ? 181 : 155,
+                avgPaceSKm: 350,
+                elevationGainM: 48,
+                hasTrack: true,
+              };
+              return owner.kind === "tempo"
+                ? window.__reviewFor(activity, owner.id, 4)
+                : window.__kmReviewFor(activity);
+            }
             case "down_weeks":
               // This week is a recovery week, next week is not — so the badge
               // and its absence are both on screen at once.

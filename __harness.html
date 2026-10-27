@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Runalytics harness</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
+    <script src="/__review_stub.js"></script>
     <script>
       // ?tour=1 clears the tutorial flag so the onboarding slides can be
       // walked through in the harness.
@@ -252,6 +253,16 @@
               riskFactors: dashboard.riskFactors,
               injuryRisk: 34,
             };
+          }
+          if (cmd === "activity_review") {
+            const a = activities.find((x) => x.id === args.activityId) ?? activities[0];
+            // One run in the list is the tempo session, so the sheet shows the
+            // prescribed layout with its target caps; the rest are plain easy
+            // days, which the backend returns as per-kilometre laps with no
+            // caps at all. Both shapes have to look right.
+            return a.id === 1
+              ? window.__reviewFor(a, "w2", dashboard.thresholds.paceToleranceSecKm)
+              : window.__kmReviewFor(a);
           }
           // The dashboard's own `activities` stays runs-only, but all_activities
           // carries every sport — that is the pair the mileage split is tested on.

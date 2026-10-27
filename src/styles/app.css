@@ -84,12 +84,14 @@
   --map-heat-peak: #432295;
   --map-outline: #24174f;
 
-  /* Concentric shape ladder: compact labels (8), controls (12), content
-     surfaces (20) and overlays (28). */
-  --radius: 8px;
-  --radius-control: 12px;
-  --radius-lg: 20px;
-  --radius-overlay: 28px;
+  /* One radius everywhere: 22px on every surface, control and label. Kept as
+     four tokens rather than one so the ladder can be re-opened later without
+     hunting for call sites, and so `--radius-pill` and the charts' square
+     corners (a deliberate shape rule) stay separate decisions. */
+  --radius: 22px;
+  --radius-control: 22px;
+  --radius-lg: 22px;
+  --radius-overlay: 22px;
   --radius-pill: 999px;
 
   /* Three elevation roles, so a floating surface reads as floating no matter
@@ -723,6 +725,25 @@ body {
   /* WKWebView's default tap flash is a flat grey rectangle that ignores the
      radius, colour and press animation of every control here. */
   -webkit-tap-highlight-color: transparent;
+  /* The app is operated, not read: every pointer gesture here is a press, a
+     scroll, or a drag (a chip to a new day, a map). Starting a text selection
+     mid-gesture turns a drag into a blue sweep across the page, so selection
+     is off by default and re-opened below for the places that genuinely hold
+     text a runner may want to copy. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Where selection is the point: real inputs, and the read-only long-form text
+   (a session's notes, a pain entry) that gets copied out of the app. */
+input,
+textarea,
+select,
+[contenteditable="true"],
+.workout-notes,
+.pain-notes {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* A modal dialog is open — lock the page behind it. The old sheet used a
@@ -1791,9 +1812,13 @@ form {
 }
 
 @media (max-width: 560px) {
+  /* Specificity here beats the `.panel` padding in the phone block further
+     down, so this is the value the dashboard's panels actually paint with.
+     It has to move with that rule or the dashboard stays cramped while every
+     other page breathes. */
   #dash .panel,
   #dash #today.hero {
-    padding: var(--space-4);
+    padding: 24px 22px;
   }
 }
 
@@ -2270,6 +2295,136 @@ body::after {
 .bar-chart.volume .bar-col.now .bar-track {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   border-radius: 0;
+}
+
+/* ---- laps: the prescribed session, lap by lap ----
+   The weekly charts answer "how much did I run?"; this one answers the
+   question a tempo or interval session actually poses — did each hard lap
+   land in the range the plan asked for. It reuses the bar component's
+   coordinate space (a `.bar-plot` of `.bar-col`s, taller = faster, because
+   pace is an inverted quantity), and adds one thing the other charts have
+   never needed: a TARGET. The dashed box over a bar is the prescribed band,
+   so the gap between the top of the fill and the box IS the verdict — no
+   colour is required to read it, and the colour only repeats what the
+   geometry already says.
+   Colours therefore stay inside --scale-* (a chart is not allowed to reach
+   for --good/--warn/--bad), and the recovery/easy laps are de-emphasised by
+   OPACITY rather than hue, so nothing outside the scale carries meaning. */
+.lap-scroll {
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+
+.lap-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  height: 176px;
+}
+
+.lap-inner .bar-plot {
+  height: 132px;
+}
+
+.lap-col .bar-track {
+  border-radius: 0;
+}
+
+/* The prescribed range, drawn where a bar of that pace would stand. Dashed
+   outline + a barely-there wash: the outline is the fact, the wash only stops
+   the box reading as a hole in the bar. */
+.lap-band {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  border: 1px dashed var(--text-faint);
+  background: color-mix(in srgb, var(--fill) 55%, transparent);
+  pointer-events: none;
+}
+
+/* A lap with no prescribed pace (a recovery, a cool-down) still occupies its
+   slot, and an empty slot must not read as "ran nowhere". A hairline at the
+   floor says: measured, nothing asked. */
+.lap-none {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--line-strong);
+}
+
+/* Verdict tones, all inside the scale: the strongest step is the one that
+   means "you did the session", the lighter steps are the misses. */
+.lap-in .bar-fill {
+  background: linear-gradient(180deg, var(--scale-4), var(--scale-2));
+}
+
+.lap-ahead .bar-fill {
+  background: linear-gradient(180deg, var(--scale-2), color-mix(in oklab, var(--scale-1) 45%, transparent));
+}
+
+.lap-behind .bar-fill {
+  background: linear-gradient(180deg, var(--scale-5), color-mix(in oklab, var(--scale-3) 45%, transparent));
+}
+
+/* Recovery and easy laps are context, not the answer. */
+.lap-col.kind-recovery .bar-fill,
+.lap-col.kind-easy .bar-fill {
+  opacity: 0.42;
+}
+
+.lap-col.kind-recovery .bar-label,
+.lap-col.kind-easy .bar-label {
+  opacity: 0.7;
+}
+
+/* What the boxes mean, in the same order the chart reads. */
+.lap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.lap-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lap-key-box {
+  width: 16px;
+  height: 11px;
+  flex: none;
+  border: 1px dashed var(--text-faint);
+  /* Stronger than the band on the chart: this box has to read as a filled
+     region at a glance, and at the chart's alpha a 11px box looks like a
+     broken glyph rather than a range. */
+  background: color-mix(in srgb, var(--fill) 90%, transparent);
+}
+
+/* ---- kilometre splits ----
+   The clock's reading, next to the plan's. The delta column carries a sign
+   and nothing else: a table row is a read-out, not a verdict, so it stays in
+   ink while the chart above is the thing with colour. */
+.splits-table td.slower,
+.splits-table td.faster {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* ---- the run review, as mounted on the activity sheet ---- */
+.run-map {
+  height: 300px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.run-review-head {
+  margin: var(--space-2) 0 var(--space-3);
 }
 
 /* ---- this week's plan, day by day ----
@@ -5388,8 +5543,11 @@ fieldset.plan-field legend {
 
 .modal-dialog::backdrop {
   background: var(--scrim);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  /* Strong enough that the page behind genuinely stops competing: at 6px the
+     text under the scrim was still readable, which pulls the eye away from
+     the card. Desaturated with it, because colour is what reads as "live". */
+  backdrop-filter: blur(16px) saturate(0.6);
+  -webkit-backdrop-filter: blur(16px) saturate(0.6);
 }
 
 .workout-modal .workout-card {
@@ -5454,6 +5612,32 @@ fieldset.plan-field legend {
 .exec-in .workout-verdict-line { color: var(--scale-3); }
 .exec-ahead .workout-verdict-line,
 .exec-behind .workout-verdict-line { color: var(--warn); }
+
+/* The full review of a recorded run — route, headline numbers, laps, splits —
+   inside the workout modal. Same component the activity sheet uses, so a run
+   reads identically from either entry point. */
+.workout-review {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--space-4);
+}
+/* `display: grid` above beats the UA `[hidden]` rule, so the section would
+   show its border and padding on a planned session with nothing in it. */
+.workout-review[hidden] { display: none; }
+/* A grid item's automatic minimum size is its min-content width, and both the
+   stats grid and the splits table have one wider than a phone's modal — so
+   without this the whole review ran off the right edge of the card instead of
+   wrapping or scrolling. `min-width: 0` hands the sizing back to the column. */
+.workout-review > * { min-width: 0; }
+/* The splits table cannot compress below four columns of legible figures, so
+   its host scrolls rather than the page doing it. Same for the sheet. */
+.run-splits,
+.sheet-splits {
+  overflow-x: auto;
+}
+.workout-review .run-review-head { margin: var(--space-2) 0 0; }
 .workout-match { display: grid; gap: var(--space-3); margin-top: var(--space-5); }
 .workout-match[hidden] { display: none; }
 /* The two decisions a runner can still make about a session that has not
@@ -6306,12 +6490,13 @@ fieldset.plan-field legend {
   z-index: 150;
 }
 
-/* The scrim. A native dialog paints ::backdrop; we dim and blur it so the
-   page behind recedes without disappearing. */
+/* The scrim. A native dialog paints ::backdrop; we dim, blur and desaturate it
+   so the page behind stops competing for attention — at 6px the text under the
+   scrim was still readable, which pulls the eye away from the sheet. */
 .sheet-dialog::backdrop {
   background: var(--scrim);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(16px) saturate(0.6);
+  -webkit-backdrop-filter: blur(16px) saturate(0.6);
   animation: fade 0.18s var(--ease-out);
 }
 
@@ -7549,7 +7734,7 @@ main {
 }
 
 @media (max-width: 900px) {
-  :root { --gutter: 24px; --stack: 26px; }
+  :root { --gutter: 28px; --stack: 28px; }
   #nav { flex-direction: row; align-items: center; padding: 8px var(--gutter); padding-top: calc(8px + var(--safe-t)); padding-inline: calc(var(--gutter) + var(--safe-l)) calc(var(--gutter) + var(--safe-r)); border-bottom: 0; }
   #nav .brand { padding: 0; }
   #nav .nav-toggle { color: var(--on-brand); background: color-mix(in srgb, var(--on-brand) 15%, transparent); border-color: color-mix(in srgb, var(--on-brand) 20%, transparent); }
@@ -7582,16 +7767,17 @@ main {
 }
 
 @media (max-width: 560px) {
-  :root { --gutter: 16px; --stack: 22px; }
-  main { gap: 20px; padding-top: 25px; }
-  .page-header { align-items: flex-start; }
+  :root { --gutter: 20px; --stack: 24px; }
+  main { gap: 22px; padding-top: 30px; }
+  .page-header { align-items: flex-start; padding-bottom: 14px; }
   .page-actions { width: 100%; justify-content: space-between; }
   .page-header h1 { font-size: var(--type-page-mobile); }
   .page-header time { font-size: var(--text-xs); }
   .decision-lead { min-height: 230px; padding: var(--space-6); }
   .decision-lead h2 { font-size: var(--text-3xl); }
   .today-action { padding: 26px; min-height: 180px; }
-  .panel { padding: 20px; }
+  .panel { padding: 24px 22px; }
+  .tile-grid { gap: var(--space-4); }
   .bar-plot { gap: 5px; }
   .bar-fill { left: 12%; right: 12%; }
 }
@@ -7681,8 +7867,8 @@ a.btn:active { transform: scale(var(--press-scale)); }
 }
 
 @media (max-width: 560px) {
-  .settings-content > .panel:not([hidden]) { padding: 20px; }
-  .settings-content .setting-row { padding: 14px; }
+  .settings-content > .panel:not([hidden]) { padding: 24px 22px; }
+  .settings-content .setting-row { padding: 16px; }
 }
 
 /* ============================================================

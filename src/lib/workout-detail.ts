@@ -1,10 +1,11 @@
-import { tauri, fmtKm, fmtPaceBand, fmtPaceHeld, ymdLocal } from "./ipc";
+import { tauri, fmtKm, fmtPaceBand, fmtPaceHeld, fmtDateDMY, ymdLocal } from "./ipc";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
 import { EXECUTION_LABEL } from "./plan-bands";
 import { paceTrack } from "./pace-track";
+import { renderRunReview } from "./run-review";
 import { openMoveSheet, setSkipped } from "./schedule";
-import type { CalendarEvent } from "./types";
+import type { ActivityReview, CalendarEvent, Settings } from "./types";
 
 export function escapeHtml(value: string): string {
   const node = document.createElement("span");
@@ -31,8 +32,17 @@ export async function openWorkout(workoutId: string, date: string): Promise<void
 /// The workout modal is a single surface: opening another session replaces it
 /// rather than stacking a second modal on top.
 let currentWorkoutModal: Modal | null = null;
+/// Tear down the route map of the review currently on screen. Set whenever a
+/// completed activity's review mounts; run when its modal closes.
+let teardownReview: (() => void) | null = null;
 
 export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
+  // `destroy()` drops the dialog without firing the close callback, so the
+  // map of the run being replaced has to be released here as well as in
+  // `onClosed` — otherwise replacing a run with a run leaks a canvas and a
+  // theme observer every time.
+  teardownReview?.();
+  teardownReview = null;
   currentWorkoutModal?.destroy();
   currentWorkoutModal = null;
 
@@ -48,6 +58,7 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     </header><div class="workout-detail-body"><p class="workout-adjusted" hidden></p>
     <div class="workout-notes"></div>
     <div class="workout-verdict" hidden></div>
+    <div class="workout-review" hidden></div>
     <div class="workout-actions" hidden>
       <button type="button" class="secondary" data-move>Move to&hellip;</button>
       <button type="button" class="secondary" data-skip>Skip this session</button>
@@ -57,7 +68,9 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
       <button type="submit">Replace planned session</button></form>
     <p class="workout-detail-status" role="status"></p></div>`;
   card.querySelector("h2")!.textContent = event.title;
-  card.querySelector(".workout-detail-date")!.textContent = new Date(`${event.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // The weekday stays — it is the orientation this line exists to give — but
+  // the date itself carries the app's notation.
+  card.querySelector(".workout-detail-date")!.textContent = `${new Date(`${event.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long" })} · ${fmtDateDMY(event.date)}`;
   // Above the prescription, not below it: the title the runner just read is the
   // softened one, so the reason belongs in the same frame as the value it
   // explains. A scroll away from it is an explanation that never gets read.
@@ -72,7 +85,7 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
   // the question "where was it before?" actually gets asked.
   if (event.moved && event.activityId == null && event.plannedDate) {
     card.querySelector(".workout-detail-date")!.textContent +=
-      ` · moved from ${new Date(`${event.plannedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}`;
+      ` · moved from ${fmtDateDMY(event.plannedDate)}`;
   }
 
   // Native <dialog> via the shared modal controller: focus trap, Escape,
@@ -84,6 +97,8 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     className: "workout-modal",
     onClosed: () => {
       if (currentWorkoutModal === modal) currentWorkoutModal = null;
+      teardownReview?.();
+      teardownReview = null;
     },
   });
   currentWorkoutModal = modal;
@@ -131,6 +146,27 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
         /* No verdict is the normal case — an easy day, or a track that has not
            synced. Silence is the honest rendering; the match form below is the
            part of this sheet that can actually fail. */
+      });
+  }
+
+  // Every recorded run gets the full review — route, headline numbers, the
+  // laps the plan asked for with their ranges, and the kilometre splits —
+  // rendered by the shared component the activity sheet uses too, so the same
+  // run reads identically from either entry point. Best-effort like the
+  // verdict above: no review, no section.
+  if (event.activityId != null) {
+    const reviewEl = card.querySelector<HTMLElement>(".workout-review")!;
+    Promise.all([tauri.activityReview(event.activityId), tauri.getSettings()])
+      .then(([review, settings]: [ActivityReview, Settings]) => {
+        // Same staleness rule as the verdict: the modal is reused, so a late
+        // response must never paint a card it was not fetched for.
+        if (!card.isConnected) return;
+        reviewEl.hidden = false;
+        teardownReview = renderRunReview(reviewEl, review, settings);
+      })
+      .catch(() => {
+        /* A run with no reviewable data keeps the prescription and verdict —
+           the section simply is not offered. */
       });
   }
 

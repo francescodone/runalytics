@@ -59,6 +59,14 @@ const WINDOW_M: f64 = 200.0;
 /// worse than not grading the day.
 const DISTANCE_TOLERANCE: (f64, f64) = (0.6, 1.6);
 
+/// Is a recorded run close enough in distance to the session it was matched to
+/// for the planned layout to be findable inside it? Shared with the lap
+/// breakdown ([`crate::laps`]) so the per-lap chart and the session verdict can
+/// never disagree about whether a run counts as the session it stands for.
+pub fn distance_ratio_ok(ratio: f64) -> bool {
+    (DISTANCE_TOLERANCE.0..=DISTANCE_TOLERANCE.1).contains(&ratio)
+}
+
 /// Where the reps sat inside a completed session, and what the plan asked of
 /// them. Derived from the plan's own session structure, so the measurement and
 /// the prescription can never disagree about where the work was.
@@ -124,7 +132,7 @@ fn review(
     let (band_lo, band_hi) = session::quality_band(plan, workout)?;
     let planned_m = workout.distance_m.filter(|d| *d > 0.0)?;
     let activity = store.activity_by_id(activity_id).ok()??;
-    if !(DISTANCE_TOLERANCE.0..=DISTANCE_TOLERANCE.1).contains(&(activity.distance_m / planned_m)) {
+    if !distance_ratio_ok(activity.distance_m / planned_m) {
         return None;
     }
     let details = session::details_for_plan(workout, plan);
@@ -224,7 +232,12 @@ fn rep_pace(points: &[TrackPoint], start_m: f64, region_m: f64, work_m: f64) -> 
 
 /// Elapsed seconds and metres covered between two cumulative distances,
 /// interpolating the endpoints and summing whole segments in between.
-fn span_stats(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<(f64, f64)> {
+pub(crate) fn span_stats(
+    points: &[TrackPoint],
+    cum: &[f64],
+    from: f64,
+    to: f64,
+) -> Option<(f64, f64)> {
     let idx = cum.partition_point(|&c| c < from).saturating_sub(1);
     let mut secs = 0.0;
     let mut metres = 0.0;
@@ -258,7 +271,7 @@ fn span_stats(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<
 
 /// Flat-earth distance between two nearby GPS samples — good enough over a few
 /// seconds of a run, and the app has no need for a geodesic library here.
-fn metres_between(a: &TrackPoint, b: &TrackPoint) -> f64 {
+pub(crate) fn metres_between(a: &TrackPoint, b: &TrackPoint) -> f64 {
     const LAT_M: f64 = 111_320.0;
     let lon_m = LAT_M * a.lat.to_radians().cos();
     let dy = (b.lat - a.lat) * LAT_M;

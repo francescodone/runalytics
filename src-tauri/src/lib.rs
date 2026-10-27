@@ -4,6 +4,7 @@ mod calendar_publish;
 mod commands;
 mod error;
 mod fit;
+mod laps;
 mod metrics;
 mod plan;
 mod plan_sync;
@@ -129,6 +130,7 @@ pub fn run() {
             commands::heat_points,
             commands::all_activities,
             commands::activity_detail,
+            commands::activity_review,
             commands::run_scores,
             commands::create_plan,
             commands::plan_defaults,

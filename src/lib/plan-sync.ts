@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri } from "./ipc";
+import { tauri, el, fail, inTauri, fmtDateTime } from "./ipc";
 import type { PlanSync, PlanSyncStatus } from "./types";
 import { withBusy } from "./feedback";
 
@@ -13,7 +13,7 @@ import { withBusy } from "./feedback";
 let status: PlanSyncStatus | null = null;
 
 function when(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : "never";
+  return iso ? fmtDateTime(iso) : "never";
 }
 
 function describe(config: PlanSync): string {

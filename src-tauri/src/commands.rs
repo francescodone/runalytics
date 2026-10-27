@@ -10,6 +10,7 @@ use crate::assistant;
 use crate::calendar;
 use crate::calendar_publish::{self, Publishing};
 use crate::error::{AppError, Result};
+use crate::laps;
 use crate::metrics;
 use crate::plan::{adaptive, engine, pacing, receipt};
 use crate::plan::receipt::ReceiptLine;
@@ -367,6 +368,56 @@ pub async fn activity_detail(
         risk_factors,
         injury_risk,
         activity,
+    })
+}
+
+/// The review of one recorded run — the run cut into the laps the plan asked
+/// for (each with its target range) plus per-kilometre splits. Every run gets
+/// one; a run with no plan session behind it falls back to per-kilometre laps
+/// with no targets, which is still the "how did my pace move" view.
+#[tauri::command]
+pub async fn activity_review(
+    state: State<'_, AppState>,
+    activity_id: i64,
+) -> Result<ActivityReview> {
+    let activity = state
+        .store
+        .activity_by_id(activity_id)?
+        .ok_or_else(|| AppError::Other(format!("activity {activity_id} not found")))?;
+    let points = state.store.track_points(activity_id, laps::TRACK_POINTS)?;
+    let th = thresholds(&state);
+    // The plan session this run stands for, if the calendar linked them.
+    let prescribed = state.store.current_plan()?.and_then(|(plan, workouts)| {
+        let workout_id = state
+            .store
+            .calendar_completions()
+            .ok()?
+            .into_iter()
+            .find(|c| c.1 == activity_id)
+            .map(|c| c.0)?;
+        let workout = workouts.into_iter().find(|w| w.id == workout_id)?;
+        Some((plan, workout, workout_id))
+    });
+    let (laps, splits) = match &prescribed {
+        Some((plan, workout, _)) => laps::build(
+            &points,
+            &activity,
+            Some((plan, workout)),
+            th.pace_tolerance_sec_km,
+        ),
+        None => laps::build(&points, &activity, None, th.pace_tolerance_sec_km),
+    };
+    Ok(ActivityReview {
+        has_track: !points.is_empty(),
+        track: points,
+        workout_id: prescribed.as_ref().map(|p| p.2.clone()),
+        // "Prescribed" in the UI means "there are target caps to read
+        // against", which is a property of the laps, not of the lookup
+        // succeeding — a fallback layout must not claim targets it lacks.
+        prescribed: laps.iter().any(|l| l.band_lo_s_km.is_some()),
+        activity,
+        laps,
+        splits,
     })
 }
 

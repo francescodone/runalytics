@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Activity,
   ActivityDetail,
+  ActivityReview,
   CalendarEvent,
   CalendarPublishing,
   DashboardPayload,
@@ -85,6 +86,9 @@ export const tauri = {
   heatPoints: () => call<HeatPoint[]>("heat_points"),
   activityDetail: (activityId: number, range: TimeRange) =>
     call<ActivityDetail>("activity_detail", { activityId, range }),
+  /** The run cut into laps and kilometre splits — see `ActivityReview`. */
+  activityReview: (activityId: number) =>
+    call<ActivityReview>("activity_review", { activityId }),
   allActivities: () => call<Activity[]>("all_activities"),
   runScores: () => call<RunScore[]>("run_scores"),
   createPlan: (request: PlanRequest) =>
@@ -207,6 +211,37 @@ export function fmtDate(iso: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+/// A date as `dd/MM/yyyy` — the notation every printed date in the app uses.
+/// `YYYY-MM-DD` inputs are parsed at local noon: UTC midnight would label the
+/// day before for any west-of-UTC reader.
+export function fmtDateDMY(value: string | number | Date): string {
+  const d =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T12:00:00`)
+      : new Date(value);
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+/// A moment as `HH:mm dd/MM/yyyy`, local time — the app's timestamp format.
+export function fmtDateTime(value: string | number | Date): string {
+  const d =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T12:00:00`)
+      : new Date(value);
+  return `${d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  })} ${d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  })}`;
 }
 
 /// Local calendar day as `YYYY-MM-DD`. Never use

@@ -1,4 +1,4 @@
-import { tauri, el, fail, fmtDate, fmtKm, inTauri } from "./lib/ipc";
+import { tauri, el, fail, fmtDateDMY, fmtKm, inTauri } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -110,13 +110,13 @@ async function loadEntries(): Promise<void> {
     const card = document.createElement("article");
     card.className = `pain-card surface ${e.resolvedOn ? "resolved" : "active"}${cascade ? " pain-enter" : ""}`;
     const status = e.resolvedOn
-      ? `resolved ${fmtDate(e.resolvedOn)}`
+      ? `resolved ${fmtDateDMY(e.resolvedOn)}`
       : "still hurting";
     card.innerHTML = `
       <header>
         <span class="chip pain-chip ${intensityColor(e.intensity)}">${e.intensity}/10</span>
         <strong>${regionLabel(e.bodyPart)}</strong>
-        <span class="muted">since ${fmtDate(e.startedOn)} · ${status}</span>
+        <span class="muted">since ${fmtDateDMY(e.startedOn)} · ${status}</span>
       </header>
       ${e.notes ? `<p class="pain-notes">${escapeHtml(e.notes)}</p>` : ""}
       <div class="entry-chat" hidden></div>
@@ -226,11 +226,7 @@ function renderProposal(): void {
   const edits = proposal.edits
     .map((e) => {
       const day = e.date
-        ? new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-          })
+        ? `${new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })} ${fmtDateDMY(e.date)}`
         : "";
       const was = e.oldTitle ?? e.title;
       const wasKm =

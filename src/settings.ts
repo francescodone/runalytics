@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtDateTime } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { initSegmented } from "./lib/segmented";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -418,7 +418,7 @@ function applyStatus(statuses: ProviderStatus[]): void {
   setBadge(el("coros-status"), connected);
   el<HTMLButtonElement>("coros-disconnect").disabled = !connected;
   el("coros-detail").textContent = coros?.lastSync
-    ? `Last sync: ${new Date(coros.lastSync).toLocaleString()}`
+    ? `Last sync: ${fmtDateTime(coros.lastSync)}`
     : (coros?.detail ?? "");
 }
 

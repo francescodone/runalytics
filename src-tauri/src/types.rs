@@ -381,6 +381,105 @@ pub struct SessionReview {
     pub execution: Execution,
 }
 
+/// What a stretch of a recorded run was for. Decides how a lap is drawn: only
+/// a work lap is given a target cap, an easy or recovery lap is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LapKind {
+    /// Warm-up, cool-down, or an easy run — a ceiling, never a target.
+    Easy,
+    /// The prescribed work: reps, tempo blocks, floats.
+    Work,
+    /// Jog or float between reps.
+    Recovery,
+    /// A per-kilometre lap, used when nothing was prescribed to cut along.
+    Kilometre,
+}
+
+/// How one lap landed against what it asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LapVerdict {
+    /// Faster than the fast end of the range.
+    Ahead,
+    /// Inside the range — the point of having one.
+    #[serde(rename = "in")]
+    InRange,
+    /// Slower than the slow end of the range.
+    Behind,
+}
+
+/// One stretch of a recorded run, cut where the prescription says the shape of
+/// the run changes. See [`crate::laps`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LapSlice {
+    /// 1-based, for the axis label.
+    pub index: u32,
+    /// The prescribed lap's own words, e.g. "Tempo - cruise intervals".
+    pub label: String,
+    pub kind: LapKind,
+    /// Metres into the run where this lap begins.
+    pub start_m: f64,
+    /// Metres the lap actually covers on the recorded track.
+    pub meters: f64,
+    pub duration_s: f64,
+    /// `None` when the track under the lap was too thin to measure.
+    pub avg_pace_s_km: Option<f64>,
+    pub avg_hr: Option<i64>,
+    /// The range the lap asked for — set on the work only. An easy or
+    /// recovery lap has `None` here and carries no target marker, which is
+    /// the whole point: nothing was asked for, so nothing is drawn as a cap.
+    pub band_lo_s_km: Option<i64>,
+    pub band_hi_s_km: Option<i64>,
+    pub verdict: Option<LapVerdict>,
+}
+
+/// One kilometre of a run, cut by the distance rather than by the plan.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KmSplit {
+    /// 1-based kilometre number.
+    pub km: u32,
+    pub meters: f64,
+    pub duration_s: f64,
+    pub avg_pace_s_km: Option<f64>,
+    pub avg_hr: Option<i64>,
+    /// Seconds per km against the previous kilometre. Positive means the pace
+    /// dropped — a direction, not a verdict, which is why the UI prints it in
+    /// plain ink rather than borrowing the traffic-light tones.
+    pub delta_prev_s_km: Option<f64>,
+    /// The band of the prescribed work lap this kilometre fell inside, when
+    /// the run had a prescription. Only the work has a band, so a kilometre
+    /// under a warm-up, recovery, or cool-down stays unmarked.
+    pub band_lo_s_km: Option<i64>,
+    pub band_hi_s_km: Option<i64>,
+}
+
+/// The review of one recorded run: the route, the headline numbers, and the
+/// run cut into laps and kilometres. Every run gets one, plan or no plan —
+/// which is the difference from [`SessionReview`], which grades a *session*
+/// and therefore needs a session to grade against.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityReview {
+    pub activity: Activity,
+    /// False when the GPS track has not synced: the stats are still real, the
+    /// laps and splits are not. The UI says so instead of drawing an empty chart.
+    pub has_track: bool,
+    /// The route, so the review surface can draw the map without a second
+    /// command — the calendar's workout modal never fetches `activity_detail`.
+    pub track: Vec<TrackPoint>,
+    /// The plan session this run stands for, when there is one. Its notes carry
+    /// the prescription in the runner's own readable form.
+    pub workout_id: Option<String>,
+    /// True when the laps are the plan's laps rather than per-kilometre laps —
+    /// i.e. when there are target caps to read against.
+    pub prescribed: bool,
+    pub laps: Vec<LapSlice>,
+    pub splits: Vec<KmSplit>,
+}
+
 /// What the pacing engine made of a run of quality sessions, for the UI.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -11,7 +11,7 @@
    picker the same way so the choice is offered, and the backend's error is
    what surfaces if the state moved under us. */
 
-import { tauri, fail, ymdLocal } from "./ipc";
+import { tauri, fail, ymdLocal, fmtDateDMY } from "./ipc";
 import { createSheet, type Sheet } from "./overlay";
 import { withBusy } from "./feedback";
 import type { CalendarEvent, WeekDeviation } from "./types";
@@ -31,11 +31,7 @@ function fromYmd(value: string): Date {
 }
 
 function weekdayLabel(value: string): string {
-  return fromYmd(value).toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
+  return `${fromYmd(value).toLocaleDateString(undefined, { weekday: "short" })} ${fmtDateDMY(value)}`;
 }
 
 /* ---- the toast, with an optional action ---- */

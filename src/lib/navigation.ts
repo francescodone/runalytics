@@ -1,4 +1,5 @@
 import { icons } from "./icons";
+import { fmtDateDMY } from "./ipc";
 
 const nav = document.querySelector<HTMLElement>("#nav");
 const main = document.querySelector<HTMLElement>("#app");
@@ -120,9 +121,9 @@ if (nav && main) {
     const date = document.createElement("time");
     const today = new Date();
     date.dateTime = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    date.textContent = today.toLocaleDateString(undefined, {
-      weekday: "long", month: "long", day: "numeric",
-    });
+    date.textContent = `${today.toLocaleDateString(undefined, {
+      weekday: "long",
+    })} \u00b7 ${fmtDateDMY(today)}`;
     const planLink = document.createElement("a");
     planLink.className = "header-action";
     planLink.id = "header-plan-cta";
