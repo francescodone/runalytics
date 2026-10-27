@@ -1,8 +1,6 @@
-import { tauri, fmtKm, fmtPaceBand, fmtPaceHeld, fmtDateDMY, ymdLocal } from "./ipc";
+import { tauri, fmtKm, fmtDateDMY, ymdLocal } from "./ipc";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
-import { EXECUTION_LABEL } from "./plan-bands";
-import { paceTrack } from "./pace-track";
 import { renderRunReview } from "./run-review";
 import { openMoveSheet, setSkipped } from "./schedule";
 import type { ActivityReview, CalendarEvent, Settings } from "./types";
@@ -57,7 +55,6 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     </div>
     </header><div class="workout-detail-body"><p class="workout-adjusted" hidden></p>
     <div class="workout-notes"></div>
-    <div class="workout-verdict" hidden></div>
     <div class="workout-review" hidden></div>
     <div class="workout-actions" hidden>
       <button type="button" class="secondary" data-move>Move to&hellip;</button>
@@ -123,37 +120,13 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     }
   });
 
-  // A completed tempo or interval run gets the same verdict the Plan page
-  // shows, but here — on the activity the runner just opened, which is where
-  // the question "did that go well?" is actually being asked.
-  if (event.workoutId && event.activityId != null) {
-    const verdict = card.querySelector<HTMLElement>(".workout-verdict")!;
-    tauri
-      .sessionReview(event.workoutId)
-      .then((review) => {
-        // The sheet is a single reusable surface: opening another session
-        // replaces this card, so a late response must not paint a dead one.
-        if (!review || !card.isConnected) return;
-        // The tone class goes on the container, not the bar: the verdict
-        // sentence and the bar are one read-out, and the colour belongs to both.
-        verdict.className = `workout-verdict exec-${review.execution}`;
-        verdict.hidden = false;
-        verdict.innerHTML = `<p class="workout-verdict-line">Reps ${EXECUTION_LABEL[review.execution]} —
-          <span class="workout-verdict-paces">${fmtPaceBand(review.bandLoSKm, review.bandHiSKm)}${review.actualSKm != null ? `, held ${fmtPaceHeld(review.actualSKm)}` : ", no track synced"}</span></p>
-          ${paceTrack([review.bandLoSKm, review.bandHiSKm], review.actualSKm, review.execution)}`;
-      })
-      .catch(() => {
-        /* No verdict is the normal case — an easy day, or a track that has not
-           synced. Silence is the honest rendering; the match form below is the
-           part of this sheet that can actually fail. */
-      });
-  }
-
   // Every recorded run gets the full review — route, headline numbers, the
   // laps the plan asked for with their ranges, and the kilometre splits —
   // rendered by the shared component the activity sheet uses too, so the same
-  // run reads identically from either entry point. Best-effort like the
-  // verdict above: no review, no section.
+  // run reads identically from either entry point. The session verdict lives
+  // inside that review, as the sentence under the lap chart: one read-out per
+  // run rather than a separate block saying the same thing in another shape.
+  // Best-effort: no review, no section.
   if (event.activityId != null) {
     const reviewEl = card.querySelector<HTMLElement>(".workout-review")!;
     Promise.all([tauri.activityReview(event.activityId), tauri.getSettings()])
@@ -165,8 +138,8 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
         teardownReview = renderRunReview(reviewEl, review, settings);
       })
       .catch(() => {
-        /* A run with no reviewable data keeps the prescription and verdict —
-           the section simply is not offered. */
+        /* A run with no reviewable data keeps the prescription — the review
+           section simply is not offered. */
       });
   }
 

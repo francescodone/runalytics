@@ -11,6 +11,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { inTauri } from "./ipc";
+import { prefersReducedMotion } from "./motion";
 import { icons } from "./icons";
 import type { Settings, TrackPoint } from "./types";
 
@@ -184,6 +185,56 @@ export function mapControls(fit: () => void) {
   };
 }
 
+/// Trace the track from start to finish, as if the run were being drawn
+/// again. The geometry is sliced rather than dashed: `line-dasharray` is
+/// measured in screen pixels, so a dash-based reveal would change shape with
+/// zoom, while walking the point list draws the same path at any scale. GPS
+/// points arrive roughly evenly spaced in time, so stepping them by count
+/// reads as an even speed.
+function drawTrack(map: maplibregl.Map, coords: [number, number][]): void {
+  const total = coords.length - 1;
+  if (total < 2) return;
+  const source = () => map.getSource("track") as maplibregl.GeoJSONSource | undefined;
+  /// The first `t` of the route, with the leading edge interpolated between
+  /// the two points it lies on so the head glides instead of jumping.
+  const lineTo = (t: number): [number, number][] => {
+    const travel = t * total;
+    const k = Math.min(Math.floor(travel), total - 1);
+    const frac = travel - k;
+    const a = coords[k];
+    const b = coords[k + 1];
+    const head: [number, number] =
+      frac > 0 ? [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac] : b;
+    return [...coords.slice(0, k + 1), head];
+  };
+  const repaint = (t: number): void => {
+    source()?.setData({
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: { kind: "line" }, geometry: { type: "LineString", coordinates: lineTo(t) } },
+        { type: "Feature", properties: { kind: "start" }, geometry: { type: "Point", coordinates: coords[0] } },
+        { type: "Feature", properties: { kind: "finish" }, geometry: { type: "Point", coordinates: coords[coords.length - 1] } },
+      ],
+    });
+  };
+  // The finish dot waits for the line to arrive: a destination shown before
+  // the journey is drawn is the map answering its own question.
+  map.setPaintProperty("track-ends", "circle-opacity", ["match", ["get", "kind"], "finish", 0, 1]);
+  repaint(0);
+  // Same beat as --dur-draw, the app's one draw-in duration (gauge, sparkline).
+  const duration = 900;
+  const start = performance.now();
+  let raf = 0;
+  const step = (now: number): void => {
+    const t = Math.min((now - start) / duration, 1);
+    repaint(1 - (1 - t) ** 3); // ease-out: the pen starts fast, settles at the end
+    if (t < 1) raf = requestAnimationFrame(step);
+    else map.setPaintProperty("track-ends", "circle-opacity", 1);
+  };
+  map.on("remove", () => cancelAnimationFrame(raf));
+  raf = requestAnimationFrame(step);
+}
+
 /// Mount a run's route into `el`: the track as a glowing line with start and
 /// finish dots at opposite ends of the data ramp, fitted to its own extent.
 /// Returns the map so the caller can tear it down when its surface closes.
@@ -282,6 +333,10 @@ export function mountRouteMap(
       },
     });
     map.fitBounds(bounds, { padding: 36, maxZoom: 16 });
+    // The run replays itself once: the line is traced start to finish, which
+    // is what makes a static dot-to-dot read as the route that was actually
+    // run. Skipped when the runner asked for less motion.
+    if (!prefersReducedMotion()) drawTrack(map, coords);
   });
   return map;
 }

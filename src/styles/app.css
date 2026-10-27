@@ -1252,6 +1252,31 @@ main {
     transition-delay: 0s;
   }
 
+  /* The page behind an open menu recedes. The dropdown is a sheet, and a
+     sheet that leaves the page fully sharp behind it reads as more content
+     rather than an overlay — the same foreground blur the modals and the
+     activity sheet get from their ::backdrop. The nav sits above this layer
+     (z-index 20 vs 10), so the toolbar and the menu stay sharp while what
+     they cover softens. Clicks land here and the existing outside-click
+     handler closes the menu. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: var(--scrim);
+    backdrop-filter: blur(16px) saturate(0.6);
+    -webkit-backdrop-filter: blur(16px) saturate(0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  body:has(#nav[data-open="true"])::before {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .nav-link[href="settings.html"] {
     margin-top: 0;
   }
@@ -1333,7 +1358,7 @@ p {
 /* Section eyebrow — the one heading style for a section title, everywhere. */
 h2 {
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: 650;
   text-transform: none;
   /* The reference's card/section headings carry a touch of negative
      tracking even at 17px — Geist reads tighter than the system stack. */
@@ -1343,12 +1368,30 @@ h2 {
   text-wrap: balance;
 }
 
-/* Sub-headings inside a panel/card read the same way, one size down. */
+/* Sub-headings inside a panel/card read the same way, one size down. The step
+   down is the point: h2 names a section, h3 names a part of one, and at the
+   same size the two roles collapse into one voice with no hierarchy. */
 h3 {
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: 600;
   letter-spacing: -0.02em;
   margin: 0 0 var(--space-3);
+}
+
+/* A link inside running copy (an unclassed anchor — every styled link in the
+   app carries a class) took the browser's default blue underline, the one
+   colour in the UI nothing else uses. Same voice as the styled inline links:
+   theme accent, underline only on hover. */
+main a:not([class]) {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+main a:not([class]):hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* ---- shared atoms -------------------------------------------------------
@@ -1565,10 +1608,10 @@ form {
   animation: rise var(--transition-enter);
 }
 
+/* Same sub-heading role as every other h3 in the app — the global rule owns
+   size/weight/tracking, this keeps only the margin reset. */
 #setup-wizard h3 {
   margin: 0;
-  font-size: var(--text-xl);
-  letter-spacing: 0;
 }
 
 #setup-wizard p {
@@ -2405,6 +2448,18 @@ body::after {
   background: color-mix(in srgb, var(--fill) 90%, transparent);
 }
 
+/* The sentence naming which laps missed, under the legend. Same type as the
+   legend (it reads as part of the chart, not a paragraph after it); the
+   all-in case borrows the chart's own strongest step, so the praise is the
+   same green as the bars it describes. */
+.lap-verdict-summary {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.lap-verdict-all-in { color: var(--scale-3); }
+
 /* ---- kilometre splits ----
    The clock's reading, next to the plan's. The delta column carries a sign
    and nothing else: a table row is a read-out, not a verdict, so it stays in
@@ -2715,11 +2770,13 @@ body::after {
   animation: medal-pop var(--dur-pop) var(--ease-out) both;
 }
 
+/* An h2 role (it titles the step's panel), so it takes the section-heading
+   step of the ladder rather than a one-off display size. */
 .ob-title {
   margin: 0;
-  font-size: var(--text-2xl);
-  font-weight: 700;
-  letter-spacing: 0;
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
   text-transform: none;
   color: var(--text);
 }
@@ -2805,7 +2862,8 @@ body::after {
 
 .card-label {
   color: var(--text-dim);
-  font-size: var(--text-base);
+  font-size: var(--label-size);
+  font-weight: 500;
   margin-top: 3px;
 }
 
@@ -3056,7 +3114,8 @@ body::after {
 }
 
 .stat-label {
-  font-size: var(--text-sm);
+  font-size: var(--label-size);
+  font-weight: 500;
   color: var(--text-dim);
 }
 
@@ -3220,8 +3279,9 @@ body::after {
   display: block;
   margin-top: var(--space-1);
   font-size: var(--label-size);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 
@@ -3699,6 +3759,12 @@ button.icon-btn:hover {
 }
 
 button.icon-btn svg {
+  /* The glyph is the button's only content, so it must be a block: an inline
+     svg sits on the text baseline, which leaves a descender's worth of empty
+     line-box under it and draws the arrow visibly high inside its square —
+     the calendar's month arrows sat ~2px above the title they flank. As a
+     block, `place-items: center` centres the real box. */
+  display: block;
   pointer-events: none;
 }
 
@@ -5252,10 +5318,10 @@ fieldset.plan-field legend {
 
 .tile span {
   font-size: var(--label-size);
-  font-weight: 600;
+  font-weight: 500;
   text-transform: none;
   letter-spacing: var(--label-track);
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 
 .tile.center {
@@ -5590,28 +5656,6 @@ fieldset.plan-field legend {
   font-size: var(--text-sm);
   line-height: 1.5;
 }
-
-/* The lap verdict, on the activity it describes. The bar is the shared
-   `.pacing-track` from the Plan page — same drawing, same accessible label —
-   so a runner who has seen both surfaces reads it the same way twice. */
-.workout-verdict {
-  margin-top: var(--space-5);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--line);
-}
-.workout-verdict[hidden] { display: none; }
-.workout-verdict-line { margin: 0 0 var(--space-3); font-weight: 600; }
-.workout-verdict-paces {
-  font-weight: 400;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-/* Outside the Plan page's grid the track is a bare span, and an inline box
-   ignores the 10px height the bar is drawn at. */
-.workout-verdict .pacing-track { display: block; }
-.exec-in .workout-verdict-line { color: var(--scale-3); }
-.exec-ahead .workout-verdict-line,
-.exec-behind .workout-verdict-line { color: var(--warn); }
 
 /* The full review of a recorded run — route, headline numbers, laps, splits —
    inside the workout modal. Same component the activity sheet uses, so a run
@@ -6728,12 +6772,15 @@ fieldset.plan-field legend {
   padding: var(--space-8) var(--space-6);
 }
 
-/* Not an eyebrow — the empty state speaks in sentences. */
+/* Not an eyebrow — the empty state speaks in sentences. One size for every
+   empty state in the app (the dashboard's first-run CTA included), so the
+   "nothing here yet" voice is the same voice on every page. */
 .empty-state h3 {
   margin: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
+  font-weight: 650;
   text-transform: none;
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
   color: var(--text);
 }
 
@@ -7526,7 +7573,7 @@ main {
   color: var(--primary-text);
   text-decoration: none;
   white-space: nowrap;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: 600;
   transition: transform var(--transition-control), opacity var(--transition-control);
 }
@@ -7700,14 +7747,16 @@ main {
 #dash .group > .group-head {
   position: static;
   padding: 0;
+  /* The section-title voice, verbatim — same size, weight and tracking as
+     every other page's h2. A group head is a section title with a rule. */
   font-size: var(--text-xl);
-  font-weight: 700;
-  letter-spacing: -0.035em;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 #dash .group > .group-head::after { background: var(--line-strong); }
 .group > .panel:nth-child(n) { animation-delay: 0s; }
 .panel-head { align-items: center; }
-.panel-head h2 { font-size: var(--text-lg); font-weight: 650; letter-spacing: -0.02em; }
+.panel-head h2 { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.02em; }
 .panel-meta { font-size: var(--text-sm); }
 #dash #week-tiles { padding-top: 14px; border-top: 1px solid var(--line); }
 #dash #week-tiles .tile { padding: 8px 12px; border-right: 1px solid var(--line); }
@@ -7841,9 +7890,6 @@ a.btn:active { transform: scale(var(--press-scale)); }
   background: var(--panel-2);
   box-shadow: none;
 }
-#calendar .empty-state h3,
-#streak-stats .empty-state h3,
-#pain-list .empty-state h3 { font-size: var(--text-xl); }
 #calendar .empty-state p,
 #streak-stats .empty-state p,
 #pain-list .empty-state p { font-size: var(--text-md); line-height: 1.55; }

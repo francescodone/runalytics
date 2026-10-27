@@ -132,7 +132,24 @@ export function renderLapChart(host: HTMLElement, review: ActivityReview): void 
   <p class="lap-legend">${review.prescribed
     ? `<span class="lap-key"><span class="lap-key-box" aria-hidden="true"></span>prescribed range</span>`
     : `<span class="lap-key">per kilometre — no session was planned for this run</span>`}
-    <span class="lap-key">taller is faster</span></p>`;
+    <span class="lap-key">taller is faster</span></p>
+  ${lapVerdictSummary(laps)}`;
+}
+
+/// The sentence under the chart: which laps the plan graded, and where each
+/// one landed. The chart shows the shape, this names the misses — "Rep 2 too
+/// fast" — so the answer does not depend on reading bar-tops against boxes.
+/// When every graded lap landed inside its range the sentence says that too:
+/// silence after a good session reads as a missing feature, not as praise.
+function lapVerdictSummary(laps: LapSlice[]): string {
+  const graded = laps.filter((l) => l.verdict);
+  if (graded.length === 0) return "";
+  const misses = graded.filter((l) => l.verdict !== "in");
+  if (misses.length === 0) {
+    return `<p class="lap-verdict-summary lap-verdict-all-in">All ${graded.length} ${graded.length === 1 ? "lap" : "laps"} the plan graded landed in the prescribed range.</p>`;
+  }
+  const parts = misses.map((l) => `${l.kind === "kilometre" ? "Km" : "Lap"} ${l.index} ${VERDICT_LABEL[l.verdict ?? "in"]}`);
+  return `<p class="lap-verdict-summary">${escapeHtml(parts.join(" · "))}.</p>`;
 }
 
 /// The axis caption has a few characters to work with, so it carries the lap
