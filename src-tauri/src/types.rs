@@ -496,6 +496,38 @@ pub struct PacingReport {
     pub triggered: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaceInsightRep {
+    pub index: u32,
+    pub label: String,
+    pub actual_s_km: f64,
+    pub band_lo_s_km: i64,
+    pub band_hi_s_km: i64,
+    pub relative_pace: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaceInsightSession {
+    pub workout_id: String,
+    pub activity_id: i64,
+    pub date: NaiveDate,
+    pub title: String,
+    pub kind: WorkoutKind,
+    pub outdated: bool,
+    pub reps: Vec<PaceInsightRep>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaceInsights {
+    pub speed: Vec<PaceInsightSession>,
+    pub long: Vec<PaceInsightSession>,
+    pub next_speed: Option<PlanWorkout>,
+    pub next_long: Option<PlanWorkout>,
+}
+
 /// What the runner has decided about a planned session. Only these two states
 /// are stored; `missed` is *derived* (see [`PlanWorkout::is_missed`]) because it
 /// is a fact about the calendar, not a decision anyone made — a session nobody
@@ -593,6 +625,7 @@ pub struct DashboardScores {
 #[serde(rename_all = "camelCase")]
 pub struct ScorePoint {
     pub date: NaiveDate,
+    pub readiness: u32,
     pub training: u32,
     pub recovery: u32,
     /// 0..=100 injury risk (higher = riskier), same polarity as the headline.

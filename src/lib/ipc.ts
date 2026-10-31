@@ -11,6 +11,7 @@ import type {
   PainEntry,
   PainMessage,
   PacingReport,
+  PaceInsights,
   PlanDefaults,
   PlanProposal,
   PlanRequest,
@@ -155,6 +156,7 @@ export const tauri = {
   pendingPacingProposal: () =>
     call<PlanProposal | null>("pending_pacing_proposal"),
   pacingReport: () => call<PacingReport | null>("pacing_report"),
+  paceInsights: () => call<PaceInsights | null>("pace_insights"),
   sessionReview: (workoutId: string) =>
     call<SessionReview | null>("session_review", { workoutId }),
   planReceipt: () => call<ReceiptLine[] | null>("plan_receipt"),

@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#5544e9" />
+    <meta name="theme-color" content="#ffffff" />
     <title>Runalytics — Plan</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
   </head>
@@ -14,11 +14,12 @@
     <a class="skip-link" href="#app">Skip to content</a>
     <nav id="nav" aria-label="Main">
       <span class="brand">Runalytics</span>
-      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="index.html" class="nav-link">Today</a>
       <a href="plan.html" class="nav-link active">Plan</a>
       <a href="calendar.html" class="nav-link">Calendar</a>
       <a href="injury.html" class="nav-link">Injuries</a>
-      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="achievements.html" class="nav-link">Progress</a>
+      <a href="support.html" class="nav-link">Support</a>
       <a href="settings.html" class="nav-link">Settings</a>
     </nav>
     <main id="app">
@@ -209,28 +210,19 @@
           You already have an active plan. Use Abort plan above before creating another.
         </p>
       </section>
-      <section id="plan-receipt" class="panel" hidden>
-        <header class="panel-head">
-          <h2>What this plan was built from</h2>
-          <p class="panel-meta">
-            Each line is something you told me, and what it did to the plan
-          </p>
-        </header>
+      <details id="plan-receipt" class="panel disclosure" hidden>
+        <summary>What shaped this plan</summary>
         <ol class="plan-receipt" id="plan-receipt-list"></ol>
-      </section>
+      </details>
       <section id="plan-view" class="panel">
         <header class="panel-head">
-          <h2>Plan actions</h2>
-          <p class="panel-meta">
-            The calendar is where the plan lives — sessions, changes and what you
-            actually ran: <a href="calendar.html">open the calendar</a>.
-          </p>
+          <h2>Your plan</h2>
+          <button id="push-plan" disabled>Send to watch</button>
         </header>
         <div id="plan-status"></div>
-        <div class="actions">
-          <button id="push-plan" disabled>Push to the device</button>
+        <details class="plan-management"><summary>Manage plan</summary><div class="actions">
           <button id="abort-plan" class="danger" disabled>Abort plan</button>
-        </div>
+        </div></details>
       </section>
       <section id="pacing-section" class="panel" hidden>
         <header class="panel-head">

@@ -82,6 +82,9 @@ async function savePain(): Promise<void> {
       await Promise.all([loadEntries(), loadTints(), loadProposal()]);
       return offer;
     });
+    const form = el<HTMLDetailsElement>("log-pain");
+    form.open = false;
+    form.querySelector("summary")?.focus();
     if (offer) {
       el("proposal-section").hidden = false;
       scrollIntoViewMotion(el("proposal-section"), { block: "start" });
@@ -97,7 +100,14 @@ async function loadEntries(): Promise<void> {
   entries = await tauri.painEntries();
   const list = el("pain-list");
   if (entries.length === 0) {
-    list.innerHTML = `<p class="muted">Nothing logged yet — pick a spot above.</p>`;
+    list.innerHTML = '<div class="empty-state"><h3>No pain logged</h3><p>Your symptoms and recovery history will appear here.</p><button type="button" class="secondary" id="pain-empty-log">Log pain</button></div>';
+    el("pain-empty-log").addEventListener("click", () => {
+      const form = el<HTMLDetailsElement>("log-pain");
+      form.open = true;
+      scrollIntoViewMotion(form, { block: "start" });
+      const target = el("bodymap").querySelector<HTMLElement>("select, [tabindex='0'], button");
+      (target ?? form.querySelector("summary"))?.focus({ preventScroll: true });
+    });
     return;
   }
   list.innerHTML = "";

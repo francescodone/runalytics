@@ -166,6 +166,7 @@ pub fn run() {
             commands::pending_proposal,
             commands::pending_pacing_proposal,
             commands::pacing_report,
+            commands::pace_insights,
             commands::session_review,
             commands::plan_receipt,
             commands::proposals,

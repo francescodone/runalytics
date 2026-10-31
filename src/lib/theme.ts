@@ -45,6 +45,7 @@ export const PALETTES: {
   swatch: [string, string, string];
   bar: string;
 }[] = [
+  { id: "reference", name: "System", blurb: "Neutral surfaces and clear blue accents", swatch: ["#f5f5f7", "#0066cc", "#087f78"], bar: "#f5f5f7" },
   { id: "amethyst", name: "Amethyst Dusk", blurb: "The original violet twilight", swatch: ["#151321", "#7650dd", "#b6a7ff"], bar: "#5544e9" },
   { id: "glacier", name: "Glacier Lake", blurb: "Cold, clear alpine blue", swatch: ["#0a1721", "#0077bc", "#6ebdff"], bar: "#00719b" },
   { id: "evergreen", name: "Evergreen Trail", blurb: "Deep forest and fresh moss", swatch: ["#0b1911", "#008557", "#6fcc9e"], bar: "#007d31" },
@@ -64,14 +65,14 @@ function isPalette(v: unknown): v is PaletteId {
 function paintStatusBar(palette: PaletteId): void {
   const meta = document.querySelector<HTMLMetaElement>("meta[name='theme-color']");
   const bar = PALETTES.find((p) => p.id === palette)?.bar;
-  if (meta && bar) meta.content = bar;
+  if (meta && bar) meta.content = palette === "reference" && currentTheme() === "dark" ? "#161618" : bar;
 }
 
 /** Paint a palette and mirror it to the cache. The default carries no
  * attribute, so the base token set in app.css applies untouched. */
 export function setPalette(id: PaletteId | null | undefined): PaletteId {
-  const palette = isPalette(id) ? id : "amethyst";
-  if (palette === "amethyst") delete document.documentElement.dataset.palette;
+  const palette = isPalette(id) ? id : "reference";
+  if (palette === "reference") delete document.documentElement.dataset.palette;
   else document.documentElement.dataset.palette = palette;
   paintStatusBar(palette);
   try {
@@ -123,6 +124,7 @@ let listening = false;
 export function setTheme(choice: ThemeChoice | null | undefined): ResolvedTheme {
   const theme = resolveTheme(choice);
   document.documentElement.dataset.theme = theme;
+  paintStatusBar(readPaletteCache() ?? "reference");
   try {
     localStorage.setItem(CACHE_KEY, choice ?? "system");
   } catch {

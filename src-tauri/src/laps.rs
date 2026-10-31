@@ -90,6 +90,46 @@ pub fn build(
     (laps, splits)
 }
 
+pub fn insight_laps(
+    points: &[TrackPoint],
+    activity: &Activity,
+    plan: &TrainingPlan,
+    workout: &PlanWorkout,
+) -> Vec<LapSlice> {
+    let details = session::details_for_plan(workout, plan);
+    let planned_m = details.distance_m();
+    if planned_m <= 0.0 || !distance_ratio_ok(activity.distance_m / planned_m) {
+        return Vec::new();
+    }
+    let Some(slots) = slots(&details.steps) else {
+        return Vec::new();
+    };
+    completed_insight_laps(points, &slots)
+}
+
+fn completed_insight_laps(points: &[TrackPoint], slots: &[Slot]) -> Vec<LapSlice> {
+    if points.windows(2).any(|pair| pair[1].ts <= pair[0].ts)
+        || points.iter().any(|point| {
+            !point.lat.is_finite()
+                || !point.lon.is_finite()
+                || point.lat.abs() > 90.0
+                || point.lon.abs() > 180.0
+        })
+    {
+        return Vec::new();
+    }
+    prescribed_laps(points, slots, 1.0, 0.0)
+        .into_iter()
+        .filter(|lap| {
+            let slot = &slots[lap.index as usize - 1];
+            lap.kind == LapKind::Work
+                && lap.meters >= slot.meters * 0.98
+                && matches!((lap.band_lo_s_km, lap.band_hi_s_km), (Some(lo), Some(hi)) if lo > 0 && hi >= lo)
+                && lap.avg_pace_s_km.is_some_and(|pace| pace.is_finite() && (120.0..=1200.0).contains(&pace))
+        })
+        .collect()
+}
+
 /// Turn the plan's steps into the run's shape: work laps, with a recovery slot
 /// between each repeat. `None` when the session has no measurable structure.
 ///
@@ -410,6 +450,39 @@ mod tests {
             recovery_pace_hi_s_km: Some(420),
             open_ended: false,
         }
+    }
+
+    #[test]
+    fn insights_exclude_partial_reps_recoveries_and_invalid_tracks() {
+        let slots = vec![
+            slot(LapKind::Easy, 1000.0, (None, None)),
+            slot(LapKind::Work, 1000.0, (Some(295), Some(305))),
+            slot(LapKind::Recovery, 400.0, (None, None)),
+            slot(LapKind::Work, 1000.0, (Some(295), Some(305))),
+        ];
+        let mut points = track(&[
+            (1000.0, 400.0),
+            (1000.0, 300.0),
+            (400.0, 450.0),
+            (500.0, 290.0),
+        ]);
+        let laps = completed_insight_laps(&points, &slots);
+        assert_eq!(laps.len(), 1);
+        assert_eq!(laps[0].index, 2);
+        assert!((laps[0].avg_pace_s_km.unwrap() - 300.0).abs() < 0.5);
+        points[20].ts = points[19].ts;
+        assert!(completed_insight_laps(&points, &slots).is_empty());
+        assert!(completed_insight_laps(&[], &slots).is_empty());
+    }
+
+    #[test]
+    fn insights_keep_a_single_tempo_and_reject_implausible_pace() {
+        let slots = vec![slot(LapKind::Work, 3000.0, (Some(295), Some(305)))];
+        assert_eq!(
+            completed_insight_laps(&track(&[(3000.0, 300.0)]), &slots).len(),
+            1
+        );
+        assert!(completed_insight_laps(&track(&[(3000.0, 60.0)]), &slots).is_empty());
     }
 
     #[test]

@@ -738,6 +738,11 @@ pub async fn match_calendar_activity(
         let _guard = state.calendar_lock.lock().await;
         calendar::match_activity(&state.store, &workout_id, activity_id)?;
     }
+    if let Some((plan, _)) = state.store.current_plan()? {
+        if let Some(offer) = pacing::build(&state.store, &plan, &thresholds(&state))? {
+            state.store.insert_proposal(&offer)?;
+        }
+    }
     calendar_publish::refresh(&state).await?;
     Ok(())
 }
@@ -1092,10 +1097,8 @@ pub async fn proposals(state: State<'_, AppState>, limit: i64) -> Result<Vec<Pla
 }
 
 /// Accept an offer. Pain offers rewrite their days through `apply_workout_edits`;
-/// a pacing offer rewrites nothing — it stores the plan's new quality-pace
-/// offset, and every range downstream (calendar notes, watch push, the Plan
-/// page's bars) shifts through that one number. Both then refresh the calendar
-/// and re-push so all mirrors of the plan move together.
+/// pacing offers atomically commit the quality-pace offset, bounded future
+/// distance edits and decision status. Both then refresh external mirrors.
 #[tauri::command]
 pub async fn apply_proposal(
     state: State<'_, AppState>,
@@ -1121,9 +1124,34 @@ pub async fn apply_proposal(
             .store
             .current_plan()?
             .ok_or_else(|| AppError::Other("no active plan".into()))?;
-        state
-            .store
-            .set_plan_quality_offset(&plan.id, offset, from)?;
+        if !p.signature.ends_with(&format!(":{}", plan.id))
+            || from < Utc::now().date_naive()
+            || !offset.is_finite()
+            || ((offset - plan.quality_offset_sec_km).abs() - 5.0).abs() > 0.001
+            || offset.abs() > 20.0
+        {
+            return Err(AppError::Other("this pacing offer is stale; dismiss it and request a fresh review".into()));
+        }
+        let evidence = pacing::adaptation_reviews(&state.store, &plan, &thresholds(&state))?;
+        let (count, direction) = pacing::streak(&evidence);
+        let expected_direction = if offset < plan.quality_offset_sec_km { Execution::Ahead } else { Execution::Behind };
+        if count < thresholds(&state).pace_streak as usize || direction != Some(expected_direction) {
+            return Err(AppError::Other("recent reps no longer support this offer; dismiss it and review the latest evidence".into()));
+        }
+        let expected = pacing::adaptation_edits(&state.store, &plan, offset, from)?;
+        if !p.edits.is_empty() && serde_json::to_value(&expected)? != serde_json::to_value(&p.edits)? {
+            return Err(AppError::Other("the proposed sessions changed; dismiss this offer and review again".into()));
+        }
+        if offset < plan.quality_offset_sec_km {
+            let scores = metrics::compute_scores(&state.store, &thresholds(&state))?;
+            let ratio = state.store.latest_training_load()?.and_then(|load| load.ratio);
+            if state.store.latest_pain()?.is_some() || scores.recovery_score <= thresholds(&state).recovery_fatigued
+                || scores.injury_risk >= 60 || !ratio.is_some_and(|value| value.is_finite() && value <= 1.3)
+            {
+                return Err(AppError::Other("recovery or load no longer supports progression; keep the current plan".into()));
+            }
+        }
+        state.store.accept_pacing_proposal(&plan, &p)?;
         // The stored plan moved; the mirrors below must be built from the
         // updated plan, not the copy loaded before the write.
         let plan = TrainingPlan {
@@ -1143,9 +1171,9 @@ pub async fn apply_proposal(
     } else {
         apply_workout_edits(&state, prov, &p.edits).await?
     };
-    state
-        .store
-        .set_proposal_status(&p.id, ProposalStatus::Applied, Some(Utc::now()), None)?;
+    if p.source != ProposalSource::Pacing {
+        state.store.set_proposal_status(&p.id, ProposalStatus::Applied, Some(Utc::now()), None)?;
+    }
     Ok(fresh)
 }
 
@@ -1194,6 +1222,14 @@ pub async fn pacing_report(state: State<'_, AppState>) -> Result<Option<PacingRe
         &plan,
         &thresholds(&state),
     )?))
+}
+
+#[tauri::command]
+pub async fn pace_insights(state: State<'_, AppState>) -> Result<Option<PaceInsights>> {
+    let Some((plan, _)) = state.store.current_plan()? else {
+        return Ok(None);
+    };
+    Ok(Some(pacing::insights(&state.store, &plan)?))
 }
 
 /// The verdict on one session, for the sheet that opens it. `None` when there

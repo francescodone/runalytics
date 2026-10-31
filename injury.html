@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#5544e9" />
+    <meta name="theme-color" content="#ffffff" />
     <title>Runalytics — Injuries</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
   </head>
@@ -14,22 +14,20 @@
     <a class="skip-link" href="#app">Skip to content</a>
     <nav id="nav" aria-label="Main">
       <span class="brand">Runalytics</span>
-      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="index.html" class="nav-link">Today</a>
       <a href="plan.html" class="nav-link">Plan</a>
       <a href="calendar.html" class="nav-link">Calendar</a>
       <a href="injury.html" class="nav-link active">Injuries</a>
-      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="achievements.html" class="nav-link">Progress</a>
+      <a href="support.html" class="nav-link">Support</a>
       <a href="settings.html" class="nav-link">Settings</a>
     </nav>
     <main id="app">
-      <section id="log-pain" class="panel">
+      <details id="log-pain" class="panel disclosure">
+        <summary>Log pain</summary>
         <header class="panel-head">
           <h2>Where does it hurt?</h2>
         </header>
-        <p class="muted">
-          Tap where it hurts, then rate it and add a note. Runalytics tracks how
-          you feel and suggests plan changes when you need them.
-        </p>
         <div class="pain-body">
           <div id="bodymap" class="bodymap"></div>
           <div class="pain-ask">
@@ -55,7 +53,7 @@
             </div>
           </div>
         </div>
-      </section>
+      </details>
 
       <section id="proposal-section" class="panel" hidden>
         <header class="panel-head">

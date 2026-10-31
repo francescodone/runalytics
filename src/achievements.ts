@@ -2,11 +2,16 @@
 // the full badge wall with progress bars. Data is the whole synced history,
 // so the dashboard's range toggle does not apply here.
 
-import { tauri, el, fail, inTauri } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtDateTime, fmtKm, fmtDuration, fmtPace } from "./lib/ipc";
+import type { Activity, CalendarEvent } from "./lib/types";
+import { isRun } from "./lib/sport";
+import { performanceLayout } from "./lib/performance-layout";
+import { routeThumbnail } from "./lib/route-thumbnail";
 import { icons } from "./lib/icons";
 import { fetchFlowState, gamificationStats } from "./lib/flow";
 import type { GamificationStats } from "./lib/flow";
 import { initSyncIndicator } from "./lib/sync";
+import { initCarousels } from "./lib/carousel";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
 import "./lib/theme";
@@ -23,6 +28,136 @@ function reducedMotion(): boolean {
 // renders show stable final values.
 let hasRendered = false;
 let badgeObserver: IntersectionObserver | null = null;
+let history: Activity[] = [];
+let performanceStarted = false;
+let routeObserver: IntersectionObserver | null = null;
+const routeCache = new Map<number, string>();
+let historyEvents = new Map<number, CalendarEvent>();
+
+function renderHistory(): void {
+  const type = el<HTMLSelectElement>("history-type").value;
+  const year = el<HTMLSelectElement>("history-year").value;
+  const month = el<HTMLSelectElement>("history-month").value;
+  const query = el<HTMLInputElement>("history-search").value.trim().toLocaleLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
+  const filtered = query.length > 0 || type !== "all" || year !== "all" || month !== "all";
+  el("history-reset").hidden = !filtered;
+  const selected = history.filter((activity) => {
+    const date = new Date(activity.startTime);
+    const linked = historyEvents.get(activity.id);
+    const matchesType = type === "all" || (type === "run" ? isRun(activity)
+      : type === "cross" ? !isRun(activity)
+      : type === "imported" ? !linked?.workoutId
+      : linked?.workoutId != null && linked.kind === type);
+    return matchesType
+      && (year === "all" || date.getFullYear() === Number(year))
+      && (month === "all" || date.getMonth() === Number(month))
+      && terms.every(term => `${linked?.title ?? ""} ${activity.sport} ${activity.provider}`.toLocaleLowerCase().includes(term));
+  });
+  const distance = selected.filter(isRun).reduce((total, activity) => total + activity.distanceM, 0);
+  const duration = selected.reduce((total, activity) => total + activity.durationS, 0);
+  el("history-summary").textContent = `${selected.length} activities · ${fmtKm(distance)} running · ${fmtDuration(duration)}`;
+  const list = el("history-list");
+  routeObserver?.disconnect();
+  routeObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      routeObserver?.unobserve(entry.target);
+      const row = entry.target as HTMLElement;
+      const id = Number(row.dataset.activityId);
+      void tauri.activityDetail(id, "1mo").then((detail) => {
+        const thumbnail = routeThumbnail(detail.track);
+        if (!thumbnail) return;
+        routeCache.set(id, thumbnail);
+        if (row.isConnected) row.querySelector(".activity-icon")!.innerHTML = thumbnail;
+      }).catch(() => undefined);
+    }
+  }, { rootMargin: "100px" });
+  list.replaceChildren();
+  if (!selected.length) {
+    list.innerHTML = filtered
+      ? '<div class="empty-state"><h3>No matching workouts</h3><p>No activities match these filters.</p><button type="button" class="secondary" id="history-empty-reset">Clear filters</button></div>'
+      : '<div class="empty-state"><h3>No workouts yet</h3><p>Your synced activities will appear here.</p><a href="settings.html#setup">Watch connections</a></div>';
+    document.getElementById("history-empty-reset")?.addEventListener("click", clearHistoryFilters);
+  }
+  for (const activity of selected) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "activity-row";
+    const linked = historyEvents.get(activity.id);
+    if (linked?.workoutId) row.classList.add(`chip-${linked.kind}`);
+    row.dataset.activityId = String(activity.id);
+    row.innerHTML = `<span class="activity-icon" aria-hidden="true">${isRun(activity) ? icons.run : icons.dumbbell}</span><span><h3></h3><p></p><span class="activity-metrics"><span>${fmtKm(activity.distanceM)}<small>Distance</small></span><span>${fmtDuration(activity.durationS)}<small>Time</small></span><span>${fmtPace(activity.avgPaceSKm)}/km<small>Avg pace</small></span></span></span><span aria-hidden="true">${icons.chevronRight}</span>`;
+    row.querySelector("h3")!.textContent = linked?.workoutId ? linked.title : activity.sport;
+    row.querySelector("p")!.textContent = `${fmtDateTime(activity.startTime)} · ${activity.provider.toUpperCase()}`;
+    row.addEventListener("click", async () => {
+      const { openActivitySheet } = await import("./dashboard");
+      await openActivitySheet(activity.id);
+    });
+    list.append(row);
+    if (routeCache.has(activity.id)) row.querySelector(".activity-icon")!.innerHTML = routeCache.get(activity.id)!;
+    else if (activity.hasTrack) routeObserver.observe(row);
+  }
+}
+
+function clearHistoryFilters(): void {
+  el<HTMLInputElement>("history-search").value = "";
+  for (const id of ["history-type", "history-year", "history-month"]) el<HTMLSelectElement>(id).value = "all";
+  renderHistory();
+  el("history-search").focus();
+}
+
+function initProgressTabs(): void {
+  el("performance-analysis").innerHTML = performanceLayout;
+  for (const detail of document.querySelectorAll<HTMLDetailsElement>(".analysis-detail")) {
+    detail.addEventListener("toggle", () => {
+      if (detail.open) {
+        window.dispatchEvent(new Event("resize"));
+        initCarousels();
+      }
+    });
+  }
+  const tabs = [el<HTMLButtonElement>("workouts-tab"), el<HTMLButtonElement>("performance-tab"), el<HTMLButtonElement>("milestones-tab")];
+  const select = async (index: number) => {
+    tabs.forEach((tab, position) => {
+      tab.setAttribute("aria-selected", String(position === index));
+      tab.tabIndex = position === index ? 0 : -1;
+    });
+    el("progress-workouts").hidden = index !== 0;
+    el("progress-performance").hidden = index !== 1;
+    el("progress-milestones").hidden = index !== 2;
+    if (index === 1) window.dispatchEvent(new Event("resize"));
+    if (index === 1 && !performanceStarted) {
+      performanceStarted = true;
+      const { startPerformance } = await import("./dashboard");
+      await startPerformance();
+    }
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => void select(index));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].focus();
+      void select(next);
+    });
+  });
+  el("history-reset").innerHTML = icons.close;
+  el("history-reset").addEventListener("click", clearHistoryFilters);
+  el("history-search").addEventListener("input", renderHistory);
+  for (const id of ["history-type", "history-year", "history-month"]) el(id).addEventListener("change", renderHistory);
+  if (["#performance", "#recovery", "#risk", "#routes"].includes(location.hash)) {
+    void select(1).then(() => {
+      const detail = document.getElementById(location.hash.slice(1));
+      if (detail instanceof HTMLDetailsElement) {
+        detail.open = true;
+        detail.scrollIntoView({ block: "start" });
+      }
+    });
+  }
+  else if (location.hash === "#milestones") void select(2);
+}
 
 /// Count a stat value up from zero when it mounts. The markup already holds
 /// the final number, so with reduced motion (or no rAF) nothing changes —
@@ -203,6 +338,15 @@ async function refresh(): Promise<void> {
       tauri.allActivities().catch(() => []),
     ]);
     const stats = gamificationStats(activities, flow.plan, flow.pushed);
+    history = activities.sort((left, right) => right.startTime.localeCompare(left.startTime));
+    const events = await tauri.calendarEvents("1970-01-01", "2100-12-31").catch(() => [] as CalendarEvent[]);
+    historyEvents = new Map(events.filter((event) => event.activityId != null).map((event) => [event.activityId!, event]));
+    const years = [...new Set(history.map((activity) => new Date(activity.startTime).getFullYear()))].sort((left, right) => right - left);
+    const yearSelect = el<HTMLSelectElement>("history-year");
+    const selectedYear = yearSelect.value;
+    yearSelect.replaceChildren(new Option("All years", "all"), ...years.map((year) => new Option(String(year), String(year))));
+    yearSelect.value = years.includes(Number(selectedYear)) ? selectedYear : "all";
+    renderHistory();
     renderStreaks(stats);
     renderHeatmap(stats);
     renderBadges(stats);
@@ -211,6 +355,8 @@ async function refresh(): Promise<void> {
     hasRendered = true;
   } catch (e) {
     if (!inTauri) {
+      el("history-summary").textContent = "Connect your watch in the app to see your workouts.";
+      el("history-list").innerHTML = '<a class="btn" href="settings.html#setup">Watch connections</a>';
       el("streak-stats").innerHTML =
         '<div class="empty-state"><h3>Your milestones live in the desktop app</h3><p>Open Runalytics on your Mac and sync your watch to see streaks, training history, and badges.</p></div>';
       el("streaks").querySelector<HTMLElement>(".heatmap-row")!.hidden = true;
@@ -222,6 +368,7 @@ async function refresh(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  initProgressTabs();
   initSyncIndicator();
   window.addEventListener("runalytics:sync-completed", () => {
     void refresh();

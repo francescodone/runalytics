@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Runalytics - Support</title>
+    <link rel="stylesheet" href="/src/styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to content</a>
+    <nav id="nav" aria-label="Main">
+      <span class="brand">Runalytics</span>
+      <a href="index.html" class="nav-link">Today</a>
+      <a href="plan.html" class="nav-link">Plan</a>
+      <a href="calendar.html" class="nav-link">Calendar</a>
+      <a href="achievements.html" class="nav-link">Progress</a>
+      <a href="support.html" class="nav-link active">Support</a>
+      <a href="settings.html" class="nav-link">Settings</a>
+      <a href="injury.html" class="nav-link">Body check</a>
+    </nav>
+    <main id="app">
+      <section class="panel">
+        <header class="panel-head"><h2>How can we help?</h2></header>
+        <div class="support-list">
+          <a href="settings.html#setup"><span>Watch connection<small>Connect COROS, sync history and check connection status</small></span><span data-icon="chevronRight" aria-hidden="true"></span></a>
+          <a href="plan.html"><span>Your training plan<small>Review sessions, preferences and device publishing</small></span><span data-icon="chevronRight" aria-hidden="true"></span></a>
+          <a href="injury.html"><span>Pain and recovery<small>Log symptoms and review training adjustments</small></span><span data-icon="chevronRight" aria-hidden="true"></span></a>
+          <a href="settings.html"><span>App settings<small>Appearance, assistant, training zones and updates</small></span><span data-icon="chevronRight" aria-hidden="true"></span></a>
+        </div>
+      </section>
+      <section class="panel">
+        <header class="panel-head"><h2>Common questions</h2></header>
+        <details class="disclosure"><summary>Why is a recent workout missing?</summary><p>Check that your watch has synced to its provider, then open Watch connections and sync again. Keep the app open until the sync completes.</p></details>
+        <details class="disclosure"><summary>How do I move a session?</summary><p>Open the session in Calendar and choose Move to. Scheduling safeguards may refuse dates that put hard sessions too close together.</p></details>
+        <details class="disclosure"><summary>Has my plan reached my watch?</summary><p>Check the plan sync status on Plan. A saved local change is not necessarily installed on your watch. Failed publishing can be retried without recreating your plan.</p></details>
+        <details class="disclosure"><summary>What do the recovery signals mean?</summary><p>They describe trends in your synced data, not a medical diagnosis. Log pain in Injuries and seek medical advice for persistent or concerning symptoms.</p></details>
+      </section>
+      <p class="muted" id="support-version"></p>
+    </main>
+    <script type="module" src="/src/support.ts"></script>
+  </body>
+</html>

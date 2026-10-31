@@ -373,7 +373,7 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     if matches!(plan.status, PlanStatus::Aborted | PlanStatus::Completed) {
         return Ok(None);
     }
-    let reviews = reviews(store, plan, th)?;
+    let reviews = adaptation_reviews(store, plan, th)?;
     let (count, direction) = streak(&reviews);
     let Some(direction) = direction.filter(|_| count >= th.pace_streak as usize) else {
         return Ok(None);
@@ -381,6 +381,9 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     let Some(offset) = next_offset(plan, direction) else {
         return Ok(None);
     };
+    if direction == Execution::Ahead && !progression_allowed(store, th)? {
+        return Ok(None);
+    }
 
     // One unanswered pacing offer at a time, and a dismissed one is not asked
     // again until the plan has actually moved or a week has passed.
@@ -394,13 +397,14 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
         // A dismissal means "leave my plan alone". It stops holding once the
         // runner has since run another quality session under the same ranges,
         // because that is new evidence rather than the same ask repeated.
-        let ran_since = newest.map(|d| d >= dismissed.date_naive()).unwrap_or(false);
+        let ran_since = newest.map(|d| d > dismissed.date_naive()).unwrap_or(false);
         if !stale && !ran_since {
             return Ok(None);
         }
     }
 
     let from = effective_from(&reviews);
+    let edits = adaptation_edits(store, plan, offset, from)?;
     let band_shift = if direction == Execution::Ahead {
         "sharpen".to_string()
     } else {
@@ -408,13 +412,14 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     };
     let recent: Vec<&SessionReview> = reviews.iter().rev().take(count).collect();
     let summary = format!(
-        "{} of the last {} {} sessions landed {} the range — {} every quality pace by {:.0} s/km from {}.",
+        "{} of the last {} {} sessions landed {} the range — {} quality pace by {:.0} s/km and review {} future session distances from {}.",
         count,
         recent.len().max(count),
         session_kind_label(&recent),
         if direction == Execution::Ahead { "faster than" } else { "slower than" },
         band_shift,
         STEP_SEC_KM,
+        edits.len(),
         from.format("%b %e"),
     );
     let mut reason = format!(
@@ -433,9 +438,7 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
             ));
         }
     }
-    reason.push_str(&format!(
-        " Easy days, long runs and race pace are untouched — only the tempo and interval ranges move."
-    ));
+    reason.push_str(" Completed sessions, easy days, long runs, races and the final 14 days before the target date keep their distances. Future quality distance changes by at most 3% up or 5% down, only within the next 14 days. Race estimates use the plan threshold plus the accepted quality offset; watch fitness measurements are never overwritten.");
     if plan.quality_offset_sec_km != 0.0 {
         reason.push_str(&format!(
             " This is on top of the {:.0} s/km already applied.",
@@ -450,13 +453,79 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
         signature,
         summary,
         reason,
-        edits: Vec::new(),
+        edits,
         plan_quality_offset_sec_km: Some(offset),
         plan_quality_offset_from: Some(from),
         status: ProposalStatus::Pending,
         created_at: Utc::now(),
         acted_at: None,
     }))
+}
+
+fn progression_allowed(store: &Store, th: &Thresholds) -> Result<bool> {
+    let scores = crate::metrics::compute_scores(store, th)?;
+    let load = store.latest_training_load()?.and_then(|load| load.ratio);
+    Ok(store.latest_pain()?.is_none()
+        && scores.recovery_score > th.recovery_fatigued
+        && scores.injury_risk < 60
+        && load.is_some_and(|ratio| ratio.is_finite() && ratio <= 1.3))
+}
+
+pub fn adaptation_edits(
+    store: &Store,
+    plan: &TrainingPlan,
+    offset: f64,
+    from: NaiveDate,
+) -> Result<Vec<WorkoutEdit>> {
+    let factor = if offset < plan.quality_offset_sec_km { 1.03 } else { 0.95 };
+    let completions = store.calendar_completions()?;
+    Ok(store.plan_workouts(&plan.id)?.into_iter().filter(|workout| {
+        is_quality(workout.kind) && !workout.done && workout.status != WorkoutStatus::Skipped
+            && workout.date >= from && workout.date < from + chrono::Duration::days(14)
+            && workout.date < plan.target_date - chrono::Duration::days(14)
+            && !completions.iter().any(|entry| entry.0 == workout.id)
+    }).filter_map(|workout| {
+        let distance = workout.distance_m.filter(|distance| distance.is_finite() && *distance >= 2000.0)?;
+        let updated = (distance * factor / 10.0).round() * 10.0;
+        Some(WorkoutEdit {
+            workout_id: workout.id,
+            kind: workout.kind,
+            title: workout.title.clone(),
+            distance_m: Some(updated),
+            duration_min: workout.duration_min.map(|duration| duration * updated / distance),
+            pace_lo_s_km: workout.pace_lo_s_km,
+            pace_hi_s_km: workout.pace_hi_s_km,
+            date: Some(workout.date),
+            old_kind: Some(workout.kind),
+            old_title: Some(workout.title),
+            old_distance_m: Some(distance),
+        })
+    }).collect())
+}
+
+pub fn adaptation_reviews(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Vec<SessionReview>> {
+    let insights = insights_with_limit(store, plan, LOOKBACK)?;
+    let workouts = store.plan_workouts(&plan.id)?;
+    Ok(insights.speed.into_iter().filter(|session| !session.outdated).filter(|insight| {
+        let Some(workout) = workouts.iter().find(|workout| workout.id == insight.workout_id) else { return false };
+        let expected: u32 = session::details_for_plan(workout, plan).steps.iter().filter(|step| !step.open_ended && step.pace_lo_s_km.is_some()).map(|step| step.repeats.max(1)).sum();
+        expected > 0 && insight.reps.len() as f64 / expected as f64 >= 0.8
+    }).map(|session| {
+        let total = session.reps.len() as f64;
+        let ahead = session.reps.iter().filter(|rep| rep.actual_s_km < rep.band_lo_s_km as f64 - th.pace_tolerance_sec_km).count() as f64;
+        let behind = session.reps.iter().filter(|rep| rep.actual_s_km > rep.band_hi_s_km as f64 + th.pace_tolerance_sec_km).count() as f64;
+        SessionReview {
+            workout_id: session.workout_id,
+            date: session.date,
+            kind: session.kind,
+            title: session.title,
+            band_lo_s_km: (session.reps.iter().map(|rep| rep.band_lo_s_km as f64).sum::<f64>() / total).round() as i64,
+            band_hi_s_km: (session.reps.iter().map(|rep| rep.band_hi_s_km as f64).sum::<f64>() / total).round() as i64,
+            actual_s_km: Some(session.reps.iter().map(|rep| rep.actual_s_km).sum::<f64>() / total),
+            measured_m: 0.0,
+            execution: if ahead / total >= 0.75 { Execution::Ahead } else if behind / total >= 0.75 { Execution::Behind } else { Execution::InRange },
+        }
+    }).collect())
 }
 
 fn direction_key(direction: Execution) -> &'static str {
@@ -530,7 +599,7 @@ pub fn review_for_workout(
 /// Everything the Plan page needs to show where recent sessions landed, whether
 /// or not an offer exists yet.
 pub fn report(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<PacingReport> {
-    let reviews = reviews(store, plan, th)?;
+    let reviews = adaptation_reviews(store, plan, th)?;
     let (streak, direction) = streak(&reviews);
     Ok(PacingReport {
         needed: th.pace_streak,
@@ -541,6 +610,99 @@ pub fn report(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Pac
     })
 }
 
+fn insight_rep(lap: LapSlice) -> Option<PaceInsightRep> {
+    let actual = lap.avg_pace_s_km?;
+    let (low, high) = (lap.band_lo_s_km?, lap.band_hi_s_km?);
+    if !actual.is_finite() || actual <= 0.0 || low <= 0 || high < low {
+        return None;
+    }
+    let midpoint = (low as f64 + high as f64) / 2.0;
+    let half_width = ((high - low) as f64 / 2.0).max(1.0);
+    Some(PaceInsightRep {
+        index: lap.index,
+        label: lap.label,
+        actual_s_km: actual,
+        band_lo_s_km: low,
+        band_hi_s_km: high,
+        relative_pace: (midpoint - actual) / half_width,
+    })
+}
+
+pub fn insights(store: &Store, plan: &TrainingPlan) -> Result<PaceInsights> {
+    insights_with_limit(store, plan, 5)
+}
+
+fn insights_with_limit(store: &Store, plan: &TrainingPlan, limit: usize) -> Result<PaceInsights> {
+    let completions = store.calendar_completions()?;
+    let mut workouts = store.plan_workouts(&plan.id)?;
+    workouts.sort_by(|first, second| first.date.cmp(&second.date).then(first.id.cmp(&second.id)));
+    let today = Utc::now().date_naive();
+    let upcoming = |kind: fn(WorkoutKind) -> bool| {
+        workouts
+            .iter()
+            .find(|workout| {
+                kind(workout.kind)
+                    && !workout.done
+                    && workout.status != WorkoutStatus::Skipped
+                    && workout.date >= today
+                    && !completions.iter().any(|entry| entry.0 == workout.id)
+            })
+            .cloned()
+    };
+    let mut result = PaceInsights {
+        speed: Vec::new(),
+        long: Vec::new(),
+        next_speed: upcoming(is_quality),
+        next_long: upcoming(|kind| kind == WorkoutKind::LongRun),
+    };
+    for workout in workouts
+        .iter()
+        .rev()
+        .filter(|workout| workout.done && workout.date <= today)
+    {
+        let speed = is_quality(workout.kind);
+        let sessions = if speed {
+            &mut result.speed
+        } else if workout.kind == WorkoutKind::LongRun {
+            &mut result.long
+        } else {
+            continue;
+        };
+        if sessions.len() >= limit {
+            continue;
+        }
+        let Some(entry) = completions.iter().find(|entry| entry.0 == workout.id) else {
+            continue;
+        };
+        let Some(activity) = store.activity_by_id(entry.1)? else {
+            continue;
+        };
+        let points = store.track_points(activity.id, crate::laps::TRACK_POINTS)?;
+        let reps: Vec<_> = crate::laps::insight_laps(&points, &activity, plan, workout)
+            .into_iter()
+            .filter_map(insight_rep)
+            .collect();
+        if reps.is_empty() {
+            continue;
+        }
+        sessions.push(PaceInsightSession {
+            workout_id: workout.id.clone(),
+            activity_id: activity.id,
+            date: workout.date,
+            title: workout.title.clone(),
+            kind: workout.kind,
+            outdated: speed
+                && plan
+                    .quality_offset_from
+                    .is_some_and(|from| workout.date < from),
+            reps,
+        });
+    }
+    result.speed.reverse();
+    result.long.reverse();
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,7 +711,16 @@ mod tests {
 
     fn store() -> Store {
         let path = std::env::temp_dir().join(format!("rk-paced-{}.sqlite", uuid::Uuid::new_v4()));
-        Store::open(&path).expect("open store")
+        let store = Store::open(&path).expect("open store");
+        store.upsert_health(ProviderKind::Coros, &HealthDaily {
+            date: Utc::now().date_naive(), steps: Some(8000), avg_hr: None,
+            resting_hr: Some(50), stress_avg: Some(10), sleep_score: Some(100),
+            sleep_min: Some(510), deep_min: None, rem_min: None, hrv_avg: Some(70.0),
+        }).unwrap();
+        store.upsert_training_load(ProviderKind::Coros, &TrainingLoad {
+            date: Utc::now().date_naive(), short_term: Some(50.0), long_term: Some(50.0), ratio: Some(1.0), comment: None,
+        }).unwrap();
+        store
     }
 
     /// A plan whose quality sessions are dated on `offsets` days before today,
@@ -649,31 +820,126 @@ mod tests {
     /// ramp week to week, so an absolute pace would grade one session's
     /// target against another's range.
     fn complete(s: &Store, plan: &TrainingPlan, workout: &PlanWorkout, delta: f64) {
-        let (lo, hi) = session::quality_band(plan, workout).expect("quality band");
-        let rep_pace_s_km = if delta < 0.0 {
-            lo as f64 + delta
-        } else if delta > 0.0 {
-            hi as f64 + delta
-        } else {
-            (lo + hi) as f64 / 2.0
-        };
         let details = session::details_for_plan(workout, plan);
-        let main = MainSet::from_steps(&details.steps).expect("main set");
-        let total = workout.distance_m.unwrap();
-        let id = synthetic_track(
-            s,
-            &format!("{}-run", workout.id),
-            workout.date,
-            total,
-            400.0, // everything outside the reps jogs along at 6:40/km
-            Some((main.start_m, main.work_m, rep_pace_s_km)),
-        );
+        let start = workout.date.and_hms_opt(8, 0, 0).unwrap().and_utc().timestamp();
+        let mut elapsed = 0.0;
+        let mut distance = 0.0;
+        let mut points = vec![crate::fit::TrackPoint { ts:start, lat:48.13, lon:11.58, hr:None }];
+        let mut leg = |meters: f64, pace: f64| {
+            let mut remaining = meters;
+            while remaining > 0.01 {
+                let take = remaining.min(20.0);
+                elapsed += take * pace / 1000.0;
+                distance += take;
+                points.push(crate::fit::TrackPoint { ts:start + elapsed.round() as i64, lat:48.13 + distance / 111_320.0, lon:11.58, hr:None });
+                remaining -= take;
+            }
+        };
+        for step in &details.steps {
+            let pace = if step.open_ended { 400.0 } else {
+                let low = step.pace_lo_s_km.unwrap() as f64;
+                let high = step.pace_hi_s_km.unwrap() as f64;
+                if delta < 0.0 { low + delta } else if delta > 0.0 { high + delta } else { (low + high) / 2.0 }
+            };
+            for rep in 0..step.repeats.max(1) {
+                leg(step.distance_m, pace);
+                if rep + 1 < step.repeats.max(1) && step.recovery_m > 0.0 { leg(step.recovery_m, 400.0); }
+            }
+        }
+        let id = s.upsert_activity(ProviderKind::Coros, &crate::fit::DecodedActivity {
+            record_id:format!("{}-run",workout.id),sport:"run".into(),provider_sport_code:Some(100),
+            start_ts:start,duration_s:elapsed,distance_m:distance,avg_hr:None,max_hr:None,elevation_gain_m:None,points,
+        }).unwrap().unwrap();
         s.complete_calendar_workout(
             &workout.id,
             id,
             &crate::calendar::workout_notes(workout, plan),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn insights_normalize_each_rep_against_its_own_target() {
+        let make = |pace, low, high| LapSlice {
+            index: 1,
+            label: "Rep".into(),
+            kind: LapKind::Work,
+            start_m: 0.0,
+            meters: 1000.0,
+            duration_s: pace,
+            avg_pace_s_km: Some(pace),
+            avg_hr: None,
+            band_lo_s_km: Some(low),
+            band_hi_s_km: Some(high),
+            verdict: None,
+        };
+        for (pace, low, high, expected) in [
+            (300.0, 295, 305, 0.0),
+            (295.0, 295, 305, 1.0),
+            (305.0, 295, 305, -1.0),
+            (240.0, 235, 245, 0.0),
+            (285.0, 295, 305, 3.0),
+            (300.0, 300, 300, 0.0),
+        ] {
+            assert_eq!(
+                insight_rep(make(pace, low, high)).unwrap().relative_pace,
+                expected
+            );
+        }
+        assert!(insight_rep(make(300.0, 305, 295)).is_none());
+        assert!(insight_rep(make(f64::NAN, 295, 305)).is_none());
+    }
+
+    #[test]
+    fn insights_keep_five_eligible_sessions_and_mark_old_targets() {
+        let store = store();
+        let (mut plan, workouts) = plan_with_quality(&store, &[24, 21, 18, 15, 12, 9, 6]);
+        for workout in &workouts {
+            complete(&store, &plan, workout, 0.0);
+        }
+        let mut upcoming = workouts[0].clone();
+        upcoming.id = "insight-upcoming".into();
+        upcoming.date = Utc::now().date_naive() + chrono::Duration::days(3);
+        upcoming.done = false;
+        let mut skipped = upcoming.clone();
+        skipped.id = "insight-skipped".into();
+        skipped.date = Utc::now().date_naive() + chrono::Duration::days(1);
+        skipped.status = WorkoutStatus::Skipped;
+        store.insert_workouts(&[upcoming.clone(), skipped]).unwrap();
+        plan.quality_offset_from = Some(Utc::now().date_naive() - chrono::Duration::days(10));
+        plan.quality_offset_sec_km = -5.0;
+        let report = insights(&store, &plan).unwrap();
+        assert_eq!(report.speed.len(), 5);
+        assert_eq!(report.speed[0].workout_id, workouts[2].id);
+        assert_eq!(
+            report
+                .speed
+                .iter()
+                .filter(|session| session.outdated)
+                .count(),
+            3
+        );
+        assert!(report.speed.iter().all(|session| !session.reps.is_empty()));
+        assert!(report
+            .speed
+            .windows(2)
+            .all(|pair| pair[0].date <= pair[1].date));
+        assert_eq!(report.next_speed.unwrap().id, upcoming.id);
+    }
+
+    #[test]
+    fn adaptation_honors_six_session_streak_without_expanding_the_chart() {
+        let store = store();
+        let (plan, workouts) = plan_with_quality(&store, &[21, 18, 15, 12, 9, 6]);
+        let thresholds = Thresholds { pace_streak: 6, ..Thresholds::default() };
+        for workout in workouts.iter().take(5) {
+            complete(&store, &plan, workout, -15.0);
+        }
+        assert!(build(&store, &plan, &thresholds).unwrap().is_none());
+        complete(&store, &plan, &workouts[5], -15.0);
+        assert_eq!(report(&store, &plan, &thresholds).unwrap().streak, 6);
+        assert!(build(&store, &plan, &thresholds).unwrap().is_some());
+        assert_eq!(insights(&store, &plan).unwrap().speed.len(), 5);
     }
 
     #[test]
@@ -766,6 +1032,53 @@ mod tests {
             .expect("three sessions above the range should offer a change");
         assert_eq!(offer.plan_quality_offset_sec_km, Some(5.0));
         assert!(offer.summary.contains("soften"));
+    }
+
+    #[test]
+    fn adaptation_edits_are_bounded_and_acceptance_is_atomic() {
+        let store = store();
+        let (plan, quality) = plan_with_quality(&store, &[21, 14, 7]);
+        for workout in &quality { complete(&store, &plan, workout, 15.0); }
+        let mut future = quality[0].clone();
+        future.id = "adaptive-future".into();
+        future.date = Utc::now().date_naive() + chrono::Duration::days(2);
+        future.planned_date = future.date;
+        future.distance_m = Some(10000.0);
+        future.done = false;
+        let mut easy = future.clone(); easy.id = "adaptive-easy".into(); easy.kind = WorkoutKind::Easy;
+        let mut skipped = future.clone(); skipped.id = "adaptive-skip".into(); skipped.status = WorkoutStatus::Skipped;
+        store.insert_workouts(&[future.clone(), easy, skipped]).unwrap();
+        let offer = build(&store, &plan, &Thresholds::default()).unwrap().unwrap();
+        let edit = offer.edits.iter().find(|edit| edit.workout_id == future.id).unwrap();
+        assert_eq!(edit.distance_m, Some(9500.0));
+        assert!(!offer.edits.iter().any(|edit| edit.workout_id == "adaptive-easy" || edit.workout_id == "adaptive-skip"));
+        store.insert_proposal(&offer).unwrap();
+        future.date += chrono::Duration::days(1);
+        store.update_workout(&future).unwrap();
+        assert!(store.accept_pacing_proposal(&plan, &offer).is_err());
+        assert_eq!(store.current_plan().unwrap().unwrap().0.quality_offset_sec_km, 0.0);
+        assert_eq!(store.proposal_by_id(&offer.id).unwrap().unwrap().status, ProposalStatus::Pending);
+        future.date -= chrono::Duration::days(1);
+        store.update_workout(&future).unwrap();
+        store.accept_pacing_proposal(&plan, &offer).unwrap();
+        let (updated, workouts) = store.current_plan().unwrap().unwrap();
+        assert_eq!(updated.quality_offset_sec_km, 5.0);
+        assert_eq!(workouts.iter().find(|workout| workout.id == future.id).unwrap().distance_m, Some(9500.0));
+        assert_eq!(store.proposal_by_id(&offer.id).unwrap().unwrap().status, ProposalStatus::Applied);
+        assert!(store.accept_pacing_proposal(&plan, &offer).is_err());
+        store.set_plan_quality_offset(&plan.id, 0.0, Utc::now().date_naive()).unwrap();
+    }
+
+    #[test]
+    fn faster_adaptation_requires_safe_current_load() {
+        let store = store();
+        let (plan, quality) = plan_with_quality(&store, &[21, 14, 7]);
+        for workout in &quality { complete(&store, &plan, workout, -15.0); }
+        assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_some());
+        store.upsert_training_load(ProviderKind::Coros, &TrainingLoad {
+            date:Utc::now().date_naive(),short_term:Some(80.0),long_term:Some(50.0),ratio:Some(1.6),comment:None,
+        }).unwrap();
+        assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_none());
     }
 
     /// A run that leans one way and then another is not a trend in either.

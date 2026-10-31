@@ -1,47 +1,5 @@
-export const BODY_REGIONS: Record<string, string> = {
-  neck: "Neck",
-  "shoulder.left": "Left shoulder",
-  "shoulder.right": "Right shoulder",
-  chest: "Chest",
-  "chest.left": "Left pec",
-  "chest.right": "Right pec",
-  "biceps.left": "Left biceps",
-  "biceps.right": "Right biceps",
-  "triceps.left": "Left triceps",
-  "triceps.right": "Right triceps",
-  "forearm_wrist.left": "Left forearm / wrist",
-  "forearm_wrist.right": "Right forearm / wrist",
-  abs: "Core / abs",
-  "obliques.left": "Left obliques",
-  "obliques.right": "Right obliques",
-  upper_back: "Upper back / traps",
-  "lat.left": "Left lat",
-  "lat.right": "Right lat",
-  lower_back: "Lower back",
-  "lower_back.left": "Left lower back",
-  "lower_back.right": "Right lower back",
-  "glute_hip.left": "Left glute / hip",
-  "glute_hip.right": "Right glute / hip",
-  "hip_flexor.left": "Left hip flexor",
-  "hip_flexor.right": "Right hip flexor",
-  "quad.left": "Left quad",
-  "quad.right": "Right quad",
-  "it_band.left": "Left IT band",
-  "it_band.right": "Right IT band",
-  "hamstring.left": "Left hamstring",
-  "hamstring.right": "Right hamstring",
-  "knee.left": "Left knee",
-  "knee.right": "Right knee",
-  "shin.left": "Left shin",
-  "shin.right": "Right shin",
-  "calf.left": "Left calf",
-  "calf.right": "Right calf",
-  "achilles.left": "Left Achilles",
-  "achilles.right": "Right Achilles",
-  "ankle_foot.left": "Left ankle / foot",
-  "ankle_foot.right": "Right ankle / foot",
-  other: "Other",
-};
+import { BODY_REGIONS } from "./body-regions";
+export { BODY_REGIONS } from "./body-regions";
 
 const SPOTS = new Set([
   "neck", "knee.left", "knee.right", "ankle_foot.left", "ankle_foot.right",
@@ -151,12 +109,7 @@ export interface BodyMapOptions {
   onSelect: (key: string) => void;
 }
 
-/** The same regions and the same selection as the map, as buttons.
- *
- * A finger cannot aim at a 9px-wide SVG path — the smallest regions here are
- * narrower than Apple's own 44pt floor — so on a touch screen the picture is
- * replaced by this list rather than being asked to work. One `onSelect` feeds
- * both, so the page's logic does not know which one the runner used. */
+/** Touch uses a native picker because the smallest SVG regions are below 44px. */
 export function renderBodyRegionList(
   container: HTMLElement,
   opts: BodyMapOptions,
@@ -164,25 +117,25 @@ export function renderBodyRegionList(
   container.classList.add("bodymap-list");
   container.setAttribute("role", "group");
   container.setAttribute("aria-label", "Where does it hurt?");
-  container.replaceChildren(
-    ...Object.entries(BODY_REGIONS).map(([key, label]) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "bodymap-list-item";
-      btn.dataset.region = key;
-      btn.textContent = label;
-      const tint = opts.tints.get(key);
-      if (tint != null) {
-        btn.classList.add("tinted");
-        btn.style.setProperty("--tint", String(Math.max(0.15, Math.min(1, tint / 10))));
-      }
-      const isSelected = key === opts.selected;
-      btn.setAttribute("aria-pressed", String(isSelected));
-      if (isSelected) btn.classList.add("selected");
-      btn.addEventListener("click", () => opts.onSelect(key));
-      return btn;
-    }),
-  );
+  const field = document.createElement("label");
+  field.className = "body-region-field";
+  field.textContent = "Body region";
+  const select = document.createElement("select");
+  const placeholder = new Option("Choose a region", "");
+  placeholder.disabled = true;
+  select.append(placeholder);
+  for (const [key, label] of Object.entries(BODY_REGIONS)) {
+    const intensity = opts.tints.get(key);
+    select.append(new Option(intensity == null ? label : `${label} (${intensity}/10)`, key));
+  }
+  select.value = opts.selected ?? "";
+  select.addEventListener("change", () => {
+    const focused = document.activeElement === select;
+    opts.onSelect(select.value);
+    if (focused) container.querySelector("select")?.focus({ preventScroll: true });
+  });
+  field.append(select);
+  container.replaceChildren(field);
 }
 
 export function renderBodyMap(container: HTMLElement, opts: BodyMapOptions): void {

@@ -1,0 +1,119 @@
+:root {
+  overflow-x: clip;
+  --motion-press: 80ms;
+  --motion-feedback: 140ms;
+  --motion-change: 220ms;
+  --motion-surface: 320ms;
+  --motion-exit: 180ms;
+  --motion-settle: cubic-bezier(.22, 1, .36, 1);
+  --motion-leave: cubic-bezier(.4, 0, 1, 1);
+  --desk-ease: var(--motion-settle);
+}
+
+button, a, input, select, textarea, summary {
+  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle);
+}
+.desk-button, .month-number, .mobile-date-ribbon button {
+  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
+}
+button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { transform: none; }
+.desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active { scale: .96; transition-duration: var(--motion-press); }
+.session-tile, .activity-row, .settings-task-list a, .roadmap-row { transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle); }
+.session-tile:active, .activity-row:active, .settings-task-list a:active, .roadmap-row:active { background: var(--desk-selection); transform: none; }
+.session-tile.is-dragging { opacity: .35; }
+.day-sessions { border-radius: 6px; transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
+.day-sessions[data-drop-target="true"] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
+.button-content, .button-progress { transition: opacity var(--motion-feedback) var(--motion-settle); }
+.button-result { position: absolute; inset: 0; display: grid; place-items: center; animation: status-arrive var(--motion-feedback) var(--motion-settle); }
+.desk-button[data-result] .button-content { opacity: 0; }
+.desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
+.desk-button:disabled:not([aria-busy="true"]) { scale: 1; }
+.desk-button[aria-busy="true"] { border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.desk-button .button-content { min-width: 0; }
+.button-content:has(.control-tooltip) { width: 100%; }
+.control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: 7px 10px; background: var(--desk-ink); color: var(--desk-surface); border-radius: 6px; font-size: 12px; font-weight: 500; line-height: 1.4; pointer-events: none; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: 50; transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
+.desk-button:focus-visible .control-tooltip { opacity: 1; visibility: visible; translate: 0; }
+.desk-button:active .control-tooltip { opacity: 0; visibility: hidden; }
+.control-tooltip[data-dismissed="true"] { opacity: 0 !important; visibility: hidden !important; }
+.desk-navigation a, .horizon-switch a, .pace-mode button, .mobile-date-ribbon button, .pace-session-picker button { position: relative; isolation: isolate; }
+.selection-marker { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: var(--desk-selection); }
+.mobile-date-ribbon button[aria-pressed="true"]:has(.selection-marker) { background: transparent; }
+.mobile-date-ribbon .selection-marker { background: var(--desk-action); }
+.pace-session-picker .selection-marker { inset: auto 0 -2px; height: 2px; background: var(--desk-ink); }
+.pace-session-picker button[aria-pressed="true"]:has(.selection-marker) { border-color: transparent; }
+.pace-session-picker button, .lap-pace-column { transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle); }
+.pace-session-picker button:active, .lap-pace-column:active { background: var(--desk-soft); }
+.pace-point-session circle, .pace-point-range { transition: opacity var(--motion-feedback) var(--motion-settle), stroke var(--motion-feedback) var(--motion-settle); }
+.pace-point-session:not(.selected) .pace-point-range { opacity: .35; }
+.desk-navigation a[aria-current]:has(.selection-marker), .horizon-switch a[aria-current]:has(.selection-marker), .pace-mode button[aria-pressed="true"]:has(.selection-marker) { background: transparent; box-shadow: none; }
+.horizon-switch .selection-marker, .pace-mode .selection-marker { background: var(--desk-surface); box-shadow: 0 1px 3px #162d2018; }
+.horizon-switch a, .pace-mode button { font-weight: 600; }
+.desk-navigation a { font-weight: 600; }
+.desk-inspector { overflow-x: clip; }
+.desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"] { pointer-events: none; }
+.dialog-grip { display: none; }
+.desk-dialog::backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }
+.desk-dialog[data-state="closing"]::backdrop { animation: scrim-leave var(--motion-exit) var(--motion-leave) both; }
+.desk-notice { translate: -50% 0; transform: none; }
+.notice-close { flex: none; }
+.desk-notice .notice-close { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 6px; margin: -6px -8px -6px 0; }
+.notice-close:active { background: color-mix(in srgb, currentColor 15%, transparent); }
+.desk-notice:focus-within { outline: 2px solid var(--desk-action); outline-offset: 4px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--desk-action); }
+input:user-invalid, select:user-invalid, textarea:user-invalid, [aria-invalid="true"] { border-color: var(--desk-danger); outline-color: var(--desk-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--desk-danger) 12%, transparent); }
+.search-field:focus-within > svg { color: var(--desk-action); }
+input[type="range"] { accent-color: var(--desk-action); }
+progress { accent-color: var(--desk-action); }
+.native-progress { animation: status-arrive var(--motion-feedback) var(--motion-settle); }
+.desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) 120ms both; }
+.motion-change { min-width: 0; }
+.conversation-expansion { overflow: clip; }
+.desk-workspace > .workspace-heading { animation: none; }
+.desk-workspace:focus { outline: none; }
+summary { transition: color var(--motion-feedback) var(--motion-settle); }
+summary::marker { color: var(--desk-muted); }
+details[open] > summary { color: var(--desk-action); }
+@supports (interpolate-size: allow-keywords) {
+  details { interpolate-size: allow-keywords; }
+  details::details-content { block-size: 0; overflow: clip; transition: block-size var(--motion-change) var(--motion-settle), content-visibility var(--motion-change) allow-discrete; }
+  details[open]::details-content { block-size: auto; }
+}
+@keyframes scrim-arrive { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scrim-leave { from { opacity: 1; } to { opacity: 0; } }
+@keyframes status-arrive { from { opacity: 0; } to { opacity: 1; } }
+
+@media (hover: hover) and (pointer: fine) {
+  .session-tile:hover { box-shadow: inset 0 0 0 1px var(--desk-action); }
+  .activity-row:hover, .roadmap-row:hover { background: color-mix(in srgb, var(--desk-selection) 60%, transparent); }
+  .desk-button:not(:disabled):hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent); }
+  .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: 450ms; }
+  .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: 2px 0; }
+  .activity-row > svg:last-child, .settings-task-list a > svg:last-child, .roadmap-row > svg:last-child { transition: translate var(--motion-change) var(--motion-settle); }
+  summary:hover { color: var(--desk-action); }
+}
+@media (hover: none) {
+  .control-tooltip { display: none; }
+  .session-tile:hover, .activity-row:hover, .settings-task-list a:hover, .roadmap-row:hover { transform: none; box-shadow: none; }
+}
+@media (min-width: 801px) {
+  .schedule-workspace:has(.desk-inspector) { grid-template-columns: minmax(0, 1fr) 360px; }
+  .schedule-workspace:has(.desk-inspector) .schedule-canvas { padding-right: 24px; }
+  .journal-workspace:has(.desk-inspector) { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.5fr); gap: 32px; align-items: start; }
+  .journal-workspace:has(.desk-inspector) .activity-row { grid-template-columns: 26px minmax(100px, 1fr) 85px 16px; gap: 10px; }
+  .journal-workspace:has(.desk-inspector) .activity-pace { display: none; }
+}
+@media (max-width: 800px) {
+  .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: 22px 22px 0 0; }
+  .dialog-surface { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .dialog-grip { display: grid; place-items: center; height: 24px; touch-action: none; cursor: grab; }
+  .dialog-grip > span { width: 36px; height: 4px; background: var(--desk-muted); border-radius: 2px; opacity: .5; }
+  .inspector-bar { touch-action: pan-y; }
+  .inspector-bar > span { flex: 1; padding-block: 12px; text-align: right; }
+  .desk-notice { bottom: calc(88px + env(safe-area-inset-bottom)); align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
+  .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active { scale: 1; }
+  .desk-button:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
+  .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
+}

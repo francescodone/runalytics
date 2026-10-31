@@ -451,6 +451,7 @@ pub fn score_history(
     let days = days.clamp(2, 30);
     let today = ScorePoint {
         date: Utc::now().date_naive(),
+        readiness: headline.global_score,
         training: headline.training_score,
         recovery: headline.recovery_score,
         risk: headline.injury_risk,
@@ -484,6 +485,7 @@ pub fn score_history(
 
         out.push(ScorePoint {
             date: day,
+            readiness: (training * 0.45 + recovery as f64 * 0.35 + (100.0 - risk) * 0.20).clamp(0.0, 100.0).round() as u32,
             training: training.round() as u32,
             recovery,
             risk: risk.round() as u32,

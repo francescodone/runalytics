@@ -10,14 +10,11 @@ import {
   fmtDuration,
   fmtKm,
   fmtPace,
-  fmtPaceBand,
 } from "./lib/ipc";
-import { fetchFlowState, nextAction, currentStreak } from "./lib/flow";
+import { fetchFlowState, nextAction } from "./lib/flow";
 import type { FlowState } from "./lib/flow";
 import { icons } from "./lib/icons";
-import { qualityBand } from "./lib/plan-bands";
 import { initCarousels } from "./lib/carousel";
-import { onboardingPending, startOnboarding } from "./lib/onboarding";
 import { initSegmented } from "./lib/segmented";
 import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
@@ -26,9 +23,8 @@ import { openWorkout } from "./lib/workout-detail";
 import { createSheet } from "./lib/overlay";
 import type { Sheet } from "./lib/overlay";
 import { buildMapStyle, followMapTheme, heatmapColors, mapControls, mountRouteMap } from "./lib/route-map";
-import { renderLapChart, renderSplitsTable } from "./lib/run-review";
+import { renderLapChart, renderSplitsTable, renderRunReview } from "./lib/run-review";
 import { crossPhrase, crossTraining, isRun, runKm } from "./lib/sport";
-import { regionLabel } from "./lib/bodymap";
 import type { CrossTraining } from "./lib/sport";
 // Side-effect import: paints the saved colour scheme before first paint.
 import "./lib/theme";
@@ -56,6 +52,7 @@ import type {
 // labelled where it renders ("last 30 days", "this week"), so a number can
 // never silently change meaning between visits.
 const currentRange: TimeRange = "1mo";
+const isProgress = document.body.dataset.page === "achievements";
 
 /// Side data the dashboard composes from the existing commands — the week
 /// strip, streak and race countdown all come from here.
@@ -123,16 +120,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/// Whole days from today until an ISO date, negative once it has passed.
-function daysUntil(iso: string): number {
-  const target = new Date(iso);
-  const today = new Date();
-  const ms =
-    Date.UTC(target.getFullYear(), target.getMonth(), target.getDate()) -
-    Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round(ms / 86_400_000);
-}
-
 /// Cross-training with the days it took up, for sentences. The figures come
 /// from lib/sport.ts, where each sport carries only its own numbers.
 function crossDays(c: CrossTraining): string {
@@ -151,137 +138,49 @@ function plannedRunKm(workouts: PlanWorkout[]): number {
   return workouts.reduce((sum, w) => sum + (w.kind === "rest" ? 0 : Math.max(0, w.distanceM ?? 0)), 0) / 1000;
 }
 
-/// The brief adds last week's training and this week's plan progress to the
-/// body and load signals already stated in the decision and summary cards.
-/// Running mileage and training-load units never share a target.
-function coachBrief(data: DashboardPayload, extras: DashExtras): string {
-  if (!extras.allActivities.length) {
-    return "Nothing has synced yet — connect your watch and this page fills in with how you're doing and how to train.";
-  }
-  const st = data.trainingStatus;
-  const rec = data.loadRecommendation;
-  const risk = data.scores.injuryRisk;
-
-  // The decision and summary cards already explain today's body signals; this
-  // brief adds training history without repeating the same three scores.
-
-  // Last week's running and other training stay in their own units.
-  const monday = mondayThisWeek();
-  const lastFrom = new Date(monday);
-  lastFrom.setDate(lastFrom.getDate() - 7);
-  const lastTo = new Date(monday);
-  lastTo.setDate(lastTo.getDate() - 1);
-  const [fromKey, toKey] = [ymd(lastFrom), ymd(lastTo)];
-  const lastWeek = extras.allActivities.filter((a) => {
-    const k = a.startTime.slice(0, 10);
-    return k >= fromKey && k <= toKey;
-  });
-  const lastKm = runKm(lastWeek);
-  const lastDays = new Set(
-    lastWeek.filter(isRun).map((a) => a.startTime.slice(0, 10)),
-  ).size;
-  // Cross-training gets named rather than folded into the mileage. A 90 km
-  // spin is real training the plan cannot bank, so the brief credits it in its
-  // own unit instead of either hiding it or inflating the run total.
-  const lastCross = crossTraining(lastWeek);
-  const last =
-    lastKm > 0
-      ? `Last week: ${lastKm.toFixed(1)} km over ${lastDays} run day${lastDays === 1 ? "" : "s"}${lastCross ? `; ${crossDays(lastCross)}` : ""}.`
-      : `Last week: no runs${lastCross ? `; ${crossDays(lastCross)}` : ""}.`;
-
-  // This week's mileage comes from runs; the load target is a different unit
-  // and stays in the Training load panel. Pain takes precedence over a push.
-  const banked = runKm(
-    extras.allActivities.filter((a) => a.startTime.slice(0, 10) >= ymd(monday) && a.startTime.slice(0, 10) <= ymd(new Date())),
-  );
-  const planned = plannedRunKm(extras.weekPlan);
-  const progress = planned > 0 ? `${banked.toFixed(1)} of ${planned.toFixed(1)} km planned` : `${banked.toFixed(1)} km run`;
-  let week: string;
-  if (extras.activePain.length) {
-    week = `This week: ${progress}. Pain is still logged; review the plan before adding intensity.`;
-  } else if (risk > 55) {
-    week = `This week: ${progress}. Risk is elevated; keep the effort easy.`;
-  } else if (rec?.downWeek) {
-    week = `Down week ${rec.weekInCycle}/${rec.cycleLength}: ${progress}. Keep the lighter week intentional.`;
-  } else if (st?.tone === "bad") {
-    week = `This week: ${progress}. Keep the easy days easy.`;
-  } else if (st?.tone === "warn" || data.scores.recoveryScore < 50) {
-    week = `This week: ${progress}. Stick to the planned effort.`;
-  } else {
-    week = `This week: ${progress}. Follow the planned sessions.`;
-  }
-  return `${last} ${week}`;
-}
-
-function trainingDecision(data: DashboardPayload, extras: DashExtras): { title: string; detail: string; tone: "good" | "warn" | "bad" } {
-  const pain = extras.activePain.reduce<PainEntry | null>((worst, entry) =>
-    !worst || entry.intensity > worst.intensity ? entry : worst, null);
-  if (pain) {
-    const count = extras.activePain.length;
-    return {
-      title: "Listen to the signals.",
-      detail: `${count} open pain ${count === 1 ? "entry" : "entries"}, including ${regionLabel(pain.bodyPart)} at ${pain.intensity}/10. Review your plan before adding intensity.`,
-      tone: pain.intensity >= 7 || data.scores.injuryRisk > 55 ? "bad" : "warn",
-    };
-  }
-  if (data.scores.injuryRisk > 55) return {
-    title: "Keep effort controlled today.",
-    detail: "Injury risk is elevated. Check what is contributing before adding intensity.",
-    tone: "bad",
-  };
-  if (data.health.length && (data.recoveryBand?.tone === "bad" || data.scores.recoveryScore < 45)) return {
-    title: "Give recovery some room.",
-    detail: "Your body signals are low today. Check the recovery trend alongside the training load.",
-    tone: "warn",
-  };
-  if (data.trainingStatus?.tone === "bad") return {
-    title: "Ease off the load.",
-    detail: "Recent training load is outside its productive range. Review the trend before pushing harder.",
-    tone: "warn",
-  };
-  if (data.loadRecommendation?.downWeek) return {
-    title: "A lighter week by design.",
-    detail: "Your plan has a down week. Use the lighter load to give your body space to recover.",
-    tone: "good",
-  };
-  if (!data.load && !data.health.length) return {
-    title: "Still learning your baseline.",
-    detail: "More runs and wearable data will bring load, risk, and recovery into focus.",
-    tone: "warn",
-  };
-  return {
-    title: data.scores.globalScore >= 70 && data.scores.injuryRisk <= 30 ? "Good ground to build on." : "Build steadily from here.",
-    detail: "Read your load, injury risk, and recovery together before changing today's effort.",
-    tone: "good",
-  };
-}
-
 function openPlannedWorkout(event: MouseEvent): void {
   const button = (event.target as Element).closest<HTMLButtonElement>("[data-workout-id]");
   if (button) void openWorkout(button.dataset.workoutId!, button.dataset.workoutDate!).catch(fail);
 }
 
+function signalDial(value: number | null, maximum: number): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  const percentage = Math.min(100, Math.max(0, value / maximum * 100));
+  return `<svg class="signal-dial" viewBox="0 0 48 48" aria-hidden="true"><circle class="signal-track" cx="24" cy="24" r="19"/><circle class="signal-fill" cx="24" cy="24" r="19" pathLength="100" stroke-dasharray="${percentage} 100" transform="rotate(-90 24 24)"/></svg>`;
+}
+
 function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
   el("today-hero").onclick = openPlannedWorkout;
   const { scores } = data;
-  const decision = trainingDecision(data, extras);
   const todayKey = ymd(new Date());
-  const todays = extras.weekPlan.filter((w) => w.date === todayKey);
+  const planDates = extras.planWorkouts.map((workout) => workout.date).sort();
+  const weekStart = (dateKey: string): number => {
+    const date = new Date(`${dateKey}T12:00:00`);
+    date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  };
+  const firstWeek = planDates.length ? weekStart(planDates[0]) : null;
+  const totalWeeks = firstWeek != null ? Math.round((weekStart(planDates[planDates.length - 1]) - firstWeek) / 604800000) + 1 : 0;
+  const currentWeek = firstWeek != null ? Math.min(totalWeeks, Math.max(1, Math.round((weekStart(todayKey) - firstWeek) / 604800000) + 1)) : 0;
+  const todays = extras.weekPlan.filter((workout) => workout.date === todayKey && workout.kind !== "rest" && workout.status !== "skipped");
   const session = todays.length
     ? todays
-        .map((w) => {
-          const label = KIND_LABEL[w.kind] ?? w.kind;
-          const dist = w.distanceM ? ` · ${(w.distanceM / 1000).toFixed(1)} km` : "";
-          const dur = w.durationMin ? ` · ${Math.round(w.durationMin)} min` : "";
-          return `<button type="button" class="workout-link${w.done ? " workout-done" : ""}" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${escapeHtml(w.date)}">${escapeHtml(label)}${dist}${dur}</button>`;
+        .map((workout) => {
+          const distanceKm = workout.distanceM ? workout.distanceM / 1000 : null;
+          const paceRange = distanceKm && workout.paceLoSKm != null && workout.paceHiSKm != null
+            ? [distanceKm * Math.min(workout.paceLoSKm, workout.paceHiSKm) / 60, distanceKm * Math.max(workout.paceLoSKm, workout.paceHiSKm) / 60]
+            : null;
+          const durationRange = paceRange ?? (workout.durationMin ? [workout.durationMin * 0.9, workout.durationMin * 1.1] : null);
+          const duration = durationRange ? `${Math.max(1, Math.floor(durationRange[0]))}-${Math.max(1, Math.ceil(durationRange[1]))} min` : null;
+          const title = workout.title || KIND_LABEL[workout.kind] || workout.kind;
+          const distance = distanceKm ? `<span><small>Distance</small><strong class="today-workout-distance">${distanceKm.toFixed(1)} <span>km</span></strong></span>` : "";
+          const pace = workout.paceLoSKm != null && workout.paceHiSKm != null
+            ? `<span><small>Target pace /km</small><strong>${fmtPace(Math.min(workout.paceLoSKm, workout.paceHiSKm))}-${fmtPace(Math.max(workout.paceLoSKm, workout.paceHiSKm))}</strong></span>` : "";
+          return `<button type="button" class="workout-link today-workout${workout.done ? " workout-done" : ""}" data-workout-id="${escapeHtml(workout.id)}" data-workout-date="${escapeHtml(workout.date)}"><span class="session-kind">${workout.done ? icons.check : icons.run}${workout.done ? "Completed" : escapeHtml(KIND_LABEL[workout.kind] || workout.kind)}</span><span class="today-workout-title">${escapeHtml(title)}</span><span class="session-metrics">${distance}${pace}${duration ? `<span><small>Estimated time</small><strong>${duration}</strong></span>` : ""}</span><span class="session-open">${workout.done ? "Review session" : "View session"} ${icons.arrowRight}</span></button>`;
         })
-        .join(" + ")
+        .join("")
     : null;
-  // The streak counts days trained, not days run — a bike day keeps the
-  // streak alive, which is why the chip says "active days" and not "days run".
-  const streak = currentStreak(extras.allActivities);
   const plan = extras.plan;
-  const raceIn = plan ? daysUntil(plan.targetDate) : null;
   const ratio = data.load?.ratio ?? data.trainingStatus?.ratio ?? null;
   const latestHealth = data.health.reduce<HealthDaily | null>((latest, day) =>
     !latest || day.date > latest.date ? day : latest, null);
@@ -300,50 +199,44 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
   const loadDetail = data.load?.shortTerm != null && data.load?.longTerm != null
     ? `7-day load ${data.load.shortTerm.toFixed(0)} · usual ${data.load.longTerm.toFixed(0)}`
     : "More runs needed for a load trend";
+  const upcoming = extras.planWorkouts.filter((workout) => workout.date > todayKey && workout.kind !== "rest" && workout.status !== "skipped").sort((left, right) => left.date.localeCompare(right.date))[0];
+  const nextSession = upcoming ? `${upcoming.title || KIND_LABEL[upcoming.kind] || upcoming.kind} · ${fmtDate(upcoming.date)}` : "No upcoming sessions";
   el("today-hero").innerHTML = `
     <div class="today-hero">
-      <div class="decision-lead tone-${decision.tone}">
-        <div class="eyebrow">Today's training picture</div>
-        <h2>${escapeHtml(decision.title)}</h2>
-        <p>${escapeHtml(decision.detail)}</p>
-        <div class="decision-meta">
-          <span>Readiness <strong class="count-up" data-count-to="${scores.globalScore}">${scores.globalScore}</strong>/100</span>
-          ${extras.lastSync ? `<span>${icons.sync} Last synced ${fmtDateTime(extras.lastSync)}</span>` : ""}
-          ${extras.activePain.length ? `<a class="decision-review" href="injury.html">Review pain journal</a>` : ""}
+      <section class="today-focus" aria-label="Daily session">
+        <div class="today-context"><span>${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>${plan && totalWeeks ? `<a href="plan.html">Week ${currentWeek} of ${totalWeeks} ${icons.chevronRight}</a>` : ""}</div>
+        <div class="today-action">
+          <h2>Today's session</h2>
+          <div class="today-session">${session ?? `<span class="rest-symbol" aria-hidden="true">${plan ? icons.moon : icons.flag}</span><h3>${plan ? "Room to recover." : "Your next training block"}</h3><p class="session-rest-copy">${plan ? "No run scheduled today." : "A plan built around your goal and your week."}</p>`}</div>
+          ${!plan ? '<a class="btn today-plan-link" href="plan.html">Create a plan</a>' : !session ? `<p class="next-session">Next: ${escapeHtml(nextSession)}</p><a class="today-plan-link" href="calendar.html">Open calendar ${icons.chevronRight}</a>` : ""}
         </div>
-      </div>
-      <div class="today-action">
-        <div class="eyebrow">Today's session</div>
-        <div class="today-session">${session ?? "No session planned"}</div>
-        <div class="hero-chips">
-          <span class="hero-chip" title="Consecutive active days">${icons.flame} ${streak}-day streak</span>
-          ${plan && raceIn != null && raceIn >= 0
-            ? `<span class="hero-chip">${icons.flag} ${escapeHtml(plan.distance)} in ${raceIn} day${raceIn === 1 ? "" : "s"}</span>`
-            : ""}
-        </div>
-        <a class="today-plan-link" href="#week">See this week</a>
-      </div>
+      </section>
+      <section class="today-check" aria-labelledby="training-check-title">
+      <h2 id="training-check-title">Training check</h2>
       <div class="dashboard-pillars" aria-label="Training signals">
-        <a class="pillar tone-${ratio != null ? safeTone(data.trainingStatus?.tone ?? "warn") : "neutral"}" href="#status">
+        <a class="pillar tone-${ratio != null ? safeTone(data.trainingStatus?.tone ?? "warn") : "neutral"}" href="achievements.html#performance">
           <span class="pillar-name">${icons.chart} Training load</span>
+          ${signalDial(ratio, 2)}
           <strong>${ratio != null ? `${ratio.toFixed(2)}×` : "—"}</strong>
           <span class="pillar-state">${escapeHtml(data.trainingStatus?.label ?? "No trend yet")}</span>
           <small>${loadDetail}</small>
         </a>
-        <a class="pillar tone-${scoreTone(scores.injuryRisk, true)}" href="#risk">
+        <a class="pillar tone-${scoreTone(scores.injuryRisk, true)}" href="injury.html">
           <span class="pillar-name">${icons.heart} Injury risk</span>
-          <strong>${scores.injuryRisk}%</strong>
+          ${signalDial(scores.injuryRisk, 100)}
+          <strong>${scores.injuryRisk}<span class="signal-unit">/100</span></strong>
           <span class="pillar-state">${riskLabel}</span>
           <small>${escapeHtml(riskDetail)}</small>
         </a>
-        <a class="pillar tone-${latestHealth ? scoreTone(scores.recoveryScore) : "neutral"}" href="#recovery">
+        <a class="pillar tone-${latestHealth ? scoreTone(scores.recoveryScore) : "neutral"}" href="achievements.html#recovery">
           <span class="pillar-name">${icons.moon} Body state</span>
-          <strong>${latestHealth ? `${scores.recoveryScore}/100` : "—"}</strong>
+          ${signalDial(latestHealth ? scores.recoveryScore : null, 100)}
+          <strong>${latestHealth ? `${scores.recoveryScore}<span class="signal-unit">/100</span>` : "—"}</strong>
           <span class="pillar-state">${escapeHtml(latestHealth ? data.recoveryBand?.label ?? "Recovery trend" : "Sync wearable data")}</span>
           <small>${escapeHtml(bodySignals)}</small>
         </a>
       </div>
-      <p class="hero-brief">${escapeHtml(coachBrief(data, extras))}</p>
+      </section>
     </div>`;
   // The readiness count is decoration: the final value is already in the DOM
   // so reduced motion still shows the actual score.
@@ -639,6 +532,7 @@ function crossLegend(id: string, shown: boolean): void {
 }
 
 function renderWeek(extras: DashExtras): void {
+  if (!document.getElementById("week")) return;
   const monday = mondayThisWeek();
   const days: {
     key: string;
@@ -813,75 +707,6 @@ function renderWeekAdherence(
   node.textContent = parts.join(" · ") + ".";
 }
 
-/// The week's plan, day by day — the detail the bar chart cannot carry.
-/// Each day lists its sessions with the numbers a runner needs to execute
-/// them: distance, time on feet, and the pace band the plan was built on.
-/// A day with no session still gets a row (an intentional rest day reads
-/// differently from a gap in the plan), and a double day stacks both
-/// sessions rather than hiding one behind "2 sessions".
-function renderWeekPlan(extras: DashExtras): void {
-  const host = el("week-plan");
-  host.onclick = openPlannedWorkout;
-  // With no plan there is nothing to detail, and seven rows of "No session
-  // planned" would be pure noise — the chart above already says the week is
-  // empty. The block only exists once a plan is being followed.
-  if (!extras.weekPlan.length) {
-    host.innerHTML = "";
-    host.hidden = true;
-    return;
-  }
-  host.hidden = false;
-  const monday = mondayThisWeek();
-  const todayKey = ymd(new Date());
-  const byDay = new Map<string, PlanWorkout[]>();
-  for (const w of extras.weekPlan) {
-    (byDay.get(w.date) ?? byDay.set(w.date, []).get(w.date)!).push(w);
-  }
-
-  const rows: string[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    const key = ymd(d);
-    const dow = DOW[i];
-    const date = fmtDateDMY(d);
-    const cls = key === todayKey ? " is-today" : key < todayKey ? " is-past" : " is-future";
-    const ws = (byDay.get(key) ?? []).sort((a, b) => a.date.localeCompare(b.date));
-
-    let body: string;
-    if (!ws.length) {
-      body = `<span class="wp-none">No session planned</span>`;
-    } else {
-      body = ws
-        .map((w) => {
-          const label = KIND_LABEL[w.kind] ?? w.kind;
-          const bits: string[] = [];
-          if (w.distanceM) bits.push(`${(w.distanceM / 1000).toFixed(1)} km`);
-          if (w.durationMin) bits.push(`${Math.round(w.durationMin)} min`);
-          if (w.paceLoSKm != null && w.paceHiSKm != null) {
-            const band = (extras.plan && qualityBand(extras.plan, w)) ?? [
-              w.paceLoSKm,
-              w.paceHiSKm,
-            ];
-            bits.push(fmtPaceBand(band[0], band[1]));
-          }
-          return `<div class="wp-session">
-            <span class="chip chip-${w.kind}${w.done ? " chip-done" : ""}">${label}</span>
-            <button type="button" class="wp-title workout-link" data-workout-id="${escapeHtml(w.id)}" data-workout-date="${w.date}">${escapeHtml(w.title)}</button>
-            ${bits.length ? `<span class="wp-meta">${bits.join(" · ")}</span>` : ""}
-            ${w.done ? `<span class="wp-state" title="Completed">${icons.check}</span>` : ""}
-          </div>`;
-        })
-        .join("");
-    }
-    rows.push(`<div class="wp-day-row${cls}">
-      <div class="wp-day"><b>${dow}</b><span>${date}</span></div>
-      <div class="wp-sessions">${body}</div>
-    </div>`);
-  }
-  el("week-plan").innerHTML = rows.join("");
-}
-
 /// The whole current plan on one axis: every week it holds, with the planned
 /// volume as the dashed tick and what was actually run as the fill — the same
 /// actual-under-tick reading as the week strip, stretched over the plan's full
@@ -889,7 +714,8 @@ function renderWeekPlan(extras: DashExtras): void {
 /// instead of one week at a time. The race day (or time trial) gets a dashed
 /// marker at its day, because the point of a build is the line it runs toward.
 function renderPlanTimeline(extras: DashExtras): void {
-  const panel = el("plan-timeline");
+  const panel = document.getElementById("plan-timeline");
+  if (!panel) return;
   const { plan, planWorkouts } = extras;
   if (!plan || planWorkouts.length === 0) {
     panel.hidden = true;
@@ -1408,13 +1234,14 @@ function renderRecoveryPanel(data: DashboardPayload): void {
 
 function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   chartSpecs.clear();
-  const { fitness, activities } = data;
-  renderTodayHero(data, extras);
-  renderPainBanner(data);
-
+  const { fitness } = data;
+  if (!isProgress) {
+    renderTodayHero(data, extras);
+    renderPainBanner(data);
+    renderWeek(extras);
+    return;
+  }
   renderPlanTimeline(extras);
-  renderWeek(extras);
-  renderWeekPlan(extras);
   renderVolume(extras, data.loadRecommendation);
   renderRecoveryPanel(data);
   renderRiskPanel(data);
@@ -1436,23 +1263,6 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   el("fitness-cards").innerHTML =
     fitCards.join("") || `<p class="muted">No fitness data yet — sync COROS first.</p>`;
 
-  const tbody = el("activities-table").querySelector("tbody")!;
-  tbody.innerHTML = activities
-    .map(
-      (a) => `<tr data-id="${a.id}" tabindex="0" role="button" title="Open details"
-        aria-label="${escapeHtml(a.sport)} on ${fmtDateTime(a.startTime)}, open details">
-        <td>${fmtDateDMY(a.startTime)}</td>
-        <td>${escapeHtml(a.sport)}</td>
-        <td>${fmtKm(a.distanceM)}</td>
-        <td>${fmtDuration(a.durationS)}</td>
-        <td>${a.avgHr ?? "—"}</td>
-        <td>${fmtPace(a.avgPaceSKm)}/km</td>
-      </tr>`,
-    )
-    .join("");
-  if (activities.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">No activities yet — connect and sync COROS.</td></tr>`;
-  }
   // Cards are in the DOM now — measure every card row so the ones that
   // overflow show their paging buttons. (showDataSections re-measures once
   // #dash becomes visible, since rows in a hidden container measure zero.)
@@ -1485,20 +1295,9 @@ function renderPainBanner(data: DashboardPayload): void {
     <p><strong>Plan change ready.</strong> ${escapeHtml(offer.summary)}</p>
     <span class="pain-banner-actions">
       <button id="pain-review" class="secondary">Review change</button>
-      <button id="pain-accept" class="primary">Accept change</button>
     </span>`;
   el<HTMLButtonElement>("pain-review").addEventListener("click", () => {
     window.location.href = "injury.html";
-  });
-  el<HTMLButtonElement>("pain-accept").addEventListener("click", async (ev) => {
-    const btn = ev.currentTarget as HTMLButtonElement;
-    try {
-      await withBusy(btn, "Applying…", () => tauri.applyProposal("coros", offer.id));
-      banner.hidden = true;
-      banner.innerHTML = "";
-    } catch (err) {
-      fail(err);
-    }
   });
 }
 
@@ -1570,6 +1369,7 @@ async function initMap(points: HeatPoint[], settings: Settings): Promise<void> {
 
 let sheetMap: maplibregl.Map | null = null;
 let activitySheet: Sheet | null = null;
+let cleanupSheetReview: (() => void) | null = null;
 
 /// The activity sheet is created once and reused. Its map is torn down only
 /// when the sheet has actually finished closing (onClosed), never at the start
@@ -1581,6 +1381,8 @@ function getActivitySheet(): Sheet {
       onClosed: () => {
         sheetMap?.remove();
         sheetMap = null;
+        cleanupSheetReview?.();
+        cleanupSheetReview = null;
       },
     });
   }
@@ -1688,7 +1490,11 @@ function renderSheetMap(d: ActivityDetail, settings: Settings, mapEl: HTMLElemen
   sheetMap = mountRouteMap(mapEl, d.track, settings);
 }
 
-async function openActivitySheet(activityId: number): Promise<void> {
+export async function openActivitySheet(activityId: number): Promise<void> {
+  cleanupSheetReview?.();
+  cleanupSheetReview = null;
+  sheetMap?.remove();
+  sheetMap = null;
   const sheet = getActivitySheet();
   // Show the surface immediately with a loading shell, THEN fetch. The sheet
   // appearing on tap (not after the round-trip) is what makes it feel direct.
@@ -1708,7 +1514,19 @@ async function openActivitySheet(activityId: number): Promise<void> {
     // A close/reopen happened while we were fetching — this response is stale.
     if (!sheet.isCurrent(token)) return;
     const mapEl = renderActivitySheet(sheet, detail, review);
-    renderSheetMap(detail, settings, mapEl);
+    if (review) {
+      for (const selector of [".sheet-map", ".sheet-laps", ".sheet-splits"]) sheet.body.querySelector(selector)?.closest("section")?.remove();
+      const additional = sheet.body.querySelector(".sheet-data")!;
+      [...additional.children].slice(0, 6).forEach((tile) => tile.remove());
+      if (additional.children.length) additional.closest("section")!.querySelector("h3")!.textContent = "Additional signals";
+      else additional.closest("section")!.remove();
+      const shared = document.createElement("div");
+      shared.className = "shared-run-review";
+      sheet.body.prepend(shared);
+      cleanupSheetReview = renderRunReview(shared, review, settings);
+    } else {
+      renderSheetMap(detail, settings, mapEl);
+    }
   } catch (e) {
     if (!sheet.isCurrent(token)) return;
     sheet.body.innerHTML = `<p class="notice bad">Could not load this activity.</p>`;
@@ -1717,7 +1535,8 @@ async function openActivitySheet(activityId: number): Promise<void> {
 }
 
 function initActivitySheet(): void {
-  const tbody = el("activities-table").querySelector("tbody")!;
+  const tbody = document.getElementById("activities-table")?.querySelector("tbody");
+  if (!tbody) return;
   const open = (e: Event) => {
     const tr = (e.target as HTMLElement).closest<HTMLElement>("tr[data-id]");
     if (tr) void openActivitySheet(Number(tr.dataset.id));
@@ -1746,13 +1565,13 @@ const CTA: Record<string, { title: string; body: string; label: string; href: st
   },
   plan: {
     title: "Create your first plan",
-    body: "Your history is in. A plan is what the calendar and the injury page describe — set one up from Settings, then build it on the Plan page.",
-    label: "Set up a plan",
-    href: "settings.html#setup",
+    body: "Your history is synced. Choose a goal and build your next training block.",
+    label: "Create a plan",
+    href: "plan.html",
   },
   train: {
-    title: "You're all set — train!",
-    body: "Plan pushed to COROS. Follow the calendar, keep syncing, and the adaptive engine softens sessions when recovery dips.",
+    title: "Your plan is ready",
+    body: "Your scheduled sessions are in the calendar. Sync your watch after training to review your progress.",
     label: "Open calendar",
     href: "calendar.html",
   },
@@ -1844,10 +1663,6 @@ async function main(): Promise<void> {
     await loadAppData(flow);
   };
 
-  if (onboardingPending()) {
-    startOnboarding(() => void proceed());
-    return;
-  }
   await proceed();
 }
 
@@ -1864,7 +1679,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
     if (step !== "train" || !flow.pushed) {
       // Not everything is wired yet — guide the user, but still show data
       // if a sync has happened.
-      if (flow.lastSync == null) {
+      if (flow.lastSync == null && !isProgress) {
         renderEmptyState(step);
         return;
       }
@@ -1874,7 +1689,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
     sunday.setDate(monday.getDate() + 6);
     const [data, points, settings, allActivities, planPair, weekPlan, painEntries, downWeeks] = await Promise.all([
       tauri.dashboard(currentRange),
-      tauri.heatPoints(),
+      isProgress ? tauri.heatPoints() : Promise.resolve([] as HeatPoint[]),
       tauri.getSettings(),
       tauri.allActivities().catch(() => [] as Activity[]),
       tauri.currentPlan().catch(() => null),
@@ -1901,7 +1716,7 @@ async function loadAppData(given?: FlowState): Promise<void> {
     // #dash is visible now — the map container can measure itself.
     pendingMapPoints = points;
     pendingMapSettings = settings;
-    maybeInitMap();
+    if (isProgress) maybeInitMap();
   } catch (e) {
     // Outside Tauri or backend unreachable: show the empty-state guidance
     // instead of an alert storm.
@@ -1913,4 +1728,8 @@ async function loadAppData(given?: FlowState): Promise<void> {
   }
 }
 
-main();
+export const startPerformance = main;
+
+if (!isProgress) {
+  void main();
+}

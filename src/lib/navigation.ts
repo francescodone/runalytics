@@ -1,5 +1,6 @@
 import { icons } from "./icons";
-import { fmtDateDMY } from "./ipc";
+import appIcon from "../../src-tauri/icons/128x128@2x.png";
+import "../styles/redesign.css";
 
 const nav = document.querySelector<HTMLElement>("#nav");
 const main = document.querySelector<HTMLElement>("#app");
@@ -11,20 +12,30 @@ if (nav && main) {
   const links = [...nav.querySelectorAll<HTMLAnchorElement>(".nav-link")];
   const activeLink = links.find((link) => link.classList.contains("active"));
   const title = activeLink?.textContent?.trim() ?? "Runalytics";
-  const descriptions: Record<string, string> = {
-    Dashboard: "Load, injury risk and body signals in one place.",
-    Plan: "Build a training plan that moves with you.",
-    Calendar: "Every session, all in one place.",
-    Injuries: "Keep track of how your body feels.",
-    Achievements: "See how far you've come.",
-    Settings: "Make Runalytics yours.",
+  document.body.dataset.page = activeLink?.getAttribute("href")?.replace(".html", "") ?? "support";
+  const labels: Record<string, string> = {
+    "index.html": "Today", "plan.html": "Plan", "calendar.html": "Calendar",
+    "achievements.html": "Progress", "injury.html": "Injuries", "support.html": "Support", "settings.html": "Settings",
   };
+  for (const link of links) {
+    const href = link.getAttribute("href") ?? "";
+    if (labels[href]) link.textContent = labels[href];
+    if (!["index.html", "plan.html", "calendar.html", "achievements.html"].includes(href)) link.classList.add("nav-secondary");
+  }
+  if (!links.some((link) => link.getAttribute("href") === "support.html")) {
+    const support = document.createElement("a");
+    support.href = "support.html";
+    support.className = "nav-link";
+    support.textContent = "Support";
+    links.push(support);
+  }
   const navIcons: Record<string, string> = {
-    "index.html": icons.chart,
+    "index.html": icons.sunrise,
     "plan.html": icons.flag,
     "calendar.html": icons.calendar,
     "injury.html": icons.heart,
-    "achievements.html": icons.trophy,
+    "achievements.html": icons.chart,
+    "support.html": icons.info,
     "settings.html": icons.sliders,
   };
 
@@ -36,20 +47,17 @@ if (nav && main) {
     if (link === activeLink) link.setAttribute("aria-current", "page");
     destinations.append(link);
   }
-  // The brand mark mirrors the app icon (scripts/generate_app_icon.py): the
-  // brand gradient squircle carrying a white tile with the italic R. Built
-  // here so the eight HTML pages keep a plain <span class="brand">.
   const brand = nav.querySelector<HTMLElement>(".brand");
   if (brand) {
     const name = brand.textContent?.trim() ?? "Runalytics";
     brand.textContent = "";
-    const mark = document.createElement("span");
+    const mark = document.createElement("img");
     mark.className = "brand-mark";
+    mark.src = appIcon;
+    mark.alt = "";
+    mark.width = 32;
+    mark.height = 32;
     mark.setAttribute("aria-hidden", "true");
-    const tile = document.createElement("span");
-    tile.className = "brand-tile";
-    tile.textContent = "R";
-    mark.append(tile);
     const label = document.createElement("span");
     label.className = "brand-name";
     label.textContent = name;
@@ -57,52 +65,32 @@ if (nav && main) {
   }
   brand?.after(destinations);
 
-  // The footer pins Settings to the bottom of the rail, with the sync chip
-  // (mounted by sync.ts) directly above it. On the mobile toolbar the footer
-  // dissolves — `display: contents` — and Settings moves back into the
-  // dropdown, which is where a secondary destination belongs.
-  const footer = document.createElement("div");
+  const footer = document.createElement("details");
   footer.id = "nav-footer";
-  const settingsLink = links.find((link) => link.getAttribute("href") === "settings.html");
-  const compact = window.matchMedia("(max-width: 900px)");
-  const placeSettings = () => {
-    if (!settingsLink) return;
-    if (compact.matches) destinations.append(settingsLink);
-    else footer.append(settingsLink);
+  const more = document.createElement("summary");
+  more.className = "nav-more";
+  more.innerHTML = `<span class="nav-icon">${icons.sliders}</span><span>More</span>`;
+  const utilities = document.createElement("div");
+  utilities.className = "nav-utilities";
+  for (const link of links.filter((link) => link.classList.contains("nav-secondary") || link.getAttribute("href") === "support.html")) utilities.append(link);
+  footer.append(more, utilities);
+  const mobile = window.matchMedia("(max-width: 1023px)");
+  const arrangeUtilities = () => {
+    footer.open = !mobile.matches;
   };
-  placeSettings();
-  nav.append(footer);
-
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "nav-toggle secondary icon-btn";
-  toggle.innerHTML = icons.chevronRight;
-  toggle.setAttribute("aria-controls", destinations.id);
-  nav.append(toggle);
-
-  const setOpen = (open: boolean) => {
-    nav.dataset.open = String(open);
-    toggle.setAttribute("aria-expanded", String(open));
-    toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
-    toggle.title = open ? "Close navigation" : "Open navigation";
-  };
-  setOpen(false);
-  toggle.addEventListener("click", () => setOpen(nav.dataset.open !== "true"));
-  nav.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && nav.dataset.open === "true") {
-      setOpen(false);
-      toggle.focus();
+  arrangeUtilities();
+  mobile.addEventListener("change", arrangeUtilities);
+  if (activeLink && utilities.contains(activeLink)) more.setAttribute("aria-current", "page");
+  document.addEventListener("click", (event) => {
+    if (mobile.matches && !footer.contains(event.target as Node)) footer.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && mobile.matches && footer.open) {
+      footer.open = false;
+      more.focus();
     }
   });
-  document.addEventListener("click", (event) => {
-    if (event.target instanceof Node && !nav.contains(event.target)) setOpen(false);
-  });
-  compact.addEventListener("change", () => {
-    if (compact.matches && destinations.contains(document.activeElement)) toggle.focus();
-    if (!compact.matches && document.activeElement === toggle) activeLink?.focus();
-    placeSettings();
-    setOpen(false);
-  });
+  nav.append(footer);
 
   const header = document.createElement("header");
   header.className = "page-header";
@@ -110,27 +98,8 @@ if (nav && main) {
   heading.textContent = title;
   const intro = document.createElement("div");
   intro.className = "page-intro";
-  const description = document.createElement("p");
-  description.textContent = descriptions[title] ?? "Your running, in focus.";
-  intro.append(heading, description);
+  heading.textContent = labels[activeLink?.getAttribute("href") ?? ""] ?? title;
+  intro.append(heading);
   header.append(intro);
-  if (activeLink?.getAttribute("href") === "index.html") {
-    heading.textContent = "Your training";
-    const actions = document.createElement("div");
-    actions.className = "page-actions";
-    const date = document.createElement("time");
-    const today = new Date();
-    date.dateTime = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    date.textContent = `${today.toLocaleDateString(undefined, {
-      weekday: "long",
-    })} \u00b7 ${fmtDateDMY(today)}`;
-    const planLink = document.createElement("a");
-    planLink.className = "header-action";
-    planLink.id = "header-plan-cta";
-    planLink.href = "plan.html";
-    planLink.innerHTML = `${icons.plus}<span>Training plan</span>`;
-    actions.append(date, planLink);
-    header.append(actions);
-  }
   main.prepend(header);
 }

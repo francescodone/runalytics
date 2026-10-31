@@ -1,4 +1,5 @@
 import { tauri, fmtKm, fmtDateDMY, ymdLocal } from "./ipc";
+import { icons } from "./icons";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
 import { renderRunReview } from "./run-review";
@@ -50,11 +51,11 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     <div><p class="eyebrow">${event.activityId == null ? "Planned session" : "Completed activity"}</p>
       <h2></h2><p class="muted workout-detail-date"></p></div>
     <div class="workout-detail-head-actions">
-      <button type="button" class="secondary" data-copy>Copy</button>
-      <button type="button" class="secondary" data-close autofocus>Close</button>
+      <button type="button" class="secondary icon-btn" data-copy aria-label="Copy workout" title="Copy workout">${icons.copy}</button>
+      <button type="button" class="secondary icon-btn" data-close aria-label="Close workout" title="Close workout" autofocus>${icons.close}</button>
     </div>
     </header><div class="workout-detail-body"><p class="workout-adjusted" hidden></p>
-    <div class="workout-notes"></div>
+    <div class="workout-summary"></div><div class="workout-notes"></div>
     <div class="workout-review" hidden></div>
     <div class="workout-actions" hidden>
       <button type="button" class="secondary" data-move>Move to&hellip;</button>
@@ -76,7 +77,18 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     adjusted.textContent = `${adjustedLabel(event.adjusted)}. An easier day today keeps the rest of the block on schedule.`;
     adjusted.hidden = false;
   }
-  card.querySelector(".workout-notes")!.textContent = event.notes;
+  card.querySelector(".workout-summary")!.innerHTML = [
+    event.distanceM ? `<div><strong>${fmtKm(event.distanceM)}</strong><small>Distance</small></div>` : "",
+    event.durationMin ? `<div><strong>${Math.round(event.durationMin)} min</strong><small>Duration</small></div>` : "",
+  ].join("");
+  const notes = card.querySelector(".workout-notes")!;
+  const paragraphs = event.notes.split(/\n\s*\n/).filter((paragraph) => paragraph.trim());
+  for (const paragraph of paragraphs) {
+    const block = document.createElement("div");
+    block.className = "prescription-block";
+    block.textContent = paragraph;
+    notes.append(block);
+  }
   // A session the runner moved says so here as well as on the calendar: the
   // marker in the grid is a fact about the day, and this is the surface where
   // the question "where was it before?" actually gets asked.

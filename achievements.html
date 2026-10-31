@@ -6,25 +6,46 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#5544e9" />
-    <title>Runalytics — Achievements</title>
+    <meta name="theme-color" content="#ffffff" />
+    <title>Runalytics - Progress</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
   </head>
   <body>
     <a class="skip-link" href="#app">Skip to content</a>
     <nav id="nav" aria-label="Main">
       <span class="brand">Runalytics</span>
-      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="index.html" class="nav-link">Today</a>
       <a href="plan.html" class="nav-link">Plan</a>
       <a href="calendar.html" class="nav-link">Calendar</a>
       <a href="injury.html" class="nav-link">Injuries</a>
-      <a href="achievements.html" class="nav-link active">Achievements</a>
+      <a href="achievements.html" class="nav-link active">Progress</a>
+      <a href="support.html" class="nav-link">Support</a>
       <a href="settings.html" class="nav-link">Settings</a>
     </nav>
     <main id="app">
+      <div class="progress-tabs" role="tablist" aria-label="Progress">
+        <button type="button" id="workouts-tab" role="tab" aria-selected="true" aria-controls="progress-workouts">Workouts</button>
+        <button type="button" id="performance-tab" role="tab" aria-selected="false" aria-controls="progress-performance" tabindex="-1">Performance</button>
+        <button type="button" id="milestones-tab" role="tab" aria-selected="false" aria-controls="progress-milestones" tabindex="-1">Milestones</button>
+      </div>
+      <section id="progress-workouts" role="tabpanel" aria-labelledby="workouts-tab">
+        <div class="progress-filters">
+          <label class="history-search-field">Search workouts<input type="search" id="history-search" placeholder="Name, sport or device" autocomplete="off" /></label>
+          <label>Workout type<select id="history-type"><option value="all">All activities</option><option value="run">Running</option><option value="easy">Easy runs</option><option value="tempo">Tempo</option><option value="intervals">Intervals</option><option value="longRun">Long runs</option><option value="race">Races</option><option value="imported">Unlinked activities</option><option value="cross">Cross-training</option></select></label>
+          <label>Year<select id="history-year"><option value="all">All years</option></select></label>
+          <label>Month<select id="history-month"><option value="all">All months</option><option value="0">January</option><option value="1">February</option><option value="2">March</option><option value="3">April</option><option value="4">May</option><option value="5">June</option><option value="6">July</option><option value="7">August</option><option value="8">September</option><option value="9">October</option><option value="10">November</option><option value="11">December</option></select></label>
+          <button type="button" id="history-reset" class="secondary icon-btn" aria-label="Clear filters" title="Clear filters" hidden></button>
+        </div>
+        <p id="history-summary" role="status">Loading your workouts...</p>
+        <div id="history-list" class="activity-list"></div>
+      </section>
+      <div id="progress-performance" role="tabpanel" aria-labelledby="performance-tab" hidden>
+      <div id="performance-analysis"></div>
+      </div>
+      <div id="progress-milestones" role="tabpanel" aria-labelledby="milestones-tab" hidden>
       <section id="streaks" class="panel">
         <header class="panel-head">
-          <h2>Streaks</h2>
+          <h2>All-time stats</h2>
           <span class="panel-meta" id="streak-meta"></span>
         </header>
         <div id="streak-stats" class="stat-grid"></div>
@@ -40,6 +61,7 @@
         </header>
         <div id="badge-cards" class="achieve-grid"></div>
       </section>
+      </div>
     </main>
     <script type="module" src="/src/achievements.ts"></script>
   </body>

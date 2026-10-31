@@ -4,11 +4,13 @@ import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
 import { scrollIntoViewMotion } from "./lib/motion";
 import { initGroupProgress, initScrollReveal } from "./lib/reveal";
-import { escapeHtml } from "./lib/workout-detail";
+import { escapeHtml, openWorkout } from "./lib/workout-detail";
 import { EXECUTION_LABEL, qualityBand } from "./lib/plan-bands";
 import { paceTrack } from "./lib/pace-track";
 import { initSyncPill } from "./lib/plan-sync-pill";
 import { requirePlanOrRedirect, initNavGate } from "./lib/navgate";
+import { initPlanWizard } from "./lib/plan-wizard";
+import { icons } from "./lib/icons";
 // Side-effect import: paints the saved colour scheme before first paint.
 import "./lib/theme";
 import "./lib/navigation";
@@ -499,11 +501,11 @@ function renderPlan(plan: TrainingPlan): void {
     facts.push(["Starting from", `${plan.baselineWeeklyKm.toFixed(0)} km/wk`]);
   }
   if (plan.pushedId) facts.push(["Pushed to COROS", plan.pushedId]);
-  el("plan-status").innerHTML = `<span class="chip status">${plan.status}</span>
-    <dl class="plan-facts">${facts
+  el("plan-status").innerHTML = `<div class="plan-overview"><div><h3>${plan.kind === "race" ? `${escapeHtml(plan.distance)} race plan` : escapeHtml(PLAN_KIND_LABEL[plan.kind])}</h3><p>${fmtDay(plan.targetDate)} · ${plan.weeklyFrequency} runs per week</p></div><span class="chip status">${plan.status === "pushed" ? "On your watch" : escapeHtml(plan.status)}</span></div>
+    <details class="plan-details disclosure"><summary>Plan details and predictions</summary><dl class="plan-facts">${facts
       .map(([k, v]) => `<div class="plan-fact"><dt>${k}</dt><dd>${v}</dd></div>`)
       .join("")}</dl>
-    ${predicts ? estChartHtml(plan.distance, plan.thresholdSecKm, shape) : ""}`;
+    ${predicts ? estChartHtml(plan.distance, plan.thresholdSecKm, shape) : ""}</details>`;
 
   const pushBtn = el<HTMLButtonElement>("push-plan");
   const abortBtn = el<HTMLButtonElement>("abort-plan");
@@ -512,6 +514,7 @@ function renderPlan(plan: TrainingPlan): void {
   // its label and disabled state until the call settles.
   if (!pushBtn.classList.contains("btn-busy")) {
     pushBtn.disabled = plan.status === "pushed" || plan.status === "aborted";
+    pushBtn.hidden = pushBtn.disabled;
   }
   if (!abortBtn.classList.contains("btn-busy")) {
     abortBtn.disabled = plan.status === "aborted";
@@ -527,7 +530,9 @@ function renderPlan(plan: TrainingPlan): void {
 function setCreateFormEnabled(enabled: boolean): void {
   const form = el<HTMLFormElement>("create-plan");
   form.hidden = !enabled;
-  el("plan-active-notice").hidden = enabled;
+  el("plan-form").hidden = !enabled;
+  el("plan-view").hidden = enabled;
+  el("plan-active-notice").hidden = true;
   // Linear journey: while a plan is active it is the page's subject, so it
   // moves above the (locked) create form instead of the user scrolling past
   // it. With no plan the form stays first — there is nothing to lead with.
@@ -540,16 +545,105 @@ async function refresh(): Promise<void> {
   const current = await tauri.currentPlan();
   if (current) {
     renderPlan(current[0]);
+    renderPlanWeeks(current[1]);
     setCreateFormEnabled(false);
     void refreshReceipt().catch(() => undefined);
     void refreshPacing(current[0], current[1]).catch(fail);
   } else {
+    document.getElementById("plan-weeks")?.remove();
     el("plan-status").innerHTML = `<p class="muted">No active plan — create one above.</p>`;
     el<HTMLButtonElement>("push-plan").disabled = true;
     el<HTMLButtonElement>("abort-plan").disabled = true;
     setCreateFormEnabled(true);
     el("pacing-section").hidden = true;
     el("plan-receipt").hidden = true;
+  }
+}
+
+let selectedPlanWeek: string | null = null;
+
+function renderPlanWeeks(workouts: PlanWorkout[]): void {
+  let section = document.getElementById("plan-weeks");
+  if (!section) {
+    section = document.createElement("section");
+    section.id = "plan-weeks";
+    section.className = "plan-week-browser";
+    el("plan-status").after(section);
+  }
+  const byWeek = new Map<string, PlanWorkout[]>();
+  for (const workout of [...workouts].sort((left, right) => left.date.localeCompare(right.date))) {
+    const monday = new Date(`${workout.date}T12:00:00`);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const key = ymdLocal(monday);
+    byWeek.set(key, [...(byWeek.get(key) ?? []), workout]);
+  }
+  const weeks = [...byWeek.keys()];
+  const today = ymdLocal(new Date());
+  const currentWeek = weeks.reduce((latest, week, index) => week <= today ? index : latest, 0);
+  const selected = selectedPlanWeek && weeks.includes(selectedPlanWeek) ? weeks.indexOf(selectedPlanWeek) : currentWeek;
+  section.innerHTML = `<div class="plan-week-heading"><h3>Training schedule</h3><a href="calendar.html">Open calendar</a></div>
+    <div class="plan-week-controls"><button type="button" class="icon-btn secondary" id="plan-week-prev" aria-label="Previous week" title="Previous week">${icons.arrowLeft}</button><select id="plan-week-select" aria-label="Training week"></select><button type="button" class="icon-btn secondary" id="plan-week-next" aria-label="Next week" title="Next week">${icons.arrowRight}</button></div>
+    <div class="plan-week-layout"><div class="plan-week-tabs" role="tablist" aria-label="Plan weeks" aria-orientation="vertical"></div><div class="plan-week-content"><p id="plan-week-summary" class="plan-week-summary" role="status"></p><div class="plan-week-sessions" id="plan-week-sessions" role="tabpanel"></div></div></div>`;
+  const tabs = section.querySelector<HTMLElement>(".plan-week-tabs")!;
+  const sessions = section.querySelector<HTMLElement>(".plan-week-sessions")!;
+  const picker = el<HTMLSelectElement>("plan-week-select");
+  const previous = el<HTMLButtonElement>("plan-week-prev");
+  const next = el<HTMLButtonElement>("plan-week-next");
+  const buttons: HTMLButtonElement[] = [];
+  const show = (index: number) => {
+    selectedPlanWeek = weeks[index];
+    picker.value = weeks[index];
+    previous.disabled = index === 0;
+    next.disabled = index === weeks.length - 1;
+    buttons.forEach((button, position) => {
+      button.setAttribute("aria-selected", String(position === index));
+      button.tabIndex = position === index ? 0 : -1;
+    });
+    el("plan-week-summary").textContent = buttons[index].getAttribute("aria-label");
+    sessions.setAttribute("aria-labelledby", `plan-week-${index}`);
+    sessions.innerHTML = byWeek.get(weeks[index])!.map((workout) => {
+      const date = new Date(`${workout.date}T12:00:00`);
+      const pace = workout.paceLoSKm != null && workout.paceHiSKm != null ? ` · ${fmtPaceBand(workout.paceLoSKm, workout.paceHiSKm)}` : "";
+      return `<button type="button" class="plan-session chip-${workout.kind}${workout.done ? " session-completed" : ""}" data-session="${escapeHtml(workout.id)}" data-date="${workout.date}"><span class="plan-session-date"><span>${date.toLocaleDateString(undefined, { weekday: "short" })}</span><strong>${date.getDate()}</strong></span><span><strong>${escapeHtml(workout.title)}</strong><small>${workout.distanceM ? `${(workout.distanceM / 1000).toFixed(1)} km` : workout.durationMin ? `${workout.durationMin} min` : "Rest"}${pace}</small>${workout.done || workout.status === "skipped" ? `<span class="session-status">${workout.done ? "Completed" : "Skipped"}</span>` : ""}</span><span class="session-arrow" aria-hidden="true">${workout.done ? icons.check : icons.chevronRight}</span></button>`;
+    }).join("");
+  };
+  weeks.forEach((week, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `plan-week-${index}`;
+    button.className = "plan-week-tab secondary";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", "plan-week-sessions");
+    const scheduled = byWeek.get(week)!.filter((workout) => workout.kind !== "rest" && workout.status !== "skipped");
+    const completed = scheduled.filter((workout) => workout.done).length;
+    const distance = scheduled.reduce((total, workout) => total + Math.max(0, workout.distanceM ?? 0), 0) / 1000;
+    const completion = scheduled.length ? completed / scheduled.length * 100 : 0;
+    picker.add(new Option(`Week ${index + 1} - ${fmtDay(week)}`, week));
+    button.setAttribute("aria-label", `Week ${index + 1} · ${fmtDay(week)} · ${distance.toFixed(1)} km · ${completed} of ${scheduled.length} sessions completed`);
+    button.innerHTML = `<span class="week-tab-title"><strong>Week ${index + 1}</strong><span>${distance.toFixed(1)} km</span></span><small>${fmtDay(week)}</small><span class="week-completion" aria-hidden="true"><span style="width:${completion}%"></span></span>`;
+    button.addEventListener("click", () => show(index));
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const destination = event.key === "Home" ? 0 : event.key === "End" ? weeks.length - 1
+        : (index + (["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1) + weeks.length) % weeks.length;
+      show(destination);
+      buttons[destination].focus();
+    });
+    buttons.push(button);
+    tabs.append(button);
+  });
+  picker.addEventListener("change", () => show(picker.selectedIndex));
+  previous.addEventListener("click", () => show(Math.max(0, picker.selectedIndex - 1)));
+  next.addEventListener("click", () => show(Math.min(weeks.length - 1, picker.selectedIndex + 1)));
+  sessions.addEventListener("click", (event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>("[data-session]");
+    if (button) void openWorkout(button.dataset.session!, button.dataset.date!).catch(fail);
+  });
+  if (weeks.length) show(selected);
+  else {
+    section.innerHTML = '<p class="muted">No sessions in this plan yet.</p>';
+    selectedPlanWeek = null;
   }
 }
 
@@ -858,6 +952,7 @@ async function main(): Promise<void> {
 
   const form = el<HTMLFormElement>("create-plan");
   if (!inTauri) form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = true;
+  initPlanWizard(form);
   form.addEventListener("input", updatePlanPreview);
   form.addEventListener("change", updatePlanPreview);
   updatePlanPreview();
@@ -886,7 +981,7 @@ async function main(): Promise<void> {
     }
     try {
       const mileageRaw = parseFloat(el<HTMLInputElement>("plan-mileage").value);
-      const [plan] = await withBusy(btn, "Generating plan…", () => tauri.createPlan({
+      await withBusy(btn, "Generating plan…", () => tauri.createPlan({
         distance: selectedDistance(),
         kind,
         targetDate: dateStr,
@@ -896,7 +991,7 @@ async function main(): Promise<void> {
         increase: el<HTMLSelectElement>("plan-increase").value as IncreaseMethod,
         currentWeeklyKm: isFinite(mileageRaw) && mileageRaw > 0 ? mileageRaw : null,
       }));
-      renderPlan(plan);
+      await refresh();
       // This may be the first plan the account has ever had — that is exactly
       // the moment the rest of the nav becomes real.
       void initNavGate(true).catch(() => undefined);

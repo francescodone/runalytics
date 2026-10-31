@@ -9,8 +9,7 @@
 // the Plan page and nowhere else; two forms would be two definitions of a plan,
 // and they drift. This step says what a plan is for and hands over.
 
-import { tauri, fail } from "./ipc";
-import { icons } from "./icons";
+import { tauri, fail, fmtDateTime } from "./ipc";
 import { setBusy, withBusy } from "./feedback";
 import { fetchFlowState, type FlowState } from "./flow";
 
@@ -180,31 +179,35 @@ export function renderSetup(
   const renderPlan = () => {
     panel.innerHTML = `
       <h3>Create your first plan</h3>
-      <p>A plan is what the calendar, the injury page and the achievements all describe, which is
-      why the rest of the app stays closed until one exists.${
-        syncSummary ? ` Your ${syncSummary} will set its starting volume.` : ""
-      }</p>
-      <p class="setup-hint">
-        On the Plan page, pick what it is for — a race to build toward, a distance to improve on,
-        or the mileage you already have to hold — and Runalytics writes the weeks.
-      </p>
+      <p>${syncSummary ? `${syncSummary}. ` : "Your history is synced. "}Your recent running will set your starting volume.</p>
       <a href="plan.html" class="btn big">Create a plan</a>`;
   };
 
   const renderFinished = () => {
     panel.innerHTML = `
       <div class="setup-finished">
-        <div class="setup-trophy medallion lg" aria-hidden="true">${icons.trophy}</div>
-        <h3>You're all set</h3>
-        <p>Watch connected, data synced and a plan on the calendar. Plan, Calendar, Injuries and
-        Achievements are in the sidebar now.</p>
-        <a href="index.html" class="btn big">Go to my dashboard</a>
+        <h3>COROS connected</h3>
+        <p>${state.lastSync ? `Last sync: ${fmtDateTime(state.lastSync)}` : "Ready to sync"}</p>
+        <button type="button" class="secondary">Sync now</button>
+        <p class="setup-status" role="status"></p>
       </div>`;
+    const button = panel.querySelector<HTMLButtonElement>("button")!;
+    const status = panel.querySelector<HTMLElement>(".setup-status")!;
+    button.addEventListener("click", async () => {
+      try {
+        const result = await withBusy(button, "Syncing history...", () => tauri.syncNow("coros"));
+        status.textContent = `${result.activitiesNew} new activities · ${result.healthDays} days of health data`;
+      } catch (error) {
+        status.textContent = "Sync failed. Try again.";
+        fail(error);
+      }
+    });
   };
 
   const render = () => {
     const current = steps.findIndex((s) => !s.done);
     paintSteps(current);
+    stepsHost.hidden = current === -1;
     if (current === -1) renderFinished();
     else if (current === 0) renderConnect();
     else if (current === 1) renderSync();

@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#5544e9" />
+    <meta name="theme-color" content="#ffffff" />
     <title>Runalytics — Settings</title>
     <link rel="stylesheet" href="/src/styles/app.css" />
   </head>
@@ -14,20 +14,22 @@
     <a class="skip-link" href="#app">Skip to content</a>
     <nav id="nav" aria-label="Main">
       <span class="brand">Runalytics</span>
-      <a href="index.html" class="nav-link">Dashboard</a>
+      <a href="index.html" class="nav-link">Today</a>
       <a href="plan.html" class="nav-link">Plan</a>
       <a href="calendar.html" class="nav-link">Calendar</a>
       <a href="injury.html" class="nav-link">Injuries</a>
-      <a href="achievements.html" class="nav-link">Achievements</a>
+      <a href="achievements.html" class="nav-link">Progress</a>
+      <a href="support.html" class="nav-link">Support</a>
       <a href="settings.html" class="nav-link active">Settings</a>
     </nav>
     <main id="app" class="settings-page">
       <div class="settings-shell">
         <!-- macOS-style category list: one pane visible at a time. -->
-        <aside class="settings-nav" aria-label="Settings categories">
+        <details class="settings-nav" id="settings-categories" open>
+          <summary id="settings-category">Watch connection</summary>
           <div class="settings-nav-list" id="settings-nav" role="tablist" aria-orientation="vertical">
             <button role="tab" data-pane="setup" class="active" aria-selected="true">
-              <span class="sn-icon" data-icon="rocket"></span>Setup
+              <span class="sn-icon" data-icon="watch"></span>Watch connection
             </button>
             <button role="tab" data-pane="appearance" aria-selected="false">
               <span class="sn-icon" data-icon="palette"></span>Appearance
@@ -48,24 +50,16 @@
               <span class="sn-icon" data-icon="info"></span>About
             </button>
           </div>
-        </aside>
+        </details>
 
         <div class="settings-content">
           <section class="panel" id="pane-setup" role="tabpanel" aria-label="Setup">
-            <h2>Setup</h2>
-            <p class="section-intro">
-              Three steps, in order: connect your watch, pull your history, then create a plan on
-              the Plan page. Runalytics has something to show from the second step onward, and
-              something to train with after the third.
-            </p>
+            <h2>Watch connection</h2>
             <ol class="setup-steps" id="setup-steps"></ol>
             <div id="setup-wizard"></div>
 
-            <h3 class="setup-advanced-head">Connection details</h3>
-            <p class="muted setup-advanced-note">
-              Everything above acts on your COROS connection. This is the same connection, with the
-              diagnostics — and the way to undo it.
-            </p>
+            <details class="connection-details disclosure">
+            <summary>Connection diagnostics</summary>
             <div id="provider-coros" class="provider surface">
               <div class="provider-head">
                 <strong>COROS</strong>
@@ -89,6 +83,7 @@
                 enabled in this build.
               </p>
             </div>
+            </details>
           </section>
 
           <section class="panel" id="pane-appearance" role="tabpanel" aria-label="Appearance" hidden>
@@ -226,7 +221,7 @@
             </div>
 
             <div class="actions">
-              <button id="zones-save">Save</button>
+              <button id="zones-save">Save training zones</button>
               <button id="zones-reset" class="secondary">Restore COROS defaults</button>
             </div>
           </section>
@@ -295,7 +290,7 @@
               <input id="pmtiles-path" type="text" placeholder="~/maps/planet.pmtiles" />
             </label>
             <div class="actions">
-              <button id="tiles-save">Save</button>
+              <button id="tiles-save">Save map source</button>
             </div>
           </section>
 

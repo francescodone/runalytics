@@ -1,0 +1,36 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Redesign preview",
+			"type": "shell",
+			"command": "npx vite --port 1500 --strictPort",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Verify redesign",
+			"type": "shell",
+			"command": "npm run build && npm run test:ui",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify adaptation",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan::pacing::tests --offline -q",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify adaptive glass UI",
+			"type": "shell",
+			"command": "npm run build && npx playwright test --grep-invert 'visual matrix (light|dark) (320|390|768)px|daily signal labels'",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

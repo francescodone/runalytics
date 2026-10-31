@@ -21,6 +21,12 @@ dark-mode contrast bugs, and the mobile navigation model.
 
 ## 1. Navigation and structure
 
+The 2026-10-30 implementation of [the redesign plan](../../plan/design-runna-redesign-1.md)
+supersedes U-01's six-link/dropdown recommendation below. The current shell uses
+Today, Plan, Calendar, Progress and Support, with persistent mobile bottom tabs
+and secondary profile/body-check entry points. The original audit remains a
+historical baseline, not a constraint on the redesign.
+
 ### U-01 · Tab model: six destinations vs Runna's five
 
 - **Runna**: five labelled tabs — Today / Plan / Calendar / Progress / Support

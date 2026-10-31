@@ -34,8 +34,13 @@ import type {
 function initPanes(): void {
   const nav = el("settings-nav");
   const buttons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-pane]"));
+  const categories = el<HTMLDetailsElement>("settings-categories");
+  const category = el("settings-category");
   const compact = window.matchMedia("(max-width: 860px)");
-  const orient = () => nav.setAttribute("aria-orientation", compact.matches ? "horizontal" : "vertical");
+  const orient = () => {
+    nav.setAttribute("aria-orientation", "vertical");
+    categories.open = !compact.matches;
+  };
   orient();
   compact.addEventListener("change", orient);
   let currentPane: string | null = null;
@@ -56,6 +61,7 @@ function initPanes(): void {
       void animatePaneChange(section, from);
     }
     currentPane = pane;
+    category.textContent = buttons.find((button) => button.dataset.pane === pane)?.textContent?.trim() ?? "Settings categories";
     // The pane is the content the keyboard should land in next.
     if (scroll && section) scrollIntoViewMotion(section, { block: "nearest" });
   }
@@ -65,13 +71,17 @@ function initPanes(): void {
     b.setAttribute("aria-controls", `pane-${b.dataset.pane}`);
     document.getElementById(`pane-${b.dataset.pane}`)?.setAttribute("aria-labelledby", b.id);
     b.addEventListener("click", () => {
-      show(b.dataset.pane!, true);
+      show(b.dataset.pane!, !compact.matches);
       history.replaceState(null, "", `#${b.dataset.pane}`);
+      if (compact.matches) {
+        categories.open = false;
+        category.focus();
+      }
     });
     // Vertical arrow navigation, as a macOS sidebar does.
     b.addEventListener("keydown", (e) => {
-      const forward = compact.matches ? "ArrowRight" : "ArrowDown";
-      const backward = compact.matches ? "ArrowLeft" : "ArrowUp";
+      const forward = "ArrowDown";
+      const backward = "ArrowUp";
       const dir = e.key === forward ? 1 : e.key === backward ? -1 : 0;
       if (!dir && e.key !== "Home" && e.key !== "End") return;
       e.preventDefault();

@@ -113,7 +113,10 @@ would reintroduce them contradicts this list.
    (`prog §8.4`, `achievements.ts:82` comment).
 10. **Point economy (Levels)** — farmable without caps, demotion on inactivity;
     gated behind Labs *and* Premium in Runna (`ins §11.7`). Not copied.
-11. **Runna's chip colour grammar** (green=easy / orange=tempo / red=intervals /
+11. **Superseded 2026-10-30 by the Runna redesign:** the reference appearance now
+   uses purpose-specific workout colours and five persistent primary destinations.
+   Legacy palette preferences remain available. The earlier decision was:
+   **Runna's chip colour grammar** (green=easy / orange=tempo / red=intervals /
     purple=long / grey=imported, `ux`) — Runalytics deliberately uses one hue
     ramp per palette with per-kind lightness steps (`app.css:76-80` and the
     palette blocks). The grammar is carried by labels + fill (done), not hue.

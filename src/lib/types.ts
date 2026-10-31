@@ -378,6 +378,7 @@ export interface DashboardScores {
 /// sparkline cards under the readiness hero.
 export interface ScorePoint {
   date: string;
+  readiness?: number;
   training: number;
   recovery: number;
   /// Higher = riskier, same polarity as the headline injury risk.
@@ -455,7 +456,7 @@ export interface SyncReport {
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export type PaletteId = "amethyst" | "glacier" | "evergreen" | "sakura" | "ember";
+export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember";
 
 export interface Settings {
   pmtilesPath: string | null;
@@ -559,6 +560,32 @@ export interface PacingReport {
   direction: Execution | null;
   needed: number;
   triggered: boolean;
+}
+
+export interface PaceInsightRep {
+  index: number;
+  label: string;
+  actualSKm: number;
+  bandLoSKm: number;
+  bandHiSKm: number;
+  relativePace: number;
+}
+
+export interface PaceInsightSession {
+  workoutId: string;
+  activityId: number;
+  date: string;
+  title: string;
+  kind: WorkoutKind;
+  outdated: boolean;
+  reps: PaceInsightRep[];
+}
+
+export interface PaceInsights {
+  speed: PaceInsightSession[];
+  long: PaceInsightSession[];
+  nextSpeed: PlanWorkout | null;
+  nextLong: PlanWorkout | null;
 }
 
 /// What a stretch of a recorded run was for. Decides how a lap is drawn: only

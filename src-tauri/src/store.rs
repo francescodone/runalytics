@@ -1807,6 +1807,32 @@ impl Store {
         Ok(())
     }
 
+    pub fn accept_pacing_proposal(&self, plan: &TrainingPlan, proposal: &PlanProposal) -> Result<()> {
+        let offset = proposal.plan_quality_offset_sec_km.ok_or_else(|| AppError::Other("missing pace adjustment".into()))?;
+        let from = proposal.plan_quality_offset_from.ok_or_else(|| AppError::Other("missing adjustment date".into()))?;
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE plan_proposals SET status='applied', acted_ts=?2 WHERE id=?1 AND status='pending' AND source='pacing'",
+            params![proposal.id, Utc::now().timestamp()],
+        )?;
+        if changed != 1 { return Err(AppError::Other("this offer was already answered".into())); }
+        let changed = transaction.execute(
+            "UPDATE training_plans SET quality_offset_sec_km=?2, quality_offset_from=?3 WHERE id=?1 AND quality_offset_sec_km=?4 AND status IN ('draft','active','pushed')",
+            params![plan.id, offset, from.to_string(), plan.quality_offset_sec_km],
+        )?;
+        if changed != 1 { return Err(AppError::Other("the plan changed; refresh the proposal".into())); }
+        for edit in &proposal.edits {
+            let changed = transaction.execute(
+                "UPDATE plan_workouts SET distance_m=?2, duration_min=?3 WHERE id=?1 AND plan_id=?4 AND done=0 AND status='planned' AND day=?5 AND kind=?6 AND title=?7 AND distance_m=?8 AND NOT EXISTS (SELECT 1 FROM calendar_completions WHERE workout_id=?1)",
+                params![edit.workout_id, edit.distance_m, edit.duration_min, plan.id, edit.date.map(|date| date.to_string()), kind_name(edit.kind), edit.old_title, edit.old_distance_m],
+            )?;
+            if changed != 1 { return Err(AppError::Other("a proposed workout changed; refresh before applying".into())); }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn proposal_by_id(&self, id: &str) -> Result<Option<PlanProposal>> {
         let conn = self.conn.lock().unwrap();
         let row = conn

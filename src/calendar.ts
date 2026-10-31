@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri, fmtPace, fmtDateDMY, fmtDateTime } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtDateDMY } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -14,6 +14,7 @@ let cursor = new Date();
 cursor.setDate(1);
 let monthEvents: CalendarEvent[] = [];
 let renderVersion = 0;
+let selectedDate: string | null = null;
 /// Race day of the plan on screen, as YYYY-MM-DD. `null` while no plan is
 /// loaded, which is the fail-closed state: with no plan there is nothing that
 /// could be rescheduled.
@@ -114,6 +115,10 @@ function fromYmdLabel(value: string): string {
 
 async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void> {
   const version = ++renderVersion;
+  const clear = document.getElementById("cal-clear");
+  if (clear) clear.hidden = selectedDate == null;
+  const selection = document.getElementById("cal-selection");
+  if (selection) selection.textContent = selectedDate ? fromYmdLabel(selectedDate) : "";
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   el("cal-title").textContent = cursor.toLocaleDateString(undefined, {
@@ -191,7 +196,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
       ? `<span class="cal-pain ${pain >= 7 ? "sev-high" : pain >= 5 ? "sev-mid" : "sev-low"}" title="Pain logged: ${pain}/10"></span>`
       : "";
     cells.push(
-      `<div class="${classes}" data-date="${key}"><span class="cal-day"><span class="cal-day-num">${day.getDate()}</span>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
+      `<div class="${classes}" data-date="${key}"><span class="cal-day"><button type="button" class="cal-day-num" data-select-date="${key}" aria-pressed="${selectedDate === key}"${key === today ? ' aria-current="date"' : ""} aria-label="${escapeHtml(fromYmdLabel(key))}${dayEvents.length ? `, ${dayEvents.length} ${dayEvents.length === 1 ? "session" : "sessions"}` : ""}">${day.getDate()}${dayEvents.length ? '<span class="cal-day-indicator" aria-hidden="true"></span>' : ""}</button>${painDot}</span><div class="cal-workouts">${chips}</div></div>`,
     );
   }
   el("cal-grid").innerHTML = cells.join("");
@@ -236,6 +241,7 @@ function renderAgenda(
   let openWeek: string | null = null;
   for (const dayDate of eachDay(from, to)) {
     const key = ymd(dayDate);
+    if (selectedDate && key !== selectedDate) continue;
     const ws = byDay.get(key) ?? [];
     if (ws.length === 0) continue;
     const outside = dayDate.getMonth() !== month;
@@ -280,7 +286,7 @@ function renderAgenda(
   }
   el("cal-agenda").innerHTML = rows.length
     ? rows.join("")
-    : `<p class="muted">No sessions scheduled this month.</p>`;
+    : `<p class="muted">${selectedDate ? "No sessions on this day." : "No sessions scheduled this month."} <a href="plan.html">View your plan</a></p>`;
 }
 
 /// The banner saying the plan changed a day by itself. It sits above the grid
@@ -362,62 +368,6 @@ function weekRatio(events: CalendarEvent[]): { ran: string; planned: string } {
   // reads as progress against a fixed target rather than a shrinking one.
   const planM = events.reduce((s, e) => s + (e.distanceM ?? 0), 0);
   return { ran: (ranM / 1000).toFixed(1), planned: (planM / 1000).toFixed(1) };
-}
-
-/// The week's numbers above the grid, pinned to the REAL current week no
-/// matter which month is on screen: what ran, what was planned, the average
-/// pace of the running, and when the feed last went out. The events come from
-/// the same calendar feed the grid renders, so a run matched minutes ago moves
-/// these tiles the same way it moves a chip.
-async function renderWeekStats(): Promise<void> {
-  if (!inTauri) return;
-  const monday = mondayOf(new Date());
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  const weekMonday = ymd(monday);
-  const [events, publishing, deviations] = await Promise.all([
-    tauri.calendarEvents(ymd(monday), ymd(sunday)),
-    // Read-only config load; a missing/broken config only costs the stamp.
-    tauri.calendarPublishing().catch(() => null),
-    // A failed read just hides the reset control; the agenda's own buttons and
-    // the backend remain the real paths.
-    tauri.weekDeviations(weekMonday).catch(() => []),
-  ]);
-  const ran = events.filter((e) => e.activityId != null);
-  const ranM = ran.reduce((s, e) => s + (e.distanceM ?? 0), 0);
-  // Planned is the whole week's plan — banked sessions included — so the ratio
-  // reads as progress against a fixed target, like the dashboard tiles.
-  const planM = events.reduce((s, e) => s + (e.distanceM ?? 0), 0);
-  // Pace weighted by distance, not an average of per-run paces: two 5 km runs
-  // and one 16 km long run did not happen equally.
-  const ranMin = ran.reduce((s, e) => s + (e.durationMin ?? 0), 0);
-  const avgPace = ranM > 0 && ranMin > 0 ? (ranMin * 60) / (ranM / 1000) : null;
-  const range = `${fmtDateDMY(ymd(monday))} – ${fmtDateDMY(ymd(sunday))}`;
-  const published = publishing
-    ? publishing.lastPublished
-      ? // The stored stamp is UTC; the formatter renders it in local time.
-        fmtDateTime(publishing.lastPublished)
-      : publishing.enabled
-        ? "not yet published"
-        : "publishing off"
-    : "—";
-  // One ratio rather than two numbers: side by side, "30.0 km ran" and
-  // "38.0 km planned" ask the reader to do the division the tile exists to
-  // show. The range moves into the label, where the date pair it describes is
-  // already the subject.
-  const badge = downWeeks.has(weekMonday)
-    ? ` <span class="week-badge" title="Your plan cuts volume this week on purpose.">Recovery week</span>`
-    : "";
-  // The reset control appears only once the week has drifted, which is the
-  // same condition the agenda's per-week button uses.
-  const reset = deviations.length
-    ? `<div class="cal-week-actions"><button type="button" id="cal-reset" class="secondary" data-reset-week="${weekMonday}">Reset week</button></div>`
-    : "";
-  el("cal-week").innerHTML = `<div class="tile-grid">${[
-    `<div class="tile center" title="${escapeHtml(range)}"><b>${(ranM / 1000).toFixed(1)} / ${(planM / 1000).toFixed(1)} km</b><span>ran / planned${badge}</span></div>`,
-    `<div class="tile center" title="${escapeHtml(range)}"><b>${avgPace != null ? `${fmtPace(avgPace)}/km` : "—"}</b><span>avg pace</span></div>`,
-    `<div class="tile center pub"><b>${escapeHtml(published)}</b><span>last published</span></div>`,
-  ].join("")}</div>${reset}`;
 }
 
 /// When a pointer-drag released, in performance.now terms. The click that
@@ -529,12 +479,44 @@ async function main(): Promise<void> {
   hydrateIcons();
   initSyncIndicator();
   initDragAndDrop();
+  const wideCalendar = window.matchMedia("(min-width: 1280px)");
+  const setView = (month: boolean) => {
+    el("calendar").classList.toggle("month-expanded", month);
+    document.getElementById("calendar-expand")?.setAttribute("aria-pressed", String(month));
+    document.getElementById("calendar-agenda-view")?.setAttribute("aria-pressed", String(!month));
+  };
+  setView(wideCalendar.matches);
+  document.getElementById("calendar-expand")?.addEventListener("click", () => setView(true));
+  document.getElementById("calendar-agenda-view")?.addEventListener("click", () => setView(false));
+  document.getElementById("cal-clear")?.addEventListener("click", () => {
+    selectedDate = null;
+    void renderMonth().then(() => el("cal-today").focus({ preventScroll: true })).catch(fail);
+  });
+  document.getElementById("cal-today")?.addEventListener("click", () => {
+    cursor = new Date();
+    cursor.setDate(1);
+    selectedDate = todayKey();
+    setView(wideCalendar.matches);
+    void renderMonth().catch(fail);
+  });
   // One delegated listener covers both views: the grid's chips and the
   // agenda's rows carry the same data-event-index into the same array.
   el("calendar").addEventListener("click", (event) => {
     // A pointer drag ends with a click on the chip it moved. That gesture was
     // a reschedule, not a request to open the session.
     if (performance.now() - dragEndedAt < 250) return;
+    const date = (event.target as Element).closest<HTMLButtonElement>("[data-select-date]")?.dataset.selectDate;
+    if (date) {
+      selectedDate = selectedDate === date ? null : date;
+      setView(wideCalendar.matches);
+      void renderMonth().then(() => {
+        const target = wideCalendar.matches
+          ? document.querySelector<HTMLButtonElement>(`[data-select-date="${date}"]`)
+          : el<HTMLButtonElement>(selectedDate ? "cal-clear" : "cal-today");
+        target?.focus({ preventScroll: true });
+      }).catch(fail);
+      return;
+    }
     // The week's reset control is a button too, and it is not a session —
     // checked first so it can never fall through and open a detail sheet.
     const reset = (event.target as Element).closest<HTMLButtonElement>("[data-reset-week]");
@@ -548,18 +530,19 @@ async function main(): Promise<void> {
   });
   for (const event of ["runalytics:sync-completed", "runalytics:calendar-updated"]) {
     window.addEventListener(event, () => {
-      // A sync or a reschedule moves both the month and the week's numbers —
-      // and a republish moves the stamp in the stats strip.
-      void Promise.all([renderMonth(), renderWeekStats()]).catch(fail);
+      void renderMonth().catch(fail);
     });
   }
   try {
-    await Promise.all([renderMonth(), renderWeekStats()]);
+    await renderMonth();
   } catch (e) {
     if (!inTauri) {
       const message = `<div class="empty-state"><h3>Open your training calendar on your Mac</h3><p>Sessions appear here when Runalytics is connected to your watch in the desktop app.</p></div>`;
-      el("cal-grid").innerHTML = message;
+      el("cal-grid").innerHTML = "";
       el("cal-agenda").innerHTML = message;
+      setView(false);
+      const monthView = document.getElementById("calendar-expand") as HTMLButtonElement | null;
+      if (monthView) monthView.disabled = true;
       el<HTMLButtonElement>("cal-prev").disabled = true;
       el<HTMLButtonElement>("cal-next").disabled = true;
     } else {
@@ -568,10 +551,12 @@ async function main(): Promise<void> {
   }
 
   el("cal-prev").addEventListener("click", () => {
+    selectedDate = null;
     cursor.setMonth(cursor.getMonth() - 1);
     renderMonth("back").catch(fail);
   });
   el("cal-next").addEventListener("click", () => {
+    selectedDate = null;
     cursor.setMonth(cursor.getMonth() + 1);
     renderMonth("next").catch(fail);
   });
