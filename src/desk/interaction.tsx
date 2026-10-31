@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion, useSpring } from "motion/react";
 
 export const tempo = {
   press: .08,
@@ -24,6 +24,50 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
+}
+
+export function useActionDepth(control: RefObject<HTMLButtonElement | null>, enabled: boolean) {
+  const rotateX = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
+  const rotateY = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
+  const lift = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
+  useEffect(() => {
+    const element = control.current;
+    if (!element || !enabled) return;
+    const media = matchMedia("(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)");
+    const reset = () => { rotateX.set(0); rotateY.set(0); lift.set(0); };
+    const stop = () => { rotateX.jump(0); rotateY.jump(0); lift.jump(0); };
+    const move = (event: PointerEvent) => {
+      if (!media.matches || event.pointerType !== "mouse" || event.buttons || element.disabled) { stop(); return; }
+      const bounds = element.getBoundingClientRect();
+      const horizontal = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
+      const vertical = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
+      rotateX.set(-vertical * 1.5);
+      rotateY.set(horizontal * 1.5);
+      lift.set(-1);
+    };
+    element.addEventListener("pointerenter", move);
+    element.addEventListener("pointermove", move);
+    element.addEventListener("pointerup", move);
+    element.addEventListener("pointerdown", stop);
+    element.addEventListener("pointerleave", reset);
+    element.addEventListener("pointercancel", stop);
+    element.addEventListener("blur", reset);
+    window.addEventListener("blur", stop);
+    media.addEventListener("change", stop);
+    return () => {
+      element.removeEventListener("pointerenter", move);
+      element.removeEventListener("pointermove", move);
+      element.removeEventListener("pointerup", move);
+      element.removeEventListener("pointerdown", stop);
+      element.removeEventListener("pointerleave", reset);
+      element.removeEventListener("pointercancel", stop);
+      element.removeEventListener("blur", reset);
+      window.removeEventListener("blur", stop);
+      media.removeEventListener("change", stop);
+      stop();
+    };
+  }, [control, enabled, rotateX, rotateY, lift]);
+  return { rotateX, rotateY, y: lift, transformPerspective: 600 };
 }
 
 export function Presence({ children }: { children: ReactNode }) {

@@ -23,12 +23,16 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .session-tile.is-dragging { opacity: .35; }
 .day-sessions { border-radius: 6px; transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
 .day-sessions[data-drop-target="true"] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
-.button-content, .button-progress { transition: opacity var(--motion-feedback) var(--motion-settle); }
-.button-result { position: absolute; inset: 0; display: grid; place-items: center; animation: status-arrive var(--motion-feedback) var(--motion-settle); }
+.button-content { transition: opacity var(--motion-feedback) var(--motion-settle); }
+.button-result { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .desk-button[data-result] .button-content { opacity: 0; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 .desk-button:disabled:not([aria-busy="true"]) { scale: 1; }
 .desk-button[aria-busy="true"] { border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.desk-button.primary { box-shadow: inset 0 1px 0 #ffffff24, 0 1px 2px #11251e18; }
+.desk-button.primary::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 1px 0 #ffffff38, 0 3px 8px #11251e24; opacity: 0; transition: opacity var(--motion-feedback) var(--motion-settle); }
+.desk-button.primary:active:not(:disabled)::before { opacity: 0; }
+.desk-button.primary:active:not(:disabled) { box-shadow: inset 0 1px 3px #00000024; }
 .desk-button .button-content { min-width: 0; }
 .button-content:has(.control-tooltip) { width: 100%; }
 .control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: 7px 10px; background: var(--desk-ink); color: var(--desk-surface); border-radius: 6px; font-size: 12px; font-weight: 500; line-height: 1.4; pointer-events: none; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: 50; transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
@@ -67,6 +71,15 @@ progress { accent-color: var(--desk-action); }
 .native-progress { animation: status-arrive var(--motion-feedback) var(--motion-settle); }
 .desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) 120ms both; }
 .motion-change { min-width: 0; }
+.health-verdict, .health-analysis, .health-history, .activity-library, .plan-studio, .settings-editor, .settings-directory, .milestones, .pain-workspace, .desk-empty {
+  animation: content-arrive var(--motion-change) var(--motion-settle);
+}
+.choice-row label, .toggle-setting { transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
+.pace-mode button, .pace-session-picker button, .lap-row-button, .notice-close {
+  transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
+}
+.pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: .96; transition-duration: var(--motion-press); }
+.chat-message { animation: message-arrive var(--motion-feedback) var(--motion-settle); }
 .conversation-expansion { overflow: clip; }
 .desk-workspace > .workspace-heading { animation: none; }
 .desk-workspace:focus { outline: none; }
@@ -81,11 +94,14 @@ details[open] > summary { color: var(--desk-action); }
 @keyframes scrim-arrive { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scrim-leave { from { opacity: 1; } to { opacity: 0; } }
 @keyframes status-arrive { from { opacity: 0; } to { opacity: 1; } }
+@keyframes content-arrive { from { opacity: .65; } to { opacity: 1; } }
+@keyframes message-arrive { from { opacity: .65; translate: 0 3px; } to { opacity: 1; translate: 0; } }
 
 @media (hover: hover) and (pointer: fine) {
+  .desk-button.primary:not(:disabled):not(:active):hover::before { opacity: 1; }
   .session-tile:hover { box-shadow: inset 0 0 0 1px var(--desk-action); }
   .activity-row:hover, .roadmap-row:hover { background: color-mix(in srgb, var(--desk-selection) 60%, transparent); }
-  .desk-button:not(:disabled):hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent); }
+  .desk-button:not(.primary):not(:disabled):hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent); }
   .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: 450ms; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: 2px 0; }
   .activity-row > svg:last-child, .settings-task-list a > svg:last-child, .roadmap-row > svg:last-child { transition: translate var(--motion-change) var(--motion-settle); }
@@ -113,7 +129,8 @@ details[open] > summary { color: var(--desk-action); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
-  .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active { scale: 1; }
+  .desk-button.primary .button-content { transform: none !important; }
+  .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }
   .desk-button:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
 }

@@ -31,6 +31,14 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify micro animations",
+			"type": "shell",
+			"command": "npm run build && npx playwright test tests/desk.spec.mjs --grep 'motion system'",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

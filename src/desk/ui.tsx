@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck } from "@tabler/icons-react";
 import { motion, useDragControls, useIsPresent } from "motion/react";
-import { markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
+import { markActionOrigin, Presence, tempo, useActionDepth, useSurfaceMotion } from "./interaction";
 
 export function Button({ children, tone = "normal", busy, className = "", onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean }) {
   const button = useRef<HTMLButtonElement>(null);
   const [result, setResult] = useState<"success" | "error" | null>(null);
+  const depth = useActionDepth(button, tone === "primary" && !props.disabled && !busy && !result);
   useEffect(() => {
     const element = button.current!;
     let timer: ReturnType<typeof setTimeout>;
@@ -19,9 +20,9 @@ export function Button({ children, tone = "normal", busy, className = "", onClic
   }, []);
   useEffect(() => { if (busy) setResult(null); }, [busy]);
   return <button type="button" {...props} ref={button} onClick={event => { markActionOrigin(event.currentTarget); onClick?.(event); }} disabled={props.disabled || busy} className={`desk-button ${tone} ${className}`} aria-busy={busy || undefined} data-result={result ?? undefined}>
-    <span className="button-content">{children}</span>
-    {busy && <span className="button-progress" aria-hidden="true"><IconLoader2 size={18} className="spinner" /></span>}
-    {!busy && result && <span className="button-result" aria-hidden="true">{result === "success" ? <IconCheck size={20} /> : <IconAlertCircle size={20} />}</span>}
+    <motion.span className="button-content" style={tone === "primary" ? depth : undefined}>{children}</motion.span>
+    <Presence>{busy ? <motion.span key="pending" className="button-progress" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconLoader2 size={18} className="spinner" /></motion.span>
+      : result && <motion.span key={result} className="button-result" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}>{result === "success" ? <IconCheck size={20} /> : <IconAlertCircle size={20} />}</motion.span>}</Presence>
   </button>;
 }
 export function IconButton({ label, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {

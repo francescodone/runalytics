@@ -5,6 +5,144 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
 test.describe("motion system", () => {
+  test("primary action depth is bounded, interruptible and preference-aware", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#health");
+    const action = page.getByRole("button", { name: "Log pain", exact: true });
+    const content = action.locator(".button-content");
+    const rest = await action.boundingBox();
+    await action.hover({ position: { x: rest.width - 4, y: 4 } });
+    await expect.poll(() => content.evaluate(element => Number(element.style.transform.match(/rotateY\(([-.\d]+)deg\)/)?.[1] ?? 0))).toBeGreaterThan(.5);
+    const angles = await content.evaluate(element => [...element.style.transform.matchAll(/rotate[XY]\(([-.\d]+)deg\)/g)].map(match => Math.abs(Number(match[1]))));
+    expect(angles).toHaveLength(2);
+    expect(angles.every(angle => angle <= 1.5)).toBe(true);
+    expect(await action.boundingBox()).toEqual(rest);
+    await action.dispatchEvent("pointercancel", { pointerType: "mouse" });
+    await expect.poll(() => content.evaluate(element => element.style.transform)).not.toMatch(/rotate[XY]|translateY/);
+    await action.hover({ position: { x: 4, y: 4 } });
+    await expect.poll(() => content.evaluate(element => element.style.transform)).toContain("rotateY");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(content).toHaveCSS("transform", "none");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await action.dispatchEvent("pointermove", { pointerType: "touch", clientX: rest.x + 4, clientY: rest.y + 4 });
+    await expect.poll(() => content.evaluate(element => element.style.transform)).not.toMatch(/rotate[XY]|translateY/);
+    await page.mouse.move(20, 200);
+    await action.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Log pain" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(action).toBeFocused();
+  });
+
+  for (const width of [390, 1440]) {
+    for (const theme of ["light", "dark"]) {
+      test(`selective glass and opaque fallbacks ${theme} ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
+        await page.goto(`/desk.html?theme=${theme}#health`);
+        await expect(page.locator(".health-verdict")).toBeVisible();
+        for (const selector of [".desk-appbar", ".desk-toolbar", ".health-verdict", ".health-analysis"]) {
+          await expect(page.locator(selector)).toHaveCSS("backdrop-filter", "none");
+        }
+        if (width === 390) {
+          const navigation = await page.locator(".desk-navigation").boundingBox();
+          expect(Math.round(navigation.y + navigation.height)).toBe(900);
+          const settings = page.getByRole("button", { name: "Settings", exact: true });
+          await settings.click();
+          await expect(page.locator("#workspace h1")).toHaveText("Settings");
+          await page.getByRole("link", { name: "Health", exact: true }).click();
+        }
+        await page.getByRole("button", { name: "Log pain", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Log pain" });
+        await expect(dialog).toHaveCSS("backdrop-filter", width === 390 ? "blur(10px)" : "blur(12px)");
+        expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+        await page.screenshot({ path: `test-results/glass-${theme}-${width}.png`, animations: "disabled" });
+        await page.emulateMedia({ contrast: "more" });
+        await expect(dialog).toHaveCSS("backdrop-filter", "none");
+        const surface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-surface").trim());
+        const opaqueColor = await page.evaluate(value => { const probe = document.createElement("span"); probe.style.color = value; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; }, surface);
+        await expect(dialog).toHaveCSS("background-color", opaqueColor);
+        await page.emulateMedia({ contrast: "no-preference" });
+        const session = await page.context().newCDPSession(page);
+        await session.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }] });
+        await expect(dialog).toHaveCSS("backdrop-filter", "none");
+        await expect(dialog).toHaveCSS("background-color", opaqueColor);
+        await session.send("Emulation.setEmulatedMedia", { features: [] });
+        await session.detach();
+        const removed = await page.evaluate(() => {
+          let count = 0;
+          for (const sheet of document.styleSheets) {
+            for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
+              const rule = sheet.cssRules[index];
+              if (rule instanceof CSSSupportsRule && rule.conditionText.includes("backdrop-filter")) { sheet.deleteRule(index); count++; }
+            }
+          }
+          return count;
+        });
+        expect(removed).toBeGreaterThan(0);
+        await expect(dialog).toHaveCSS("backdrop-filter", "none");
+        await expect(dialog).toHaveCSS("background-color", opaqueColor);
+        await page.keyboard.press("Escape");
+        await expect(dialog).toHaveCount(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      });
+    }
+  }
+
+  for (const width of [390, 1440]) {
+    for (const reducedMotion of ["no-preference", "reduce"]) {
+      test(`semantic reveals and compact presses ${reducedMotion} ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.emulateMedia({ reducedMotion });
+        await page.addInitScript(() => {
+          window.__contentReveals = [];
+          for (const type of ["animationstart", "animationend"]) {
+            document.addEventListener(type, event => {
+              if (event.animationName !== "content-arrive") return;
+              const bounds = event.target.getBoundingClientRect();
+              window.__contentReveals.push({ type, className: event.target.className, width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y });
+            });
+          }
+        });
+        await page.goto("/desk.html#health/overview");
+        const verdict = page.locator(".health-verdict");
+        await expect(verdict).toBeVisible();
+        expect(await verdict.evaluate(element => getComputedStyle(element).animationName)).toBe(reducedMotion === "reduce" ? "none" : "content-arrive");
+        if (reducedMotion === "no-preference") {
+          await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "animationend").length)).toBe(1);
+          const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
+          expect(events[1]).toEqual({ ...events[0], type: "animationend" });
+          expect(await verdict.evaluate(element => getComputedStyle(element).animationDuration)).toBe("0.22s");
+        } else {
+          expect(await page.evaluate(() => window.__contentReveals)).toEqual([]);
+        }
+        await page.getByRole("link", { name: "Pace insights", exact: true }).click();
+        const selector = page.getByRole("button", { name: "Long", exact: true });
+        await expect(selector).toBeVisible();
+        const bounds = await selector.boundingBox();
+        await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        await page.mouse.down();
+        await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.96");
+        expect(await selector.evaluate(element => element.offsetWidth)).toBe(Math.round(bounds.width));
+        await page.mouse.up();
+        await expect(selector).toHaveAttribute("aria-pressed", "true");
+        await page.goto("/desk.html#settings");
+        await page.getByRole("link", { name: /Offline maps/ }).click();
+        const editor = page.locator(".settings-editor");
+        await expect(editor).toBeVisible();
+        if (reducedMotion === "no-preference") {
+          await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "settings-editor" && event.type === "animationend").length)).toBe(1);
+        }
+        const before = await page.evaluate(() => window.__contentReveals.length);
+        await page.getByLabel("Raster PMTiles archive").fill("/synthetic/new-map.pmtiles");
+        expect(await page.evaluate(() => window.__contentReveals.length)).toBe(before);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: `test-results/micro-motion-${reducedMotion}-${width}.png`, fullPage: true });
+      });
+    }
+  }
+
   for (const width of [390, 1440]) {
     for (const theme of ["light", "dark"]) {
       test(`complete motion-enabled workspace pass ${theme} ${width}px`, async ({ page }) => {
