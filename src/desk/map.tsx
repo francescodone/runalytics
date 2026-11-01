@@ -37,6 +37,7 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     const offline = settings.pmtilesPath && "__TAURI_INTERNALS__" in window;
     const tiles = offline ? [`pmtiles://${convertFileSrc(settings.pmtilesPath!)}/{z}/{x}/{y}`] : ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"];
     let instance: maplibregl.Map;
+    let fellBack = false;
     try {
       instance = new maplibregl.Map({ container: host.current, attributionControl: { compact: true }, style: { version: 8, sources: { base: { type: "raster", tiles, tileSize: 256, attribution: offline ? "PMTiles" : '<a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>' } }, layers: [{ id: "base", type: "raster", source: "base" }] }, center: coordinates[0], zoom: 12, canvasContextAttributes: { preserveDrawingBuffer: true } });
     } catch { setFailed(true); return; }
@@ -111,7 +112,16 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
       };
       animationFrame = requestAnimationFrame(draw);
     });
-    instance.on("error", () => setFailed(true));
+    instance.on("error", () => {
+      // A configured offline tile archive can be missing, unreadable, or
+      // written for another platform. Rather than leaving the route over a
+      // blank canvas, fall back to the online tiles once; if those fail too,
+      // say so.
+      if (!offline || fellBack) { setFailed(true); return; }
+      fellBack = true;
+      const source = instance.getSource("base") as maplibregl.RasterTileSource | undefined;
+      source?.setTiles?.(["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]);
+    });
     const resize = new ResizeObserver(() => instance.resize());
     resize.observe(host.current);
     return () => { cancelAnimationFrame(animationFrame); themeObserver.disconnect(); reducedMotion.removeEventListener("change", finishForReducedMotion); resize.disconnect(); instance.remove(); map.current = null; };

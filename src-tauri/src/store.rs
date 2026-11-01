@@ -13,6 +13,12 @@ pub struct Store {
     pub conn: Mutex<Connection>,
 }
 
+/// How many times a trackless activity's FIT file may be re-downloaded before
+/// sync gives up on it. Two extra attempts cover a truncated download and a
+/// provider-side repair, while a genuinely GPS-less session stops costing
+/// quota after three.
+pub const TRACK_RETRY_LIMIT: i64 = 3;
+
 const MIGRATIONS: &[(u32, &str)] = &[
     (
         1,
@@ -322,6 +328,36 @@ const MIGRATIONS: &[(u32, &str)] = &[
     CREATE INDEX IF NOT EXISTS idx_pain_msg_entry ON pain_messages (entry_id);
     "#,
     ),
+    (
+        11,
+        r#"
+    -- Bounded retries for FIT files that downloaded but carried no track:
+    -- a GPS-less activity (strength, indoor) must not re-download forever,
+    -- and a truncated file deserves more than the one attempt the ledger
+    -- allowed. Counted per activity; the sync stops retrying at the bound.
+    CREATE TABLE IF NOT EXISTS fit_track_retry (
+        provider TEXT NOT NULL,
+        provider_record_id TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (provider, provider_record_id)
+    );
+
+    -- Barometric altitude per GPS sample, so each kilometre split can be
+    -- priced with the elevation it actually climbed. Points synced before this
+    -- column existed stay NULL and their splits honestly read "Not recorded".
+    -- The table is re-stated first for the same reason migration 10 does it:
+    -- a drifted database can reach here with trackpoints absent, and an ALTER
+    -- on a missing table aborts the whole open.
+    CREATE TABLE IF NOT EXISTS trackpoints (
+        activity_id INTEGER NOT NULL REFERENCES activities (id) ON DELETE CASCADE,
+        ts INTEGER NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        hr INTEGER
+    );
+    ALTER TABLE trackpoints ADD COLUMN alt REAL;
+    "#,
+    ),
 ];
 
 /// `ALTER TABLE ... ADD COLUMN` for a column that a migration gained *after*
@@ -376,8 +412,143 @@ fn backfill_coros_sport_codes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn parse_date(s: &str) -> Result<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+/// Merge COROS activities that the FIT download path created as duplicates.
+///
+/// The download used to key the ingested activity on the FIT blob's filename,
+/// and COROS has been seen naming that file with its own file id
+/// ("<fileid>_8hexchars.fit") instead of the requested labelId. The upsert
+/// then created a *second* row for the same run — holding the track — while
+/// the summary row from the record sync stayed trackless forever, because the
+/// ledger was keyed on the suffixed id and the original never requalified for
+/// download. That is the "activity registered with GPS but no track" bug.
+///
+/// A duplicate is recognised by the `_<8 hex>` suffix plus a coros row with
+/// the same start time and an unsuffixed id. The repair moves the track to
+/// the original (only when the original has none — the duplicate is the only
+/// copy worth keeping), re-points or drops its completion, drops its derived
+/// score, deletes the row, and re-keys the ledger entry so the original is
+/// marked as downloaded. Idempotent: once merged, no suffixed row remains.
+fn merge_coros_fit_duplicates(conn: &Connection) -> Result<()> {
+    // The drifted-state databases this repair must survive can reach open
+    // without an activities table at all (that is what the pain_entries
+    // repair above guards for); a SELECT on a missing table would abort the
+    // whole open, so the merge simply has nothing to do there.
+    let activities_exists: bool = conn
+        .prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='activities'")?
+        .query_row([], |r| r.get::<_, i64>(0))
+        .map(|n| n > 0)?;
+    if !activities_exists {
+        return Ok(());
+    }
+    // GLOB, not LIKE: SQLite's LIKE has no character classes. A COROS
+    // labelId is pure digits, so the only source of an underscore in a coros
+    // record id is the FIT filename ("<digits>_<hex>") the old download path
+    // ingested under — that shape is the duplicate.
+    let dups: Vec<(i64, String, Option<i64>, Option<String>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT d.id,
+                    d.provider_record_id,
+                    (SELECT o.id FROM activities o
+                      WHERE o.provider = 'coros' AND o.start_ts = d.start_ts AND o.id <> d.id
+                        AND o.provider_record_id NOT LIKE '%\\_%' ESCAPE '\\'
+                      ORDER BY o.id LIMIT 1),
+                    (SELECT o.provider_record_id FROM activities o
+                      WHERE o.provider = 'coros' AND o.start_ts = d.start_ts AND o.id <> d.id
+                        AND o.provider_record_id NOT LIKE '%\\_%' ESCAPE '\\'
+                      ORDER BY o.id LIMIT 1)
+             FROM activities d
+             WHERE d.provider = 'coros'
+               AND d.provider_record_id GLOB '*[0-9]_[0-9a-f]*'
+             ORDER BY d.id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (dup_id, dup_rid, orig_id, orig_rid) in dups {
+        let (Some(orig_id), Some(orig_rid)) = (orig_id, orig_rid) else {
+            // No same-start original to merge into: leave the row alone — it
+            // may be a legitimately FIT-only activity, and deleting data on a
+            // guess is worse than leaving one trackless row.
+            continue;
+        };
+        conn.execute("BEGIN", [])?;
+        let result = (|| -> Result<()> {
+            // The track moves only if the original has none; a duplicate
+            // whose original already has a track is simply redundant.
+            let orig_points: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM trackpoints WHERE activity_id = ?1",
+                params![orig_id],
+                |r| r.get(0),
+            )?;
+            if orig_points == 0 {
+                conn.execute(
+                    "UPDATE trackpoints SET activity_id = ?1 WHERE activity_id = ?2",
+                    params![orig_id, dup_id],
+                )?;
+            } else {
+                conn.execute(
+                    "DELETE FROM trackpoints WHERE activity_id = ?1",
+                    params![dup_id],
+                )?;
+            }
+            // A completion pointing at the duplicate follows it to the
+            // original — unless the original already owns one, in which case
+            // the duplicate's is the stale copy.
+            let orig_completion: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM calendar_completions WHERE activity_id = ?1",
+                params![orig_id],
+                |r| r.get(0),
+            )?;
+            if orig_completion == 0 {
+                conn.execute(
+                    "UPDATE calendar_completions SET activity_id = ?1 WHERE activity_id = ?2",
+                    params![orig_id, dup_id],
+                )?;
+            } else {
+                conn.execute(
+                    "DELETE FROM calendar_completions WHERE activity_id = ?1",
+                    params![dup_id],
+                )?;
+            }
+            // Scores are a derived cache, cleared and recomputed on refresh.
+            conn.execute(
+                "DELETE FROM activity_scores WHERE activity_id = ?1",
+                params![dup_id],
+            )?;
+            conn.execute(
+                "DELETE FROM activities WHERE id = ?1",
+                params![dup_id],
+            )?;
+            // The ledger recorded the download under the suffixed id; move it
+            // so the original counts as downloaded and cannot re-download.
+            conn.execute(
+                "DELETE FROM fit_file_ledger WHERE provider = 'coros' AND provider_record_id = ?1",
+                params![dup_rid],
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO fit_file_ledger (provider, provider_record_id, downloaded_ts)
+                 VALUES ('coros', ?1, ?2)",
+                params![orig_rid, Utc::now().timestamp()],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                conn.execute("COMMIT", [])?;
+                eprintln!("[store] merged coros fit duplicate {dup_id} into {orig_id}");
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                eprintln!("[store] fit duplicate merge failed for {dup_id}: {e}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_date(s: &str) -> Result<NaiveDate> {    NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|e| AppError::Other(format!("bad date '{s}': {e}")))
 }
 
@@ -591,6 +762,47 @@ impl Store {
             "TEXT NOT NULL DEFAULT 'planned'",
         )?;
         add_column_if_missing(&conn, "plan_workouts", "moved_ts", "INTEGER")?;
+        // What the plan originally said about a session a benchmark overwrote.
+        // Scheduling a race or test rewrites kind, title and distance in place,
+        // and without this snapshot the planned session is gone for good — a
+        // reset could only put dates back, never content. Nullable: a session
+        // no benchmark touched genuinely has nothing stored.
+        add_column_if_missing(&conn, "plan_workouts", "original_json", "TEXT")?;
+        // Barometric altitude per GPS sample, read by every activity track query.
+        // Migration 11 adds it, but only to a database *below* version 11: one
+        // that is already at 11 (or ahead of it) while its trackpoints table
+        // never gained the column stays broken forever, and opening any activity
+        // fails with "no such column: alt". Same drift the repairs above exist to
+        // heal, so it is checked on every open rather than version-gated.
+        add_column_if_missing(&conn, "trackpoints", "alt", "REAL")?;
+        // One-shot ledger for elevation re-downloads: activities whose FIT was
+        // fetched while the upsert still discarded the decoded ascent need the
+        // file again (it is the only place the device's climb total survives),
+        // and each must be re-fetched exactly once. Created on every open
+        // rather than version-gated, per the usual drift reason.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS fit_elevation_backfill (
+                provider TEXT NOT NULL,
+                provider_record_id TEXT NOT NULL,
+                tried_ts INTEGER NOT NULL,
+                PRIMARY KEY (provider, provider_record_id)
+            );",
+        )?;
+        // The plan's revision: the wall-clock second of its last edit, which is
+        // what cross-device sync compares. Plans written before the column
+        // existed are backfilled from their creation time — the honest minimum,
+        // since nothing edited them between creation and this open. A plain
+        // repair rather than a numbered migration, per the usual reason.
+        if add_column_if_missing(&conn, "training_plans", "rev", "INTEGER")? {
+            conn.execute(
+                "UPDATE training_plans SET rev = created_ts WHERE rev IS NULL",
+                [],
+            )?;
+        }
+        // Heal the tracks that landed on a duplicate row. Runs on every open:
+        // it is a no-op once the duplicates are gone, and a numbered migration
+        // would miss a database already at the newest version.
+        merge_coros_fit_duplicates(&conn)?;
         Ok(())
     }
 
@@ -623,7 +835,15 @@ impl Store {
                 distance_m, avg_hr, max_hr, avg_pace_s_km, elevation_gain_m, provider_sport_code)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT (provider, provider_record_id) DO UPDATE SET
-                provider_sport_code = COALESCE(excluded.provider_sport_code, provider_sport_code)",
+                provider_sport_code = COALESCE(excluded.provider_sport_code, provider_sport_code),
+                -- The FIT file is the only pass that carries ascent and max HR
+                -- (the COROS text report has neither) and it always arrives
+                -- *after* the summary row, so without these the decoded values
+                -- were dropped on every conflict and every outdoor run showed
+                -- elevation as not recorded. COALESCE keeps whichever side
+                -- knows: a later summary re-sync cannot wipe them again.
+                elevation_gain_m = COALESCE(excluded.elevation_gain_m, elevation_gain_m),
+                max_hr = COALESCE(excluded.max_hr, max_hr)",
             params![
                 provider_name(provider),
                 rec.record_id,
@@ -660,8 +880,8 @@ impl Store {
             if existing == 0 {
                 for p in &rec.points {
                     conn.execute(
-                        "INSERT INTO trackpoints (activity_id, ts, lat, lon, hr) VALUES (?1,?2,?3,?4,?5)",
-                        params![id, p.ts, p.lat, p.lon, p.hr],
+                        "INSERT INTO trackpoints (activity_id, ts, lat, lon, hr, alt) VALUES (?1,?2,?3,?4,?5,?6)",
+                        params![id, p.ts, p.lat, p.lon, p.hr, p.alt],
                     )?;
                 }
             }
@@ -1054,6 +1274,123 @@ impl Store {
 
     // ---- plans -----------------------------------------------------------
 
+    /// Stamp the plan that owns `workout_id` as edited *now*, which is what
+    /// cross-device sync compares. Executed as a statement rather than a
+    /// `Store` method on purpose: every caller here already holds the
+    /// connection lock (or is inside a transaction on it), and the mutex is
+    /// not re-entrant — a method that locked again would deadlock.
+    ///
+    /// Monotonic by construction: never below the revision it already carries
+    /// plus one, so two edits in the same second still order themselves, and
+    /// never below the wall clock, so a device that was offline catches up
+    /// rather than publishing a revision older than one it saw.
+    const REV_BUMP: &'static str = "UPDATE training_plans SET rev = \
+        MAX(IFNULL(rev, created_ts) + 1, CAST(strftime('%s','now') AS INTEGER)) \
+         WHERE id = (SELECT plan_id FROM plan_workouts WHERE id = ?1)";
+
+    /// The same stamp for a caller that knows the plan id directly.
+    const REV_BUMP_PLAN: &'static str = "UPDATE training_plans SET rev = \
+        MAX(IFNULL(rev, created_ts) + 1, CAST(strftime('%s','now') AS INTEGER)) \
+         WHERE id = ?1";
+
+    /// The revision of the current plan, for the sync comparison. `None` when
+    /// there is no plan. `rev` is nullable in the schema (a row written before
+    /// the column existed genuinely has no recorded edit), so the read falls
+    /// back to the creation instant — the same backfill `migrate` applies.
+    pub fn current_plan_rev(&self) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT COALESCE(rev, created_ts) FROM training_plans
+                 WHERE status IN ('draft', 'active', 'pushed')
+                 ORDER BY created_ts DESC LIMIT 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?)
+    }
+
+    /// Per-week mileage of the current plan: what it prescribes and what the
+    /// runner has actually banked, bucketed by Monday. The plan roadmap reads
+    /// this to mark each week done / current / upcoming with real numbers —
+    /// the same `RUN_SQL` filter as every other mileage figure, so a week's
+    /// ran km on the roadmap can never disagree with the dashboard.
+    ///
+    /// Weeks with no sessions are absent, like [`weekly_volumes`]; the roadmap
+    /// only walks weeks the plan contains anyway.
+    pub fn plan_week_progress(&self) -> Result<Vec<(String, f64, f64)>> {
+        let conn = self.conn.lock().unwrap();
+        // The week bucket is computed in an inner select so the correlated
+        // activity subquery can see it as a plain column — SQLite does not
+        // expose the outer select's alias to a subquery in another select
+        // list. Runs are capped at `now` so a week in progress never counts
+        // mileage that has not happened yet.
+        let mut stmt = conn.prepare(
+            "SELECT wk, SUM(prescribed_m),
+                    COALESCE((SELECT SUM(a.distance_m) FROM activities a
+                       WHERE a.start_ts >= CAST(strftime('%s', x.wk) AS INTEGER)
+                         AND a.start_ts < CAST(strftime('%s', x.wk, '+7 days') AS INTEGER)
+                         AND a.start_ts < CAST(strftime('%s','now') AS INTEGER)
+                         AND (lower(a.sport) IN ('run','running','jog','jogging')
+                              OR lower(a.sport) LIKE '%run%')), 0)
+             FROM (SELECT date(w.day, '-6 days', 'weekday 1') wk,
+                          COALESCE(w.distance_m, 0) prescribed_m
+                   FROM plan_workouts w
+                   WHERE w.plan_id = (SELECT id FROM training_plans
+                                      WHERE status IN ('draft','active','pushed')
+                                      ORDER BY created_ts DESC LIMIT 1)) x
+             GROUP BY wk ORDER BY wk",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+    /// not this device's row id. A pull resolves these back against its own
+    /// `activities` table, which is why completion can travel between devices
+    /// that synced the same watch independently and never shared a database.
+    pub fn calendar_completion_records(
+        &self,
+    ) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.workout_id, a.provider, a.provider_record_id
+             FROM calendar_completions c
+             JOIN activities a ON a.id = c.activity_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// The local row id of a provider's activity, when this device has it.
+    /// Plan sync uses this to resolve a completion that arrived from the
+    /// other device: the pair names the run by the *provider's* id, and both
+    /// devices synced the same watch, so the record id is the shared key.
+    pub fn activity_id_by_record(
+        &self,
+        provider: &str,
+        record_id: &str,
+    ) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT id FROM activities WHERE provider=?1 AND provider_record_id=?2",
+                params![provider, record_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?)
+    }
+
     pub fn calendar_completions(&self) -> Result<Vec<(String, i64, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -1075,6 +1412,9 @@ impl Store {
             "UPDATE plan_workouts SET done=1 WHERE id=?1",
             params![workout_id],
         )?;
+        // Marking a session done is an edit the other device has to hear
+        // about, so the plan that owns it is stamped as revised.
+        tx.execute(Self::REV_BUMP, params![workout_id])?;
         tx.commit()?;
         Ok(())
     }
@@ -1151,8 +1491,8 @@ impl Store {
         conn.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                kind, quality_offset_sec_km, quality_offset_from)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                kind, quality_offset_sec_km, quality_offset_from, rev)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 p.id,
                 distance_name(p.distance),
@@ -1168,7 +1508,10 @@ impl Store {
                 plan_kind_name(p.kind),
                 p.quality_offset_sec_km,
                 p.quality_offset_from
-                    .map(|d| d.format("%Y-%m-%d").to_string())
+                    .map(|d| d.format("%Y-%m-%d").to_string()),
+                // A brand-new plan's revision is its creation instant; every
+                // later edit moves it forward from there.
+                p.created_at.timestamp()
             ],
         )?;
         Ok(())
@@ -1182,14 +1525,117 @@ impl Store {
         Ok(())
     }
 
+    /// Overwrite the sessions a benchmark touches, remembering first what the
+    /// plan had there. The snapshot is written once: a second benchmark on the
+    /// same day must not overwrite the first snapshot, or the session the plan
+    /// actually generated is lost and no reset can bring it back. A row the
+    /// benchmark creates (the plan had a rest day there) records that fact, so
+    /// a reset can remove the session rather than invent content for it.
     pub fn save_benchmark_schedule(&self, workouts: &[PlanWorkout]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn.transaction()?;
         let sql = format!("{WORKOUT_INSERT_COLS} ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, distance_m=excluded.distance_m, duration_min=excluded.duration_min, pace_lo_s_km=excluded.pace_lo_s_km, pace_hi_s_km=excluded.pace_hi_s_km");
         for workout in workouts {
+            // `None` = no row yet (the benchmark creates it); `Some(None)` =
+            // a row with nothing snapshotted yet, whose content is about to be
+            // lost; `Some(Some(_))` = an earlier benchmark already remembered.
+            let stored: Option<Option<String>> = transaction
+                .query_row(
+                    "SELECT original_json FROM plan_workouts WHERE id=?1",
+                    params![workout.id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()?;
+            let before = stored
+                .clone()
+                .filter(|snap| snap.is_none())
+                .map(|_| {
+                    transaction.query_row(
+                        "SELECT kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km \
+                         FROM plan_workouts WHERE id=?1",
+                        params![workout.id],
+                        |r| {
+                            Ok(OriginalContent {
+                                created: false,
+                                kind: kind_from(&r.get::<_, String>(0)?),
+                                title: r.get(1)?,
+                                distance_m: r.get(2)?,
+                                duration_min: r.get(3)?,
+                                pace_lo_s_km: r.get(4)?,
+                                pace_hi_s_km: r.get(5)?,
+                            })
+                        },
+                    )
+                })
+                .transpose()?;
             transaction.execute(&sql, rusqlite::params_from_iter(workout_params(workout)))?;
+            let snapshot = match before {
+                Some(content) => content,
+                None if stored.is_none() => OriginalContent {
+                    created: true,
+                    kind: WorkoutKind::Rest,
+                    title: String::new(),
+                    distance_m: None,
+                    duration_min: None,
+                    pace_lo_s_km: None,
+                    pace_hi_s_km: None,
+                },
+                None => continue,
+            };
+            transaction.execute(
+                "UPDATE plan_workouts SET original_json=?2 WHERE id=?1",
+                params![workout.id, serde_json::to_string(&snapshot)?],
+            )?;
+        }
+        if let Some(workout) = workouts.first() {
+            transaction.execute(Self::REV_BUMP_PLAN, params![workout.plan_id])?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// The plan's own content for a session a benchmark overwrote, for the
+    /// reset preview and the reset itself. `None` for a session no benchmark
+    /// touched.
+    pub fn workout_originals(&self) -> Result<std::collections::HashMap<String, OriginalContent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT id, original_json FROM plan_workouts WHERE original_json IS NOT NULL")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (id, json) = row?;
+            if let Ok(content) = serde_json::from_str::<OriginalContent>(&json) {
+                out.insert(id, content);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Rewrite a session back to the plan's own content *and* drop its
+    /// benchmark snapshot, in one statement. A caller that used plain
+    /// [`update_workout`](Self::update_workout) would restore the content but
+    /// leave the snapshot behind, so the session would keep reading as
+    /// benchmarked and offer the same reset again forever.
+    pub fn update_workout_clearing_original(&self, w: &PlanWorkout) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE plan_workouts SET plan_id=?2, day=?3, planned_date=?4, kind=?5,
+                title=?6, distance_m=?7, duration_min=?8, pace_lo_s_km=?9,
+                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13, original_json=NULL
+             WHERE id=?1",
+            rusqlite::params_from_iter(workout_params(w)),
+        )?;
+        conn.execute(Self::REV_BUMP, params![w.id])?;
+        Ok(())
+    }
+
+    /// Remove a session a benchmark created on what the plan left as a rest
+    /// day — the row did not exist before, so restoring the plan means deleting
+    /// it.
+    pub fn delete_workout(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM plan_workouts WHERE id=?1", params![id])?;
         Ok(())
     }
 
@@ -1305,17 +1751,27 @@ impl Store {
     /// one, because `current_plan` picks by `created_ts` and two in-flight
     /// plans would make the calendar show both.
     ///
+    /// `rev` is the revision being installed, recorded so the sync comparison
+    /// on this device starts from what it actually took rather than from the
+    /// plan's creation time — which is how a pull avoids immediately
+    /// concluding that the copy it just installed is an update to import.
+    ///
     /// One transaction, so a failure part-way through cannot leave the device
     /// with the old plan deleted and the new one unwritten.
-    pub fn replace_plan(&self, plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Result<()> {
+    pub fn replace_plan(
+        &self,
+        plan: &TrainingPlan,
+        workouts: &[PlanWorkout],
+        rev: i64,
+    ) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM training_plans", [])?;
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                kind, quality_offset_sec_km, quality_offset_from)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                kind, quality_offset_sec_km, quality_offset_from, rev)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 plan.id,
                 distance_name(plan.distance),
@@ -1331,7 +1787,8 @@ impl Store {
                 plan_kind_name(plan.kind),
                 plan.quality_offset_sec_km,
                 plan.quality_offset_from
-                    .map(|d| d.format("%Y-%m-%d").to_string())
+                    .map(|d| d.format("%Y-%m-%d").to_string()),
+                rev
             ],
         )?;
         for w in workouts {
@@ -1358,6 +1815,7 @@ impl Store {
             "UPDATE plan_workouts SET kind=?2, title=?3, adjusted_reason=?4 WHERE id=?1",
             params![id, kind_name(kind), title, reason],
         )?;
+        conn.execute(Self::REV_BUMP, params![id])?;
         Ok(())
     }
 
@@ -1391,6 +1849,7 @@ impl Store {
              WHERE id=?1",
             rusqlite::params_from_iter(workout_params(w)),
         )?;
+        conn.execute(Self::REV_BUMP, params![w.id])?;
         Ok(())
     }
 
@@ -1815,6 +2274,7 @@ impl Store {
              WHERE id=?1",
             params![plan_id, offset_sec_km, from.format("%Y-%m-%d").to_string()],
         )?;
+        conn.execute(Self::REV_BUMP_PLAN, params![plan_id])?;
         Ok(())
     }
 
@@ -1840,6 +2300,7 @@ impl Store {
             )?;
             if changed != 1 { return Err(AppError::Other("a proposed workout changed; refresh before applying".into())); }
         }
+        transaction.execute(Self::REV_BUMP_PLAN, params![plan.id])?;
         transaction.commit()?;
         Ok(())
     }
@@ -1993,6 +2454,120 @@ impl Store {
         Ok(out)
     }
 
+    /// Coros activities whose FIT download is recorded in the ledger yet
+    /// produced no track points — a truncated or GPS-less file that decoded
+    /// without error stays out of [`Store::activities_missing_track`] forever,
+    /// which is how runs end up permanently without a GPS route. Newest first,
+    /// capped by `limit` so a backfill cannot flood the daily FIT quota.
+    ///
+    /// Retries are bounded per activity: a strength session's FIT will never
+    /// carry positions, and re-downloading it every sync would burn the
+    /// provider's daily file quota for nothing. After [`TRACK_RETRY_LIMIT`]
+    /// attempts the activity is left alone.
+    pub fn coros_track_backfill_candidates(&self, limit: i64) -> Result<Vec<(String, String, Option<i64>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.provider_record_id, a.sport, a.provider_sport_code
+             FROM activities a
+             JOIN fit_file_ledger l
+               ON l.provider = a.provider AND l.provider_record_id = a.provider_record_id
+             LEFT JOIN fit_track_retry r
+               ON r.provider = a.provider AND r.provider_record_id = a.provider_record_id
+             WHERE a.provider = 'coros'
+               AND NOT EXISTS (SELECT 1 FROM trackpoints t WHERE t.activity_id = a.id)
+               AND COALESCE(r.attempts, 0) < ?2
+             ORDER BY a.start_ts DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit, TRACK_RETRY_LIMIT], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Coros activities whose FIT is in the ledger but whose elevation never
+    /// reached the row: the upsert's conflict clause used to update only the
+    /// sport code, so the FIT's ascent — which the COROS text report never
+    /// carries — was decoded and thrown away on every download. The file is
+    /// the only place the device's climb total survives, so those activities
+    /// are re-fetched a few per sync, newest first, each exactly once via
+    /// [`Store::record_elevation_backfill`]: a FIT that genuinely has no
+    /// ascent must not burn the provider's daily file quota on every sync
+    /// afterwards. Only activities that actually have a track are offered —
+    /// a strength session never had a climb to record.
+    pub fn coros_elevation_backfill_candidates(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(String, String, Option<i64>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.provider_record_id, a.sport, a.provider_sport_code
+             FROM activities a
+             JOIN fit_file_ledger l
+               ON l.provider = a.provider AND l.provider_record_id = a.provider_record_id
+             LEFT JOIN fit_elevation_backfill b
+               ON b.provider = a.provider AND b.provider_record_id = a.provider_record_id
+             WHERE a.provider = 'coros'
+               AND a.elevation_gain_m IS NULL
+               AND b.provider_record_id IS NULL
+               AND EXISTS (SELECT 1 FROM trackpoints t WHERE t.activity_id = a.id)
+             ORDER BY a.start_ts DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Record that an activity's FIT was already re-fetched once for its
+    /// elevation, so a second attempt never happens — whatever the file
+    /// contained.
+    pub fn record_elevation_backfill(&self, provider: ProviderKind, record_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO fit_elevation_backfill (provider, provider_record_id, tried_ts)
+             VALUES (?1,?2,?3)",
+            params![provider_name(provider), record_id, Utc::now().timestamp()],
+        )?;
+        Ok(())
+    }
+
+    /// Count one re-download attempt for a ledgered-but-trackless activity and
+    /// return the attempts now recorded. The ledger entry stays: deleting it
+    /// would push the activity back into [`Store::activities_missing_track`],
+    /// which has no bound, and a GPS-less session would be re-fetched on every
+    /// sync forever.
+    pub fn record_fit_retry(&self, provider: ProviderKind, record_id: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO fit_track_retry (provider, provider_record_id, attempts)
+             VALUES (?1,?2,1)
+             ON CONFLICT (provider, provider_record_id) DO UPDATE SET attempts = attempts + 1",
+            params![provider_name(provider), record_id],
+        )?;
+        let attempts: i64 = conn.query_row(
+            "SELECT attempts FROM fit_track_retry WHERE provider=?1 AND provider_record_id=?2",
+            params![provider_name(provider), record_id],
+            |r| r.get(0),
+        )?;
+        Ok(attempts)
+    }
+
     pub fn set_last_sync(&self, provider: ProviderKind, ts: DateTime<Utc>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -2061,7 +2636,7 @@ impl Store {
         )?;
         let every = (total / max.max(1)).max(1);
         let mut stmt = conn.prepare(
-            "SELECT ts, lat, lon, hr FROM trackpoints
+            "SELECT ts, lat, lon, hr, alt FROM trackpoints
              WHERE activity_id=?1 AND rowid % ?2 = 0 ORDER BY ts",
         )?;
         let rows = stmt.query_map(params![activity_id, every], |r| {
@@ -2070,6 +2645,7 @@ impl Store {
                 lat: r.get(1)?,
                 lon: r.get(2)?,
                 hr: r.get(3)?,
+                alt: r.get(4)?,
             })
         })?;
         let mut out = Vec::new();
@@ -2735,12 +3311,14 @@ mod tests {
                         lat: 52.5,
                         lon: 13.4,
                         hr: None,
+                        alt: None,
                     },
                     crate::fit::TrackPoint {
                         ts: ts + 60,
                         lat: 52.51,
                         lon: 13.41,
                         hr: None,
+                        alt: None,
                     },
                 ],
             },
@@ -2785,6 +3363,168 @@ mod tests {
         }
         let missing = s.activities_missing_track(10).expect("missing");
         assert_eq!(missing[0].2, Some(200), "COALESCE keeps the known code");
+    }
+
+    /// The COROS text report carries no elevation, so the summary row is
+    /// always inserted with elevation NULL and the FIT upsert — the only pass
+    /// that knows the ascent — arrives later and hits the conflict path. The
+    /// clause used to update only the sport code, so the decoded climb was
+    /// thrown away and every outdoor run read "Elevation gain: Not recorded".
+    /// The re-sync must lift ascent and max HR onto the row, and a later
+    /// elevation-less re-sync must not wipe them again.
+    #[test]
+    fn fit_resync_backfills_elevation_and_max_hr() {
+        let s = store();
+        let day = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        let ts = day.and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp();
+        let base = crate::fit::DecodedActivity {
+            record_id: format!("{day}-elev"),
+            sport: "run".into(),
+            provider_sport_code: Some(100),
+            start_ts: ts,
+            duration_s: 3000.0,
+            distance_m: 10_000.0,
+            avg_hr: Some(150),
+            max_hr: None,
+            elevation_gain_m: None,
+            points: Vec::new(),
+        };
+        s.upsert_activity(ProviderKind::Coros, &base).expect("summary row");
+
+        // The FIT pass: same record id, now carrying ascent and max HR.
+        s.upsert_activity(
+            ProviderKind::Coros,
+            &crate::fit::DecodedActivity {
+                elevation_gain_m: Some(450.0),
+                max_hr: Some(171),
+                ..base.clone()
+            },
+        )
+        .expect("fit upsert");
+        let id = activity_id(&s, &format!("{day}-elev"));
+        let act = s.activity_by_id(id).expect("get").expect("row");
+        assert_eq!(act.elevation_gain_m, Some(450.0), "FIT ascent must land");
+        assert_eq!(act.max_hr, Some(171), "FIT max HR must land");
+
+        // A later text re-sync knows neither value; it must not erase them.
+        s.upsert_activity(ProviderKind::Coros, &base).expect("text re-sync");
+        let act = s.activity_by_id(id).expect("get").expect("row");
+        assert_eq!(act.elevation_gain_m, Some(450.0), "re-sync must not wipe ascent");
+        assert_eq!(act.max_hr, Some(171), "re-sync must not wipe max HR");
+    }
+
+    /// The elevation repair re-fetches a FIT at most once per activity: a
+    /// ledgered activity with a track and NULL elevation is a candidate, one
+    /// already tried is not, and one that already has an elevation (or no
+    /// track at all — a strength FIT never had a climb) never enters the
+    /// queue, because the provider's download quota is ten files per day.
+    #[test]
+    fn elevation_backfill_offers_each_ledgered_track_once() {
+        let s = store();
+        let day = NaiveDate::from_ymd_opt(2026, 4, 2).unwrap();
+        let ts = day.and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp();
+        let tracked = |rid: String, elev: Option<f64>| crate::fit::DecodedActivity {
+            record_id: rid,
+            sport: "run".into(),
+            provider_sport_code: Some(100),
+            start_ts: ts,
+            duration_s: 1800.0,
+            distance_m: 6000.0,
+            avg_hr: None,
+            max_hr: None,
+            elevation_gain_m: elev,
+            points: vec![
+                crate::fit::TrackPoint { ts, lat: 38.7, lon: -9.1, hr: None, alt: Some(10.0) },
+                crate::fit::TrackPoint { ts: ts + 60, lat: 38.71, lon: -9.11, hr: None, alt: Some(20.0) },
+            ],
+        };
+        // Candidate: FIT ledgered, track present, elevation never stored.
+        s.upsert_activity(ProviderKind::Coros, &tracked("needs-elev".into(), None))
+            .expect("a");
+        s.mark_fit_downloaded(ProviderKind::Coros, "needs-elev").expect("ledger");
+        // Not a candidate: elevation already known.
+        s.upsert_activity(ProviderKind::Coros, &tracked("has-elev".into(), Some(80.0)))
+            .expect("b");
+        s.mark_fit_downloaded(ProviderKind::Coros, "has-elev").expect("ledger");
+        // Not a candidate: no track, so the plain track loops own it.
+        s.upsert_activity(
+            ProviderKind::Coros,
+            &crate::fit::DecodedActivity {
+                points: Vec::new(),
+                ..tracked("no-track".into(), None)
+            },
+        )
+        .expect("c");
+        s.mark_fit_downloaded(ProviderKind::Coros, "no-track").expect("ledger");
+
+        let cands = s.coros_elevation_backfill_candidates(10).expect("candidates");
+        assert_eq!(cands.len(), 1, "only the trackless-elevation row queues");
+        assert_eq!(cands[0].0, "needs-elev");
+
+        // Once tried, never again — whatever the re-fetched file contained.
+        s.record_elevation_backfill(ProviderKind::Coros, "needs-elev").expect("try");
+        assert!(s.coros_elevation_backfill_candidates(10).expect("after").is_empty());
+    }
+
+    /// End-to-end check against a copy of the developer's real synced data:
+    /// migration 3 applies to an existing DB, the mileage figures are
+    /// plausible, and a plan generated from them opens at that volume.
+    /// Run with `cargo test -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the real app database"]
+    fn real_db_fit_duplicates_are_merged() {
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => {
+                println!("HOME unset — nothing to check");
+                return;
+            }
+        };
+        let src = std::path::PathBuf::from(home)
+            .join("Library/Application Support/com.fradone.runalytics/runalytics.sqlite");
+        if !src.exists() {
+            println!("no real db at {src:?} — nothing to check");
+            return;
+        }
+        let dst = std::env::temp_dir().join(format!("rk-fitdup-real-{}.sqlite", std::process::id()));
+        std::fs::copy(&src, &dst).expect("copy db");
+        for ext in ["-wal", "-shm"] {
+            let p = std::path::PathBuf::from(format!("{}{}", src.display(), ext));
+            if p.exists() {
+                let _ = std::fs::copy(
+                    &p,
+                    std::path::PathBuf::from(format!("{}{}", dst.display(), ext)),
+                );
+            }
+        }
+        let s = Store::open(&dst).expect("open runs the merge");
+        let left: i64 = s
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM activities
+                  WHERE provider='coros' AND provider_record_id GLOB '*[0-9]_[0-9a-f]*'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        let trackless: i64 = s
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM activities a
+                  WHERE a.provider='coros'
+                    AND NOT EXISTS (SELECT 1 FROM trackpoints t WHERE t.activity_id=a.id)
+                    AND lower(a.sport) IN ('run','ride','cycling','hike')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        println!("suffixed rows left = {left}, trackless gps sports = {trackless}");
+        assert_eq!(left, 0, "every FIT duplicate merged into its original");
+        let _ = std::fs::remove_file(&dst);
     }
 
     /// End-to-end check against a copy of the developer's real synced data:
@@ -3083,6 +3823,175 @@ mod tests {
             MIGRATIONS.last().unwrap().0
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A database already at the newest `user_version` whose `trackpoints`
+    /// table never gained `alt` (the drift migration 11 cannot reach, since it
+    /// only runs below version 11) made opening any activity fail with
+    /// "no such column: alt". The repair must add the column on open and stay
+    /// idempotent on reopen.
+    #[test]
+    fn migrate_repairs_trackpoints_missing_alt() {
+        let path =
+            std::env::temp_dir().join(format!("rk-alt-drift-{}.sqlite", uuid::Uuid::new_v4()));
+        {
+            let conn = Connection::open(&path).expect("open raw");
+            conn.execute_batch(&format!(
+                "CREATE TABLE trackpoints (
+                    activity_id INTEGER NOT NULL,
+                    ts INTEGER NOT NULL,
+                    lat REAL NOT NULL,
+                    lon REAL NOT NULL,
+                    hr INTEGER
+                 );
+                 INSERT INTO trackpoints VALUES (1, 100, 1.0, 2.0, 150);
+                 PRAGMA user_version={};",
+                MIGRATIONS.last().unwrap().0
+            ))
+            .expect("seed drifted schema");
+            assert!(conn.prepare("SELECT alt FROM trackpoints").is_err());
+        }
+        let s = Store::open(&path).expect("open repairs the drifted schema");
+        // The drifted row survives the ALTER and the track query that was
+        // failing now reads it back with alt = None.
+        let points = s.track_points(1, 100).expect("track_points");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].alt, None);
+        drop(s);
+        let again = Store::open(&path).expect("reopen is idempotent");
+        assert_eq!(again.track_points(1, 100).expect("track_points").len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The FIT download bug stored a run under the blob's filename
+    /// ("<fileid>_8hex.fit") instead of the requested labelId, so the track
+    /// landed on a duplicate row while the synced summary row stayed
+    /// trackless. Opening the database must move the track to the original,
+    /// delete the duplicate, and re-key the ledger so the original never
+    /// re-downloads — and it must do this idempotently, since it runs on
+    /// every open.
+    #[test]
+    fn migrate_merges_coros_fit_duplicates_onto_their_original() {
+        let path =
+            std::env::temp_dir().join(format!("rk-fitdup-{}.sqlite", uuid::Uuid::new_v4()));
+        let s = Store::open(&path).expect("open store");
+        let ts = 1_793_253_674i64;
+        // The summary row from the record sync: labelId key, no track.
+        let summary = crate::fit::DecodedActivity {
+            record_id: "481373822608507082".into(),
+            sport: "run".into(),
+            provider_sport_code: Some(100),
+            start_ts: ts,
+            duration_s: 3600.0,
+            distance_m: 10_120.0,
+            avg_hr: Some(150),
+            max_hr: None,
+            elevation_gain_m: None,
+            points: Vec::new(),
+        };
+        s.upsert_activity(ProviderKind::Coros, &summary)
+            .expect("summary row");
+        // The duplicate the old code created: file-id key, holds the track.
+        let dup = crate::fit::DecodedActivity {
+            record_id: "481373827708780651_a7c4417262".into(),
+            sport: "1".into(),
+            provider_sport_code: None,
+            start_ts: ts,
+            duration_s: 3600.0,
+            distance_m: 10_120.0,
+            avg_hr: Some(150),
+            max_hr: None,
+            elevation_gain_m: None,
+            points: vec![
+                crate::fit::TrackPoint { ts, lat: 38.7, lon: -9.1, hr: Some(140), alt: None },
+                crate::fit::TrackPoint { ts: ts + 1, lat: 38.71, lon: -9.11, hr: Some(142), alt: None },
+            ],
+        };
+        s.upsert_activity(ProviderKind::Coros, &dup)
+            .expect("duplicate row");
+        s.mark_fit_downloaded(ProviderKind::Coros, "481373827708780651_a7c4417262")
+            .expect("ledger entry under the suffixed id");
+        let summary_id = activity_id(&s, "481373822608507082");
+        drop(s);
+
+        let s = Store::open(&path).expect("open runs the merge");
+        // The duplicate is gone; the original carries the track.
+        assert!(activity_id_opt(&s, "481373827708780651_a7c4417262").is_none());
+        let merged_id = activity_id(&s, "481373822608507082");
+        let merged = s.activity_by_id(merged_id).expect("get").expect("original survives");
+        assert!(merged.has_track, "track moved onto the original");
+        assert_eq!(s.track_points(merged.id, 100).expect("track").len(), 2);
+        // The ledger now names the original, so it cannot re-download.
+        assert!(s.fit_downloaded(ProviderKind::Coros, "481373822608507082").expect("ledger"));
+        assert!(!s
+            .fit_downloaded(ProviderKind::Coros, "481373827708780651_a7c4417262")
+            .expect("ledger"));
+        // The original no longer qualifies for a track download.
+        assert!(s.activities_missing_track(10).expect("missing").is_empty());
+        assert_eq!(merged.id, summary_id, "the original row was kept, not replaced");
+        drop(s);
+
+        // Idempotent: reopening must not fail or change anything.
+        let s = Store::open(&path).expect("reopen is idempotent");
+        assert!(s
+            .activity_by_id(activity_id(&s, "481373822608507082"))
+            .expect("get")
+            .expect("still there")
+            .has_track);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A suffixed row with no same-start twin is left alone: it may be a
+    /// legitimately FIT-only activity, and the merge must never delete the
+    /// only copy of a track on a guess.
+    #[test]
+    fn migrate_leaves_unpaired_fit_rows_alone() {
+        let path =
+            std::env::temp_dir().join(format!("rk-fitlonely-{}.sqlite", uuid::Uuid::new_v4()));
+        let s = Store::open(&path).expect("open store");
+        let lonely = crate::fit::DecodedActivity {
+            record_id: "481373827708780651_a7c4417262".into(),
+            sport: "run".into(),
+            provider_sport_code: None,
+            start_ts: 1_793_253_674,
+            duration_s: 3600.0,
+            distance_m: 10_120.0,
+            avg_hr: None,
+            max_hr: None,
+            elevation_gain_m: None,
+            points: vec![crate::fit::TrackPoint {
+                ts: 1_793_253_674,
+                lat: 38.7,
+                lon: -9.1,
+                hr: None,
+                alt: None,
+            }],
+        };
+        s.upsert_activity(ProviderKind::Coros, &lonely)
+            .expect("insert lonely row");
+        drop(s);
+        let s = Store::open(&path).expect("open keeps unpaired row");
+        let kept = activity_id(&s, "481373827708780651_a7c4417262");
+        assert_eq!(s.track_points(kept, 100).expect("track").len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn activity_id_opt(store: &Store, rid: &str) -> Option<i64> {
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM activities WHERE provider='coros' AND provider_record_id=?1",
+                params![rid],
+                |r| r.get(0),
+            )
+            .optional()
+            .expect("query")
+    }
+
+    fn activity_id(store: &Store, rid: &str) -> i64 {
+        activity_id_opt(store, rid).unwrap_or_else(|| panic!("no activity for {rid}"))
     }
 
     /// The adaptive plan's reason must land on the session it explains and be

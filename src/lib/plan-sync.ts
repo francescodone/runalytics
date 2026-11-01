@@ -22,12 +22,8 @@ function describe(config: PlanSync): string {
   if (!status?.accountLinked)
     return "Connect COROS first — it is how your two devices recognise each other.";
   if (!config.hasToken)
-    return config.canPublish
-      ? "Save a GitHub token with gist scope in the publishing section above — it is what publishes the plan to a private gist."
-      : "Save the same GitHub token in the publishing section above — it is how this device finds the gist your computer published.";
-  if (config.canPublish)
-    return `Publishing automatically. Last published ${when(config.lastPushed)}.`;
-  return `Last imported ${when(config.lastPulled)}.`;
+    return "Save a GitHub token with gist scope in the publishing section above — it is how every device finds and writes the shared gist.";
+  return `Every edit publishes automatically, and a sync imports what the other device published. Last published ${when(config.lastPushed)} · last imported ${when(config.lastPulled)}.`;
 }
 
 function show(next: PlanSyncStatus): void {
@@ -39,10 +35,10 @@ function show(next: PlanSyncStatus): void {
   el("sync-code").textContent = next.code
     ? `Channel ${next.code.slice(0, 8)}…${next.code.slice(-4)}`
     : "Channel unavailable until COROS is connected.";
-  // The two actions are mutually exclusive by design: one machine writes the
-  // plan, the other imports it. Showing both invites the wrong press.
-  el<HTMLButtonElement>("sync-push").hidden = !config.canPublish;
-  el<HTMLButtonElement>("sync-pull").hidden = config.canPublish;
+  // Both devices publish and both import, so both actions belong on both
+  // ends: whichever holds the newer plan publishes, the other imports.
+  el<HTMLButtonElement>("sync-push").hidden = false;
+  el<HTMLButtonElement>("sync-pull").hidden = false;
   el<HTMLButtonElement>("sync-pull").disabled = !config.enabled || !config.hasToken;
   el<HTMLButtonElement>("sync-push").disabled = !config.enabled || !config.hasToken;
 }

@@ -1411,9 +1411,6 @@ impl Provider for CorosProvider {
         // (hike, cycling, strength) and those tracks never download.
         let budget = budget.clamp(1, 10) as i64;
         let missing = store.activities_missing_track(budget)?;
-        if missing.is_empty() {
-            return Ok(0);
-        }
         // FIT download works per activity: labelId + sportType, and the file
         // arrives as a base64 blob in an embedded resource block. The tool
         // allows max 10 files per 24h, so the budget above is capped at 10.
@@ -1440,22 +1437,91 @@ impl Provider for CorosProvider {
                 }
             };
             for (uri, bytes) in Self::blobs_of(&result) {
-                // uri like "coros://activity-fit-files/<labelId>.fit".
-                let rid = uri
-                    .rsplit('/')
-                    .next()
-                    .and_then(|f| f.strip_suffix(".fit"))
-                    .unwrap_or(&label_id)
-                    .to_string();
-                match self.ingest_fit(store, &rid, &bytes) {
+                // The record belongs to the labelId we asked for, so that is
+                // the key it must be stored under. The URI filename is *not*
+                // reliable: COROS has been seen returning a file id
+                // ("<fileid>_<hex>.fit") whose numeric part differs from the
+                // labelId, and ingesting under that key created a duplicate
+                // activity row holding the track while the synced summary row
+                // stayed trackless forever.
+                match self.ingest_fit(store, &label_id, &bytes) {
                     Ok(true) => downloaded += 1,
                     Ok(false) => {}
                     Err(e) => {
                         // The blob can come back truncated; forgetting the
                         // ledger entry lets a later sync retry it.
-                        eprintln!("[coros] fit decode {rid} failed: {e}");
-                        let _ = store.forget_fit_downloaded(ProviderKind::Coros, &rid);
+                        eprintln!("[coros] fit decode {label_id} ({uri}) failed: {e}");
+                        let _ = store.forget_fit_downloaded(ProviderKind::Coros, &label_id);
                     }
+                }
+            }
+        }
+        // A FIT that downloaded and decoded cleanly but carried no positions
+        // (or no altitudes, on a database whose tracks predate the altitude
+        // column) stays out of `activities_missing_track` forever — the ledger
+        // says it was fetched. That is how runs end up permanently without a
+        // GPS route. Retry a bounded number of times per activity: a truncated
+        // file gets another chance, while a genuinely GPS-less session
+        // (strength, indoor) stops costing quota after a few attempts.
+        for (label_id, sport, code) in store.coros_track_backfill_candidates(budget.min(3))? {
+            let attempts = store.record_fit_retry(ProviderKind::Coros, &label_id)?;
+            let Some(code) = code.or_else(|| Self::sport_code(&sport)) else {
+                continue;
+            };
+            let args = json!({ "labelId": label_id, "sportType": code });
+            let result = match self
+                .call_tool_raw(&service, "downloadActivityFitFiles", args)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[coros] fit retry {label_id} failed (attempt {attempts}): {e}");
+                    continue;
+                }
+            };
+            for (uri, bytes) in Self::blobs_of(&result) {
+                match self.ingest_fit(store, &label_id, &bytes) {
+                    Ok(true) => downloaded += 1,
+                    Ok(false) => {
+                        eprintln!("[coros] fit retry {label_id} still trackless (attempt {attempts})")
+                    }
+                    Err(e) => {
+                        eprintln!("[coros] fit retry decode {label_id} ({uri}) failed: {e}")
+                    }
+                }
+            }
+        }
+        // Elevation backfill: activities whose FIT was fetched while the
+        // upsert discarded the decoded ascent need the file one more time —
+        // the COROS text report never carries elevation, so the FIT is the
+        // only surviving copy of the device's climb total. Bounded to a few
+        // per sync (the download tool allows ten files per 24h and the loops
+        // above get first claim), and each activity is marked as tried before
+        // the call so a FIT that genuinely has no ascent — or a download that
+        // fails — never queues again.
+        for (label_id, sport, code) in store.coros_elevation_backfill_candidates(3)? {
+            store.record_elevation_backfill(ProviderKind::Coros, &label_id)?;
+            let Some(code) = code.or_else(|| Self::sport_code(&sport)) else {
+                continue;
+            };
+            let args = json!({ "labelId": label_id, "sportType": code });
+            let result = match self
+                .call_tool_raw(&service, "downloadActivityFitFiles", args)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[coros] elevation re-download {label_id} failed: {e}");
+                    continue;
+                }
+            };
+            for (_, bytes) in Self::blobs_of(&result) {
+                // The track already exists, so the upsert skips the points
+                // and the COALESCE updates lift ascent and max HR onto the
+                // row. A FIT without a Session ascent leaves the row NULL;
+                // the ledger says it was tried, which is the honest end.
+                if let Err(e) = self.ingest_fit(store, &label_id, &bytes) {
+                    eprintln!("[coros] elevation re-download decode {label_id}: {e}");
                 }
             }
         }

@@ -45,16 +45,24 @@ test.describe("motion system", () => {
         for (const selector of [".desk-toolbar", ".health-verdict", ".health-analysis"]) {
           await expect(page.locator(selector)).toHaveCSS("backdrop-filter", /blur\(/);
         }
-        await expect(page.locator(".desk-appbar")).toHaveCSS("backdrop-filter", width === 390 ? "none" : "blur(20px) saturate(1.35)");
-        const appbarAlpha = await page.evaluate(() => {
-          const [, , , a] = getComputedStyle(document.querySelector(".desk-appbar")).backgroundColor.match(/[\d.]+/g) ?? [];
-          return a === undefined ? 1 : Number(a);
+        // The header's glass sits on a ::before layer, not on the header
+        // itself: backdrop-filter on the header would make it the containing
+        // block for the fixed mobile nav island and pin it to the top bar.
+        const appbarGlass = await page.evaluate(() => {
+          const style = getComputedStyle(document.querySelector(".desk-appbar"), "::before");
+          const [, , , a] = style.backgroundColor.match(/[\d.]+/g) ?? [];
+          return { filter: style.backdropFilter, alpha: a === undefined ? 1 : Number(a) };
         });
-        expect(appbarAlpha).toBeLessThan(1);
+        expect(appbarGlass.filter).toBe("blur(20px) saturate(1.35)");
+        expect(appbarGlass.alpha).toBeLessThan(1);
         if (width === 390) {
           await expect(page.locator(".desk-navigation")).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
           const navigation = await page.locator(".desk-navigation").boundingBox();
-          expect(Math.round(navigation.y + navigation.height)).toBe(900);
+          // The island floats: inset from the screen edges and above the
+          // bottom, as a rounded pill with content scrolling underneath.
+          expect(Math.round(navigation.y + navigation.height)).toBeLessThan(900);
+          expect(navigation.x).toBeGreaterThan(0);
+          await expect(page.locator(".desk-navigation")).toHaveCSS("border-radius", "999px");
           const settings = page.getByRole("button", { name: "Settings", exact: true });
           await settings.click();
           await expect(page.locator("#workspace h1")).toHaveText("Settings");
@@ -63,6 +71,10 @@ test.describe("motion system", () => {
         await page.getByRole("button", { name: "Log pain", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Log pain" });
         await expect(dialog).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
+        // Axe samples the painted pixels: measuring while the dialog is still
+        // fading in blends its colours with the page behind and invents a
+        // contrast failure that never exists once the arrival animation ends.
+        await expect.poll(() => page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running").length)).toBe(0);
         expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
         await page.screenshot({ path: `test-results/glass-${theme}-${width}.png`, animations: "disabled" });
         await page.emulateMedia({ contrast: "more" });
@@ -167,11 +179,21 @@ test.describe("motion system", () => {
         await page.emulateMedia({ reducedMotion: "no-preference" });
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
-        for (const route of ["training", "training/month", "training/plan", "journal", "journal/map", "health", "health/pace", "health/journal", "health/milestones", "settings", "settings/appearance", "help"]) {
+        for (const route of ["training", "training/month", "training/plan", "journal", "health", "health/pace", "health/journal", "health/milestones", "settings", "settings/appearance", "help"]) {
           await page.goto(`/desk.html?theme=${theme}#${route}`);
           await expect(page.locator("#workspace h1")).toBeVisible();
           await expect(page.locator(".desk-loading")).toHaveCount(0);
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), route).toBe(true);
+          // axe must sample settled colours: with animations left running it
+          // catches reveals and the sliding selection marker mid-flight and
+          // reports blended colours that no user ever sees. Reveals are
+          // staggered, so a single zero-count moment can sit in a gap between
+          // two siblings: require the count to stay at zero for 500ms.
+          await page.waitForFunction(() => {
+            if (document.getAnimations().length > 0) { window.__quiet = 0; return false; }
+            window.__quiet = (window.__quiet || 0) + 1;
+            return window.__quiet >= 5;
+          }, null, { timeout: 20000, polling: 100 });
           expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, route).toEqual([]);
           await page.screenshot({ path: `test-results/motion-${route.replaceAll("/", "-")}-${theme}-${width}.png`, fullPage: true, animations: "disabled" });
         }
@@ -198,7 +220,7 @@ test.describe("motion system", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#training");
     const navigation = page.getByRole("navigation", { name: "Workspaces" });
-    for (const workspace of ["Journal", "Health", "Training", "Health"]) {
+    for (const workspace of ["Activities", "Health", "Training", "Health"]) {
       await navigation.getByRole("link", { name: workspace, exact: true }).click();
       await expect(page.locator("#workspace h1")).toHaveText(workspace);
     }
@@ -711,10 +733,9 @@ for (const session of ['intervals', 'tempo']) {
     await expect(buttons).toHaveCount(session === 'tempo' ? 3 : 9);
     await expect(chart.locator('.lap-target-band')).toHaveCount(session === 'tempo' ? 1 : 4);
     await expect(chart.locator('.lap-target-band.on-target')).toHaveCount(session === 'tempo' ? 1 : 2);
-    // The table states the same thing in words: one avg row and one target row
-    // per lap, with the graded laps' ranges highlighted where the chart does.
-    await expect(page.locator('.lap-execution-table .lap-avg-row')).toHaveCount(session === 'tempo' ? 3 : 9);
-    await expect(page.locator('.lap-execution-table .lap-range-row')).toHaveCount(session === 'tempo' ? 3 : 9);
+    // The table states the same thing in words: one row per lap, with the
+    // graded laps' target cells highlighted where the chart does.
+    await expect(page.locator('.lap-execution-table tbody tr')).toHaveCount(session === 'tempo' ? 3 : 9);
     await expect(page.locator('.lap-execution-table .lap-row-target.on-target')).toHaveCount(session === 'tempo' ? 1 : 2);
     const geometry = await buttons.evaluateAll(columns => columns.map(column => ({
       actual:parseFloat(column.querySelector('.lap-pace-actual').style.height),
@@ -747,7 +768,7 @@ for (const session of ['intervals', 'tempo']) {
       for (const index of [0,2,4,6,8]) await expect(buttons.nth(index).locator('.lap-target-band')).toHaveCount(0);
       await buttons.nth(5).click();
       await expect(page.locator('.lap-pace-selection')).toContainText('Slower than target');
-      await expect(page.locator('.lap-execution-table .lap-avg-row[data-selected="true"]')).toContainText('4:51/km');
+      await expect(page.locator('.lap-execution-table tr[data-selected="true"]')).toContainText('4:51/km');
     } else {
       expect(geometry[1].actual).toBeGreaterThan(geometry[1].bottom);
       expect(geometry[1].actual).toBeLessThan(geometry[1].bottom + geometry[1].band);
@@ -757,16 +778,17 @@ for (const session of ['intervals', 'tempo']) {
     await expect(buttons.nth(1)).toHaveAttribute('aria-pressed','true');
     await expect(page.locator('.lap-pace-selection')).toContainText('4:35 - 4:45/km');
     await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Time',exact:true})).toBeVisible();
+    await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Pace',exact:true})).toBeVisible();
+    await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Target pace',exact:true})).toBeVisible();
     const rows = await page.locator('.lap-execution-table tbody tr').evaluateAll(tableRows => tableRows.map(row => row.innerText.replace(/\s+/g, ' ').trim()));
     const paces = await buttons.evaluateAll(columns => columns.map(column => column.querySelector('.lap-pace-actual > span')?.textContent ?? 'Not recorded'));
     for (const [index, column] of geometry.entries()) {
-      const avgRow = rows[index * 2];
-      const rangeRow = rows[index * 2 + 1];
-      expect(avgRow).toContain(paces[index]);
+      const row = rows[index];
+      expect(row).toContain(paces[index]);
       if (!Number.isNaN(column.bottom)) {
-        expect(rangeRow).toContain('4:35 - 4:45/km');
+        expect(row).toContain('4:35 - 4:45/km');
       } else {
-        expect(rangeRow).toContain('Not prescribed');
+        expect(row).toContain('Not prescribed');
       }
     }
     await page.getByRole('region',{name:'Recorded laps'}).getByRole('button').first().click();
@@ -798,7 +820,8 @@ test('lap ranges handle missing measurements and never invent unprescribed targe
   expect(await page.locator('.lap-execution').innerHTML()).not.toMatch(/NaN|Infinity/);
   await page.goto('/desk.html?unprescribed=1#journal/1/execution');
   await expect(page.getByRole('heading',{name:'Recorded laps',exact:true})).toBeVisible();
-  await expect(page.locator('.lap-target-band, .lap-range-row, .lap-pace-chart')).toHaveCount(0);
+  await expect(page.locator('.lap-target-band, .lap-pace-chart')).toHaveCount(0);
+  await expect(page.locator('.lap-execution-table .lap-row-target.on-target')).toHaveCount(0);
   await expect(page.getByRole('region',{name:'Recorded laps'})).toContainText('Not prescribed');
 });
 
@@ -835,7 +858,7 @@ test('ending a plan requires confirmation and keeps recorded history',async ({pa
   await page.getByRole('dialog').getByRole('button',{name:'End plan',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(()=>window.__deskCalls.filter(call=>call.command==='abort_plan'))).toHaveLength(1);
-  await page.getByRole('link',{name:'Journal',exact:true}).click();
+  await page.getByRole('link',{name:'Activities',exact:true}).click();
   await expect(page.locator('.activity-row')).toHaveCount(9);
 });
 
@@ -847,12 +870,11 @@ test("original entry routes load the independent workspace and retain deep links
     ['/index.html', 'Training', 'Week'],
     ['/plan.html', 'Training', 'Plan'],
     ['/calendar.html', 'Training', 'Month'],
-    ['/achievements.html', 'Journal', 'Activities'],
+    ['/achievements.html', 'Activities', null],
     ['/achievements.html#performance', 'Health', 'Overview'],
     ['/achievements.html#recovery', 'Health', 'Overview'],
     ['/achievements.html#risk', 'Health', 'Overview'],
     ['/achievements.html#milestones', 'Health', 'Milestones'],
-    ['/achievements.html#routes', 'Journal', 'Training map'],
     ['/injury.html', 'Health', 'Pain journal'],
     ['/settings.html', 'Settings', null],
     ['/support.html', 'Help', null],
@@ -878,7 +900,7 @@ for (const theme of ['light','dark']) {
       const errors=[];
       page.on('pageerror',error=>errors.push(error.message));
       await page.setViewportSize({width,height:1000});
-      for (const route of ['training','training/month','training/plan','journal','journal/map','health','health/journal','health/milestones','settings','help']) {
+      for (const route of ['training','training/month','training/plan','journal','health','health/journal','health/milestones','settings','help']) {
         await page.goto(`/desk.html?theme=${theme}#${route}`);
         await expect(page.locator('#workspace h1')).toBeVisible();
         await expect(page.locator('.desk-loading')).toHaveCount(0);
@@ -888,7 +910,7 @@ for (const theme of ['light','dark']) {
         await page.screenshot({path:`test-results/desk-${route.replace('/','-')}-${theme}-${width}.png`,fullPage:true});
       }
       await page.goto(`/desk.html?theme=${theme}#training`);
-      await page.locator(width>800 ? '.week-board .session-tile[draggable="true"]' : '.day-itinerary .session-tile[draggable="true"]').first().click();
+      await page.locator(width>800 ? '.week-board .session-tile.movable' : '.day-itinerary .session-tile.movable').first().click();
       await expect(page.getByRole('complementary',{name:'Session',exact:true})).toBeVisible();
       if (width<=800) {
         for(let index=0;index<14;index++) {await page.keyboard.press('Tab');expect(await page.evaluate(()=>Boolean(document.activeElement?.closest('.desk-inspector')))).toBe(true);}
@@ -912,19 +934,70 @@ test("native sync completion refreshes evidence and watch progress is visible", 
   await page.evaluate(() => window.__deskEmit('sync://completed',{ok:true}));
   await expect(page.getByRole('button',{name:'Sync activities'})).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='current_plan').length)).toBeGreaterThan(before);
-  await page.evaluate(() => {window.__deskHoldPush=true;});
-  await page.getByRole('button',{name:/Send to watch|Update watch/}).click();
+  // A plan that has never reached the watch is pushed by itself: the page
+  // opens on ?noPush=1&holdPush=1, the fixture holds the push open, and the
+  // backend's plan://sync stages must drive the progress bar unattended.
+  await page.goto('/desk.html?noPush=1&holdPush=1');
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='push_plan_to_provider').length)).toBe(1);
   await page.evaluate(() => window.__deskEmit('plan://sync',{op:'push',percent:45,stage:'Publishing sessions'}));
   await expect(page.getByRole('progressbar',{name:'Watch publishing progress'})).toHaveAttribute('value','45');
   await page.evaluate(() => window.__deskResolvePush());
   await expect(page.getByRole('status')).toContainText('Plan sent to COROS');
 });
 
+test("a plan already on the watch is never re-pushed by the page", async ({page}) => {
+  await page.goto('/desk.html');
+  await expect(page.locator('#workspace h1')).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call=>call.command==='push_plan_to_provider').length)).toBe(0);
+});
+
+test("pointer drag moves a session to the lane under the pointer and never opens it", async ({page}) => {
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/desk.html');
+  await page.getByRole('button',{name:'Next week',exact:true}).click();
+  const tile = page.locator('.week-board .session-tile.movable').first();
+  const lanes = page.locator('.week-board .day-lane');
+  const fromIndex = await lanes.evaluateAll(nodes => nodes.findIndex(node => node.querySelector('.session-tile.movable')));
+  const target = lanes.nth(fromIndex + 1);
+  const a = await tile.boundingBox();
+  const b = await target.boundingBox();
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + a.width / 2 + 30, a.y + a.height / 2, {steps: 4});
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, {steps: 8});
+  await expect(target).toHaveAttribute('data-drop-target', '');
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='move_workout').map(call=>call.args.date))).toHaveLength(1);
+  await expect(page.getByRole('status')).toContainText('Moved to');
+  // The click the browser fires after the release must not open the inspector.
+  await expect(page.getByRole('complementary',{name:'Session',exact:true})).toHaveCount(0);
+});
+
+test("month view marks finished sessions like the week board does", async ({page}) => {
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/desk.html#training/month');
+  const tiles = page.locator('.month-sessions .session-tile');
+  await expect(tiles.first()).toBeVisible();
+  // The fixture links finished workouts to an activity, so their tiles carry
+  // the same Completed mark as on the week board; the kind label is what the
+  // month cell gives up for space, never the mark.
+  const done = page.locator('.month-sessions .session-tile [aria-label="Completed"]');
+  expect(await done.count()).toBeGreaterThan(0);
+  await expect(done.first()).toBeVisible();
+  await expect(page.locator('.month-sessions .session-kind').first()).toBeHidden();
+  // Today stays highlighted in the month grid: the number carries
+  // aria-current="date" and wears the filled disc, not plain ink.
+  const todayCell = page.locator('.month-number[aria-current="date"]');
+  await expect(todayCell).toHaveCount(1);
+  await expect.poll(async () => (await todayCell.evaluate(el => getComputedStyle(el).backgroundColor)) !== 'rgba(0, 0, 0, 0)').toBe(true);
+});
+
 test("schedule mutations retain intent and Undo restores the original date", async ({page}) => {
   await page.setViewportSize({width:1440,height:1000});
   await page.goto('/desk.html');
   await page.getByRole('button',{name:'Next week',exact:true}).click();
-  await page.locator('.week-board .session-tile[draggable="true"]').first().click();
+  await page.locator('.week-board .session-tile.movable').first().click();
   const original = await page.getByLabel('Run on',{exact:true}).inputValue();
   const next = new Date(`${original}T12:00:00`); next.setDate(next.getDate()+1);
   const moved = `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}-${String(next.getDate()).padStart(2,'0')}`;
@@ -933,28 +1006,50 @@ test("schedule mutations retain intent and Undo restores the original date", asy
   await expect(page.getByRole('status')).toContainText('Moved to');
   await page.getByRole('button',{name:'Undo',exact:true}).click();
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='move_workout').map(call=>call.args.date))).toEqual([moved,original]);
-  await page.locator('.week-board .session-tile[draggable="true"]').first().click();
+  await page.locator('.week-board .session-tile.movable').first().click();
   await page.getByRole('button',{name:'Skip session',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('Session skipped');
   await page.getByRole('button',{name:'Undo',exact:true}).click();
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='set_workout_skipped').map(call=>call.args.skipped))).toEqual([true,false]);
 });
 
-test("reset previews changes and matching uses the chosen recorded activity", async ({page}) => {
+test("week summary shows run mileage against the plan's planned mileage", async ({page}) => {
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/desk.html');
+  const strip = page.locator('.schedule-summary');
+  await expect(strip).toBeVisible();
+  // The km reading carries the plan's denominator: "X km / Y km done", so a
+  // week at 38 run of 30 planned reads as 38/30 rather than a bare 38.
+  await expect(strip.locator('span').nth(1)).toContainText("/");
+  await expect(strip.locator('span').nth(1)).toContainText("done");
+});
+
+test("reset week undoes a scheduled benchmark and a moved session", async ({page}) => {
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/desk.html');
+  await page.getByRole('button',{name:'Next week',exact:true}).click();
+  // Schedule a benchmark over a planned session, the way the user did.
+  await page.getByRole('button',{name:'Schedule race or test',exact:true}).click();
+  const dialog = page.getByRole('dialog',{name:'Schedule race or test',exact:true});
+  await dialog.getByRole('button',{name:'Schedule benchmark',exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.week-board')).toContainText('Benchmark: parkrun');
+  // The reset offer appears on the summary strip for the week horizon.
+  await page.getByRole('button',{name:'Reset week',exact:true}).click();
+  const reset = page.getByRole('dialog',{name:'Reset this week',exact:true});
+  await expect(reset).toBeVisible();
+  await expect(reset.locator('.reset-list li').filter({hasText:'Benchmark'})).toBeVisible();
+  await reset.getByRole('button',{name:/^Reset \d+$/}).click();
+  await expect(reset).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('back on the plan');
+  await expect(page.locator('.week-board')).not.toContainText('Benchmark: parkrun');
+  expect(await page.evaluate(() => window.__deskCalls.some(call=>call.command==='reset_week'))).toBe(true);
+});
+
+test("matching uses the chosen recorded activity", async ({page}) => {
   await page.setViewportSize({width:1440,height:1000});
   await page.goto('/desk.html?unmatched=1');
-  await page.getByRole('button',{name:'Next week',exact:true}).click();
-  await page.locator('.week-board .session-tile[draggable="true"]').first().click();
-  const original = await page.getByLabel('Run on',{exact:true}).inputValue();
-  const next = new Date(`${original}T12:00:00`);next.setDate(next.getDate()+1);
-  await page.getByLabel('Run on',{exact:true}).fill(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}-${String(next.getDate()).padStart(2,'0')}`);
-  await page.getByRole('button',{name:'Move session',exact:true}).click();
-  await page.getByRole('button',{name:'Reset this week'}).click();
-  await expect(page.getByRole('dialog')).toContainText('to');
-  expect(await page.evaluate(() => window.__deskCalls.some(call=>call.command==='reset_week'))).toBe(false);
-  await page.getByRole('button',{name:'Restore week',exact:true}).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.locator('.week-board .session-tile[draggable="true"]').first().click();
+  await page.locator('.week-board .session-tile.movable').first().click();
   await page.getByRole('combobox',{name:'Recorded activity'}).selectOption('99');
   await page.getByRole('button',{name:'Match run',exact:true}).click();
   await expect(page.getByRole('status')).toContainText('Recorded run matched');
@@ -979,10 +1074,10 @@ for (const action of ['Apply','Dismiss']) {
 }
 
 for (const width of [390,1440]) {
-  test(`training map renders geographic pixels and responds to zoom at ${width}px`, async ({page}) => {
+  test(`recorded route map renders geographic pixels and responds to zoom at ${width}px`, async ({page}) => {
     await page.setViewportSize({width,height:1000});
-    await page.goto('/desk.html#journal/map');
-    await expect(page.getByRole('region',{name:'Training route heatmap'})).toBeVisible();
+    await page.goto('/desk.html#journal/1');
+    await expect(page.getByRole('region',{name:'Recorded GPS route'})).toBeVisible();
     const pixels = () => page.locator('.maplibregl-canvas').evaluate(canvas => {
       const context=canvas.getContext('webgl2');
       const bytes=new Uint8Array(context.drawingBufferWidth*context.drawingBufferHeight*4);
@@ -995,7 +1090,7 @@ for (const width of [390,1440]) {
     const before=await pixels();
     await page.getByRole('button',{name:'Zoom in',exact:true}).click();
     await expect.poll(async () => (await pixels()).fingerprint).not.toBe(before.fingerprint);
-    await page.getByRole('button',{name:'Fit training area',exact:true}).click();
+    await page.getByRole('button',{name:'Fit route',exact:true}).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:`test-results/desk-map-${width}.png`,fullPage:true});
   });
@@ -1098,9 +1193,12 @@ for (const width of [320, 390, 768, 1440]) {
   });
 }
 
-test("Journal combines filters and opens recorded splits", async ({ page }) => {
+test("Activities list hides filters until revealed and opens recorded splits", async ({ page }) => {
   await page.goto("/desk.html#journal");
   await expect(page.locator(".activity-row")).toHaveCount(9);
+  await expect(page.locator(".journal-tools")).toHaveCount(0);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Sport", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
   await expect(page.locator(".activity-row")).toHaveCount(6);
   await page.getByLabel("Search activities").fill("not-a-run");
@@ -1111,7 +1209,14 @@ test("Journal combines filters and opens recorded splits", async ({ page }) => {
   await expect(page.getByRole("complementary", { name: "Activity review" })).toBeVisible();
   await page.getByRole("tab", { name: "Splits", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Kilometre splits" })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: "vs previous km" })).toBeVisible();
+  // Each kilometre wears a horizontal bar scaled against the fastest kilometre
+  // of the run, so the fastest row is full width and every slower row shorter.
+  const bars = page.getByRole("region", { name: "Kilometre splits" }).locator(".split-bar > span");
+  expect(await bars.count()).toBeGreaterThan(1);
+  const widths = await bars.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().width));
+  expect(Math.max(...widths)).toBeGreaterThan(Math.min(...widths) * 1.05);
+  await expect(page.getByRole("columnheader", { name: "Elevation" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Kilometre splits" }).locator("tbody tr").first().locator("td").nth(2)).toContainText(/m|Not recorded/);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.locator(".activity-row").first()).toBeFocused();
 });

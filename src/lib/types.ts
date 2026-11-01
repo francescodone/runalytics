@@ -36,6 +36,8 @@ export interface TrackPoint {
   lat: number;
   lon: number;
   hr: number | null;
+  /// Barometric altitude in metres, when the device recorded it.
+  alt: number | null;
 }
 
 /// Everything the activity detail sheet shows.
@@ -258,6 +260,22 @@ export interface WeekDeviation {
   restorable: boolean;
   /** Restoring it would land it on today. */
   isToday: boolean;
+  /** The reset moves its day back onto the generated day. */
+  restoresDate: boolean;
+  /** A benchmark overwrote the planned session here, and the reset brings it
+   *  back — kind, title and distance. */
+  restoresContent: boolean;
+  /** The benchmark created this session on a rest day, so the reset removes it
+   *  rather than rewriting it. */
+  removes: boolean;
+}
+
+/// One week of the current plan, as the roadmap reads it: what the plan
+/// prescribes and what the runner has actually banked so far.
+export interface WeekProgress {
+  weekStart: string;
+  plannedM: number;
+  ranM: number;
 }
 
 /// A banked run's frozen score snapshot (see the backend's `run_scores`).
@@ -269,6 +287,16 @@ export interface RunScore {
   load: number | null;
   risk: number;
   riskDelta: number;
+}
+
+/// A banked run that matched a plan session (see the backend's
+/// `matched_sessions`): the session's plan title, its one-line purpose for
+/// the list row, and the full session description for the review.
+export interface MatchedSession {
+  activityId: number;
+  title: string;
+  purpose: string;
+  notes: string;
 }
 
 export interface CalendarEvent {
@@ -309,8 +337,8 @@ export interface CalendarPublishing {
   lastError: string | null;
 }
 
-/// The cross-device plan channel. `canPublish` is decided by the platform, not
-/// the user: the machine that builds plans is the one that publishes them.
+/// The cross-device plan channel. Both devices publish and both import —
+/// `canPublish` is kept for the backend config shape but is always true.
 export interface PlanSync {
   enabled: boolean;
   gistId: string | null;
@@ -623,6 +651,9 @@ export interface KmSplit {
   avgPaceSKm: number | null;
   avgHr: number | null;
   deltaPrevSKm: number | null;
+  /// Metres climbed inside this kilometre; null when the device recorded no
+  /// altitudes (or the track synced before altitudes were stored).
+  elevationGainM: number | null;
   /// Set only under a prescribed work lap — a kilometre under a warm-up,
   /// recovery, or cool-down stays unmarked.
   bandLoSKm: number | null;

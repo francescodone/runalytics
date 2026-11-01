@@ -34,10 +34,20 @@
 //!
 //! # Direction
 //!
-//! One-way: desktop publishes, phone imports. The desktop is where plans are
-//! created and where the COROS push happens, so making it the single writer
-//! removes merge conflicts entirely. `rev` (the plan's creation timestamp)
-//! guards against a pull overwriting a newer local plan.
+//! Both directions, last-edit-wins. Either device may edit the plan — move a
+//! session, skip it, mark it done against a run — and the edit is stamped with
+//! a revision (the wall-clock second of the change, kept monotonic per device).
+//! Every device pushes what it holds and pulls anything newer, so the gist is
+//! the single point of truth the two devices converge on. Two devices edited
+//! between syncs is resolved by revision: the later edit stands, which for one
+//! runner's own two devices is the honest rule — the alternative is a merge
+//! the runner would only ever resolve by picking one side anyway.
+//!
+//! Completion travels too, but not as a bare `done` flag: a completion is a
+//! pair (planned session, activity), and the activity is identified by the
+//! *provider's* record id rather than this device's row id. Both devices sync
+//! the same watch independently and land on the same record ids, so a session
+//! marked done on the phone resolves to the same run on the desktop.
 
 use std::time::Duration;
 
@@ -50,7 +60,7 @@ use crate::types::{PlanWorkout, TrainingPlan};
 
 /// Version of the on-disk/on-gist wire format. Bump when the DTO shape changes
 /// in a way older apps cannot read.
-const WIRE_VERSION: u32 = 1;
+const WIRE_VERSION: u32 = 2;
 /// Domain separation for both the sync code and the encryption key, so neither
 /// can collide with any other hash or KDF this app might do with the same `sub`.
 const PROTOCOL: &[u8] = b"runalytics.plan.sync.v1";
@@ -97,6 +107,21 @@ struct PlanBlob {
     synced_at: i64,
     plan: PlanWire,
     workouts: Vec<WorkoutWire>,
+    /// The publisher's calendar subscription target, so the other device can
+    /// start publishing to the same gist without being told the URLs twice.
+    /// Only carried when the target is a gist — the plan channel authenticates
+    /// with the same GitHub token, so a gist target is the only one the other
+    /// device can adopt from this information alone.
+    #[serde(default)]
+    calendar: Option<CalendarWire>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CalendarWire {
+    pub(crate) upload_url: String,
+    pub(crate) subscription_url: String,
+    pub(crate) username: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -146,9 +171,32 @@ struct WorkoutWire {
     #[serde(default)]
     pace_hi_s_km: Option<i64>,
     /// A skip is a decision the runner made, not something this device can
-    /// derive from its own syncs, so — unlike `done` — it belongs on the wire.
+    /// derive from its own syncs, so it belongs on the wire.
     #[serde(default)]
     status: crate::types::WorkoutStatus,
+    /// Whether the session was marked done. Since the plan channel became
+    /// two-way, a completion is a plan edit like any other: the phone marks a
+    /// session done against a run and the desktop has to see it. A blob from
+    /// the one-way era has no field here, and `false` is the honest reading —
+    /// the importer's own matcher still grades its own synced runs.
+    #[serde(default)]
+    done: bool,
+    /// Which run completed it, named by the provider's record id so the other
+    /// device can resolve it against its own copy of the same watch data.
+    /// `None` when done without a linked activity (a manual tick), which the
+    /// importer still honours as done.
+    #[serde(default)]
+    completion: Option<CompletionWire>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CompletionWire {
+    /// The provider that owns the activity, e.g. `coros`.
+    provider: String,
+    /// That provider's id for the run — identical on every device that synced
+    /// the same watch, which is what makes the pairing portable.
+    record_id: String,
 }
 
 impl PlanWire {
@@ -192,7 +240,7 @@ impl PlanWire {
 }
 
 impl WorkoutWire {
-    fn from_workout(w: &PlanWorkout) -> Self {
+    fn from_workout(w: &PlanWorkout, completion: Option<CompletionWire>) -> Self {
         WorkoutWire {
             id: w.id.clone(),
             plan_id: w.plan_id.clone(),
@@ -205,17 +253,20 @@ impl WorkoutWire {
             pace_lo_s_km: w.pace_lo_s_km,
             pace_hi_s_km: w.pace_hi_s_km,
             status: w.status,
+            done: w.done,
+            completion,
         }
     }
 
-    /// `done` is deliberately not part of the wire format: completion is
-    /// derived locally by matching synced activities, and copying another
-    /// device's flag would fight that matcher. This re-applies *this* device's
-    /// answer for workouts it has already graded.
-    /// `moved_at` is deliberately not on the wire either: it records *when this
+    /// `moved_at` is deliberately not on the wire: it records *when this
     /// device* saw the move, which a pull cannot know. The moved marker reads
     /// the date pair instead, so it survives the trip regardless.
-    fn to_workout(&self, done_here: bool) -> PlanWorkout {
+    ///
+    /// `done` here is the *wire's* answer; the pull ORs it with this device's
+    /// own completions so a session matched locally is never un-ticked by an
+    /// import, and the completion pairing is applied separately once the
+    /// referenced activity is known locally.
+    fn to_workout(&self) -> PlanWorkout {
         PlanWorkout {
             id: self.id.clone(),
             plan_id: self.plan_id.clone(),
@@ -227,7 +278,7 @@ impl WorkoutWire {
             duration_min: self.duration_min,
             pace_lo_s_km: self.pace_lo_s_km,
             pace_hi_s_km: self.pace_hi_s_km,
-            done: done_here,
+            done: self.done,
             status: self.status,
             moved_at: None,
         }
@@ -279,7 +330,7 @@ fn legacy_token_entry() -> Option<keyring_core::Entry> {
 /// that only ever saved it for plan sync is moved across on first read, so the
 /// merge costs the runner nothing — and moving rather than copying keeps
 /// clearing unambiguous, otherwise a deleted token would come back.
-fn stored_token() -> Option<String> {
+pub(crate) fn stored_token() -> Option<String> {
     let shared = token_entry().ok()?.get_password().ok();
     if shared.is_some() {
         return shared;
@@ -618,7 +669,11 @@ pub async fn push(state: &AppState, explicit: bool) -> Result<PlanSync> {
 
 async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
     let mut config = load(&state.data_dir)?;
-    config.can_publish = !mobile();
+    // Both devices write: the phone's edits (a skip, a move, a session marked
+    // done against the morning run) have to reach the gist or the desktop
+    // never sees them. Which copy wins is decided by revision at pull time,
+    // not by which platform pressed the button.
+    config.can_publish = true;
     if !config.enabled {
         if explicit {
             return Err(AppError::Other("Plan sync is switched off".into()));
@@ -642,6 +697,19 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
         return Ok(config);
     };
 
+    // Pair each done session with the run that completed it, named by the
+    // provider's record id so the other device can resolve the same activity.
+    let records = state.store.calendar_completion_records()?;
+    let completion_of = |workout: &PlanWorkout| -> Option<CompletionWire> {
+        records
+            .iter()
+            .find(|(workout_id, _, _)| workout_id == &workout.id)
+            .map(|(_, provider, record_id)| CompletionWire {
+                provider: provider.clone(),
+                record_id: record_id.clone(),
+            })
+    };
+
     let code = sync_code(&sub);
     let client = github_client()?;
     let gist_id = match config.gist_id.clone() {
@@ -651,10 +719,20 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
 
     let blob = PlanBlob {
         v: WIRE_VERSION,
-        rev: plan.created_at.timestamp(),
+        // The plan's own last-edit revision, not its creation time: two
+        // devices decide which copy is newer by comparing when they were last
+        // edited, and creation time cannot express an edit at all.
+        rev: state
+            .store
+            .current_plan_rev()?
+            .unwrap_or_else(|| plan.created_at.timestamp()),
         synced_at: Utc::now().timestamp(),
         plan: PlanWire::from_plan(&plan),
-        workouts: workouts.iter().map(WorkoutWire::from_workout).collect(),
+        workouts: workouts
+            .iter()
+            .map(|w| WorkoutWire::from_workout(w, completion_of(w)))
+            .collect(),
+        calendar: calendar_target(&state.data_dir),
     };
     let sealed = seal(&sub, &serde_json::to_vec(&blob)?)?;
 
@@ -665,6 +743,24 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
     config.last_pushed = Some(Utc::now().to_rfc3339());
     config.last_error = None;
     Ok(config)
+}
+
+/// This device's calendar publishing target, when it is a gist. Carried on
+/// the plan blob so a second device can adopt the same subscription without
+/// being configured by hand; a WebDAV target is deliberately not carried,
+/// because the plan channel's GitHub token cannot write to it.
+fn calendar_target(directory: &std::path::Path) -> Option<CalendarWire> {
+    let publishing = crate::calendar_publish::load(directory).ok()?;
+    if !publishing.enabled || publishing.upload_url.is_empty() {
+        return None;
+    }
+    let upload = reqwest::Url::parse(&publishing.upload_url).ok()?;
+    let segments: Vec<_> = upload.path_segments()?.collect();
+    matches!(segments.as_slice(), [.., "gists", id] if !id.is_empty()).then(|| CalendarWire {
+        upload_url: publishing.upload_url,
+        subscription_url: publishing.subscription_url,
+        username: publishing.username,
+    })
 }
 
 /// Outcome of a pull, so the UI can say what actually happened rather than
@@ -720,6 +816,10 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     }
 
     let incoming = blob.plan.to_plan();
+    let local_rev = state
+        .store
+        .current_plan_rev()?
+        .unwrap_or(i64::MIN);
     if let Some((existing, _)) = state.store.current_plan()? {
         if existing.id != incoming.id && !force {
             config.last_error = None;
@@ -733,9 +833,12 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
                 },
             ));
         }
-        // Same plan arriving again is a refresh, not a downgrade — but an older
-        // *different* plan must never overwrite a newer one.
-        if existing.id == incoming.id && blob.rev < config.installed_rev.unwrap_or(i64::MIN) {
+        // Same plan arriving again is only worth installing when it is a
+        // strictly newer revision — the last-edit stamp, not the creation
+        // time, is what says so. An equal or older copy is the channel
+        // holding what we already have (or published ourselves), and
+        // re-installing it would only churn.
+        if existing.id == incoming.id && blob.rev <= local_rev {
             return Ok((
                 config,
                 PullOutcome {
@@ -748,8 +851,10 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
         }
     }
 
-    // Keep this device's own completion answers for workouts it has already
-    // matched to a run.
+    // A session counts as done if either copy says so: the wire's answer, or
+    // this device's own completion the matcher produced from its own sync.
+    // Un-ticking a session the runner has already run would be worse than any
+    // conflict the revision rule could produce.
     let done_here: std::collections::HashSet<String> = state
         .store
         .current_plan()?
@@ -758,10 +863,65 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     let workouts: Vec<PlanWorkout> = blob
         .workouts
         .iter()
-        .map(|w| w.to_workout(done_here.contains(&w.id)))
+        .map(|w| {
+            let mut workout = w.to_workout();
+            workout.done = workout.done || done_here.contains(&w.id);
+            workout
+        })
         .collect();
 
-    state.store.replace_plan(&incoming, &workouts)?;
+    state.store.replace_plan(&incoming, &workouts, blob.rev)?;
+
+    // Re-attach the completions that travelled with the plan. Each names its
+    // run by the provider's record id, which both devices hold after syncing
+    // the same watch; a run the phone has not synced here yet is skipped and
+    // picked up by a later pull once it has (the completion stays on the
+    // wire until both ends agree). Workouts already completed locally are
+    // left exactly as they are — re-inserting would fight the UNIQUE
+    // constraint and re-stamping would churn the revision for nothing.
+    let already: std::collections::HashSet<String> = state
+        .store
+        .calendar_completions()?
+        .into_iter()
+        .map(|(workout_id, _, _)| workout_id)
+        .collect();
+    for wire in &blob.workouts {
+        let Some(completion) = wire.completion.as_ref() else {
+            continue;
+        };
+        if already.contains(&wire.id) {
+            continue;
+        }
+        let Ok(Some(activity_id)) = state
+            .store
+            .activity_id_by_record(&completion.provider, &completion.record_id)
+        else {
+            continue;
+        };
+        let Ok(workouts) = state.store.plan_workouts(&incoming.id) else {
+            continue;
+        };
+        let Some(workout) = workouts.iter().find(|w| w.id == wire.id) else {
+            continue;
+        };
+        let notes = crate::calendar::workout_notes(workout, &incoming);
+        if let Err(error) = state
+            .store
+            .complete_calendar_workout(&wire.id, activity_id, &notes)
+        {
+            eprintln!("[plan-sync] could not attach completion for {}: {error}", wire.id);
+        }
+    }
+
+    // A device that never configured calendar publishing can still take part:
+    // if the publisher's subscription target is a gist — writable with the
+    // same GitHub token this pull already authenticated with — adopt it, so
+    // this device's syncs keep the same subscription fresh without being
+    // typed into twice.
+    if let Some(calendar) = blob.calendar.as_ref() {
+        crate::calendar_publish::adopt_gist_target(state, calendar).await;
+    }
+
     config.installed_rev = Some(blob.rev);
     config.last_pulled = Some(Utc::now().to_rfc3339());
     config.last_error = None;
@@ -804,20 +964,21 @@ pub struct RemotePlan {
 }
 
 /// How the published plan relates to *this* device, phrased so each surface
-/// can say it in its own voice: the writer reads `UpToDate` as "published",
-/// the importer as "up to date".
+/// can say it in its own voice. Both ends read the same verdicts: whichever
+/// device holds the newer revision publishes, and whichever holds the older
+/// one imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PillStatus {
     /// The channel holds exactly what this device has.
     UpToDate,
-    /// Desktop only: the channel holds a different plan than the one here, so
-    /// the current one has not been published (or the last push failed).
+    /// This device holds the newer copy, so what is here has not been
+    /// published yet (or the last push failed).
     Unpublished,
     /// The channel holds a newer revision of this same plan to import.
     UpdateAvailable,
-    /// The channel holds a different plan than the one here; importing it
-    /// replaces the local plan, which needs a confirmation.
+    /// The channel holds a newer *different* plan than the one here;
+    /// importing it replaces the local plan, which needs a confirmation.
     OtherPlan,
     /// Nothing is installed here and the channel has a plan waiting.
     ImportAvailable,
@@ -825,41 +986,32 @@ pub enum PillStatus {
 
 /// The relation between the published blob and this device's plan, computed
 /// from the same revision rule [`pull`] enforces — the pill must never
-/// promise an import that the monotonic guard would then refuse.
+/// promise an import that the monotonic guard would then refuse. One rule
+/// for both devices now that both can write: the higher revision is the
+/// current copy, and the other end's action is to take it.
 fn pill_status(
-    is_mobile: bool,
     local: Option<(&TrainingPlan, i64)>,
-    installed_rev: Option<i64>,
     blob_plan_id: &str,
     blob_rev: i64,
 ) -> PillStatus {
-    let Some((plan, created_rev)) = local else {
+    let Some((plan, local_rev)) = local else {
         return PillStatus::ImportAvailable;
     };
-    if plan.id != blob_plan_id {
-        // The writer's stale remote and the importer's foreign plan are the
-        // same fact seen from opposite ends; only the importer can act on it.
-        return if is_mobile {
-            PillStatus::OtherPlan
-        } else {
-            PillStatus::Unpublished
-        };
-    }
-    if is_mobile {
-        // Same plan, same revision is the steady state after an import; only
-        // a strictly higher revision is news, exactly as in `pull`.
-        if blob_rev > installed_rev.unwrap_or(i64::MIN) {
+    if blob_rev > local_rev {
+        // The channel is ahead: same plan means an update to take, a
+        // different plan means the other device moved on to something else.
+        return if plan.id == blob_plan_id {
             PillStatus::UpdateAvailable
         } else {
-            PillStatus::UpToDate
-        }
-    } else if blob_rev == created_rev {
-        // The desktop stamps `rev` from the plan's own creation time, so an
-        // equal revision means the remote is byte-for-byte this plan.
-        PillStatus::UpToDate
-    } else {
-        PillStatus::Unpublished
+            PillStatus::OtherPlan
+        };
     }
+    if plan.id != blob_plan_id || blob_rev < local_rev {
+        // Either a different (older) plan is all the channel has, or ours is
+        // simply not published yet. Both read as "publish this one".
+        return PillStatus::Unpublished;
+    }
+    PillStatus::UpToDate
 }
 
 /// Fetch, decrypt and *report* the published plan without installing it.
@@ -892,39 +1044,32 @@ pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
         return Ok(None);
     }
     let current = state.store.current_plan()?;
-    let local = current
-        .as_ref()
-        .map(|(plan, _)| (plan, plan.created_at.timestamp()));
+    let local_rev = state
+        .store
+        .current_plan_rev()?
+        .unwrap_or_else(|| current.as_ref().map_or(0, |(plan, _)| plan.created_at.timestamp()));
+    let local = current.as_ref().map(|(plan, _)| (plan, local_rev));
     Ok(Some(RemotePlan {
-        status: pill_status(
-            mobile(),
-            local,
-            config.installed_rev,
-            &blob.plan.id,
-            blob.rev,
-        ),
+        status: pill_status(local, &blob.plan.id, blob.rev),
         plan_name: plan_summary(&blob.plan.to_plan()),
         workouts: blob.workouts.len(),
         synced_at: blob.synced_at,
     }))
 }
 
-/// Called after a sync completes on mobile: if this device has no plan but a
-/// sync channel is configured, fetch the one the desktop published.
-///
-/// This is what makes the phone stop showing "create a plan" when the runner
-/// already has one. Only mobile pulls — the desktop is the writer, and letting
-/// it pull would race with its own edits.
-pub async fn pull_if_missing(state: &AppState) {
-    if !mobile() {
-        return;
-    }
+/// Called on every device after a sync completes: take the channel's copy if
+/// it is newer than what is here. Both directions now — the phone's edits
+/// reach the desktop this way, and the desktop's reach the phone — and the
+/// guards inside [`pull`] decide: an equal or older revision is a no-op, a
+/// *different* newer plan is reported as a conflict rather than installed, so
+/// the automatic path can never replace a plan the runner made locally.
+pub async fn pull_if_newer(state: &AppState) {
     let config = load(&state.data_dir).unwrap_or_default();
-    if !config.enabled || state.store.current_plan().map(|p| p.is_some()).unwrap_or(true) {
+    if !config.enabled {
         return;
     }
     match pull(state, false).await {
-        Ok((updated, outcome)) => {
+        Ok((_, outcome)) => {
             if outcome.installed {
                 // The plan view is gated on having a plan, so say what landed.
                 eprintln!(
@@ -932,7 +1077,6 @@ pub async fn pull_if_missing(state: &AppState) {
                     outcome.workouts, outcome.plan_name
                 );
             }
-            let _ = save(&state.data_dir, &updated);
         }
         Err(error) => eprintln!("[plan-sync] automatic pull failed: {error}"),
     }
@@ -954,7 +1098,9 @@ pub struct PlanSyncStatus {
 
 pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
     let mut config = load(&state.data_dir)?;
-    config.can_publish = !mobile();
+    // Both devices publish and both pull; the field stays on the shape
+    // because the UI still reads it, but the platform no longer gates it.
+    config.can_publish = true;
     config.has_token = stored_token().is_some();
     let sub = account_id();
     Ok(PlanSyncStatus {
@@ -969,7 +1115,7 @@ pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
 pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) -> Result<PlanSyncStatus> {
     let mut config = load(&state.data_dir)?;
     config.enabled = patch.enabled;
-    config.can_publish = !mobile();
+    config.can_publish = true;
     // A token change invalidates a discovered gist: the new account may have a
     // different channel, and re-discovery is cheap.
     let token_changed = token.is_some();
@@ -1004,10 +1150,6 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
     config.last_error = None;
     save(&state.data_dir, &config)?;
     status(state)
-}
-
-fn mobile() -> bool {
-    cfg!(mobile)
 }
 
 // ---- base64url -------------------------------------------------------------
@@ -1112,7 +1254,10 @@ mod tests {
                 pace_lo_s_km: Some(245),
                 pace_hi_s_km: Some(252),
                 status: crate::types::WorkoutStatus::Planned,
+                done: false,
+                completion: None,
             }],
+            calendar: None,
         }
     }
 
@@ -1136,23 +1281,18 @@ mod tests {
     }
 
     #[test]
-    fn pill_reports_the_writer_as_up_to_date_only_at_its_own_revision() {
+    fn pill_reports_up_to_date_only_when_the_channel_matches_our_revision() {
         let plan = shipped_plan();
-        // The desktop stamps rev from the plan's creation time, so an equal
-        // revision is the published copy of this very plan.
+        // Same plan, same revision: the channel holds exactly what is here.
         assert_eq!(
-            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_700_000_000),
+            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_700_000_000),
             PillStatus::UpToDate
         );
-        // Anything else on the channel means what is here has not been
-        // published — including an *older* remote, which the writer must not
-        // be told to import.
+        // Ours is newer than the channel's: what is here is not published
+        // yet — including when the channel holds an *older* revision of the
+        // same plan, which the newer device must not be told to import.
         assert_eq!(
-            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_699_000_000),
-            PillStatus::Unpublished
-        );
-        assert_eq!(
-            pill_status(false, Some((&plan, 1_700_000_000)), None, "plan-1", 1_700_000_500),
+            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_699_000_000),
             PillStatus::Unpublished
         );
     }
@@ -1160,39 +1300,17 @@ mod tests {
     #[test]
     fn pill_only_offers_an_import_for_a_strictly_newer_revision() {
         let plan = shipped_plan();
-        // The steady state after an import: same plan, revision we installed.
+        // A newer revision of the same plan is the update the pill is for —
+        // on either device, since either may hold the older copy.
         assert_eq!(
-            pill_status(
-                true,
-                Some((&plan, 1_699_000_000)),
-                Some(1_700_000_000),
-                "plan-1",
-                1_700_000_000
-            ),
-            PillStatus::UpToDate
-        );
-        // A newer revision of the same plan is the update the pill is for.
-        assert_eq!(
-            pill_status(
-                true,
-                Some((&plan, 1_699_000_000)),
-                Some(1_700_000_000),
-                "plan-1",
-                1_700_000_001
-            ),
+            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_700_000_001),
             PillStatus::UpdateAvailable
         );
-        // An older remote must never be advertised — pull would refuse it, and
-        // a pill that promises a revert is worse than no pill.
+        // An older remote is never an update; the honest reading is that ours
+        // is the copy that still needs publishing.
         assert_eq!(
-            pill_status(
-                true,
-                Some((&plan, 1_699_000_000)),
-                Some(1_700_000_000),
-                "plan-1",
-                1_699_999_999
-            ),
-            PillStatus::UpToDate
+            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_699_999_999),
+            PillStatus::Unpublished
         );
     }
 
@@ -1201,30 +1319,19 @@ mod tests {
         let plan = shipped_plan();
         // Nothing installed here: the channel has something to take.
         assert_eq!(
-            pill_status(true, None, None, "plan-1", 1_700_000_000),
+            pill_status(None, "plan-1", 1_700_000_000),
             PillStatus::ImportAvailable
         );
-        // A different plan, seen by the importer: importing replaces it.
+        // A different plan on the channel, newer than ours: importing it
+        // replaces the local plan, which needs a confirmation.
         assert_eq!(
-            pill_status(
-                true,
-                Some((&plan, 1_700_000_000)),
-                Some(1_700_000_000),
-                "plan-2",
-                1_700_000_000
-            ),
+            pill_status(Some((&plan, 1_700_000_000)), "plan-2", 1_700_000_001),
             PillStatus::OtherPlan
         );
-        // The same fact on the writer reads as "yours is not published",
-        // because the other plan is somebody else's channel content.
+        // A different plan that is *older* than ours: ours is the current
+        // copy, so the verdict is to publish it over the stale one.
         assert_eq!(
-            pill_status(
-                false,
-                Some((&plan, 1_700_000_000)),
-                None,
-                "plan-2",
-                1_700_000_000
-            ),
+            pill_status(Some((&plan, 1_700_000_000)), "plan-2", 1_699_999_999),
             PillStatus::Unpublished
         );
     }

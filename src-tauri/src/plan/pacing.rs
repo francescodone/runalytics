@@ -869,6 +869,7 @@ mod tests {
                 lat: 48.13 + dist / 111_320.0,
                 lon: 11.58,
                 hr: None,
+                alt: None,
             });
             dist = next;
         }
@@ -900,14 +901,14 @@ mod tests {
         let start = workout.date.and_hms_opt(8, 0, 0).unwrap().and_utc().timestamp();
         let mut elapsed = 0.0;
         let mut distance = 0.0;
-        let mut points = vec![crate::fit::TrackPoint { ts:start, lat:48.13, lon:11.58, hr:None }];
+        let mut points = vec![crate::fit::TrackPoint { ts:start, lat:48.13, lon:11.58, hr:None, alt:None }];
         let mut leg = |meters: f64, pace: f64| {
             let mut remaining = meters;
             while remaining > 0.01 {
                 let take = remaining.min(20.0);
                 elapsed += take * pace / 1000.0;
                 distance += take;
-                points.push(crate::fit::TrackPoint { ts:start + elapsed.round() as i64, lat:48.13 + distance / 111_320.0, lon:11.58, hr:None });
+                points.push(crate::fit::TrackPoint { ts:start + elapsed.round() as i64, lat:48.13 + distance / 111_320.0, lon:11.58, hr:None, alt:None });
                 remaining -= take;
             }
         };

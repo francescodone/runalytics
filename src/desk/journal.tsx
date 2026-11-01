@@ -1,9 +1,9 @@
-import { Fragment, lazy, Suspense, useDeferredValue, useState, type KeyboardEvent, type ReactNode } from "react";
-import { IconArrowUpRight, IconBarbell, IconBike, IconRun, IconSearch } from "@tabler/icons-react";
+import { lazy, Suspense, useDeferredValue, useState, type KeyboardEvent, type ReactNode } from "react";
+import { IconArrowUpRight, IconBarbell, IconBike, IconFilter, IconRun, IconSearch } from "@tabler/icons-react";
 import { tauri, fmtDateTime, fmtDuration, fmtKm, fmtPace, ymdLocal } from "../lib/ipc";
-import type { Activity, LapSlice, RunScore, TimeRange } from "../lib/types";
+import type { Activity, LapSlice, MatchedSession, RunScore, TimeRange } from "../lib/types";
 import { isBikeSport, isReadableSport, isStrengthSport } from "../lib/sport";
-import { navigate, useRemote, useRoute } from "./data";
+import { capitalizeFirst, cleanTitle, navigate, useRemote, useRoute } from "./data";
 import { Button, Empty, ErrorNotice, Inspector, Loading, Metric } from "./ui";
 import { Change, Presence, SelectionGroup, SelectionMarker } from "./interaction";
 
@@ -46,6 +46,8 @@ export function Journal() {
   const route = useRoute();
   const activities = useRemote(tauri.allActivities);
   const scores = useRemote(tauri.runScores);
+  const matches = useRemote(tauri.matchedSessions);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sport, setSport] = useState("");
   const [provider, setProvider] = useState("");
@@ -59,30 +61,34 @@ export function Journal() {
   // A sport label with no letters in it is a raw provider code (COROS answers
   // some record lists with "1"/"2"/"10"); it names no sport, so it is not a
   // journal entry.
+  // A run the plan can point at is named after the session it ran — the same
+  // title the calendar and roadmap show — so the journal reads as training,
+  // not as nine rows called "Run". Everything else keeps its sport, with the
+  // first letter capitalised the way every other label in the desk is.
+  const matchOf = (activity: Activity) => matches.data?.find(match => match.activityId === activity.id);
+  const nameOf = (activity: Activity) => {
+    const match = matchOf(activity);
+    return match ? cleanTitle(match.title) : capitalizeFirst(activity.sport);
+  };
   const filtered = (activities.data ?? []).filter(activity => isReadableSport(activity.sport)).filter(activity => {
     const date = ymdLocal(new Date(activity.startTime));
-    return (!sport || activity.sport === sport) && (!provider || activity.provider === provider) && (!from || date >= from) && (!until || date <= until) && (!search || `${activity.sport} ${activity.provider} ${fmtDateTime(activity.startTime)} ${fmtKm(activity.distanceM)}`.toLowerCase().includes(search));
+    return (!sport || activity.sport === sport) && (!provider || activity.provider === provider) && (!from || date >= from) && (!until || date <= until) && (!search || `${nameOf(activity)} ${activity.sport} ${activity.provider} ${fmtDateTime(activity.startTime)} ${fmtKm(activity.distanceM)}`.toLowerCase().includes(search));
   }).sort((first, second) => second.startTime.localeCompare(first.startTime));
+  const activeFilters = [sport, provider, from, until].filter(Boolean).length + (query.trim() ? 1 : 0);
   return <>
-    <div className="desk-toolbar"><SelectionGroup><nav className="horizon-switch" aria-label="Journal view"><a href="#journal" aria-current={route.section !== "map" ? "page" : undefined}>{route.section !== "map" && <SelectionMarker />}Activities</a><a href="#journal/map" aria-current={route.section === "map" ? "page" : undefined}>{route.section === "map" && <SelectionMarker />}Training map</a></nav></SelectionGroup></div>
-    {route.section === "map" ? <TrainingMap /> : <>
-    <div className="journal-tools"><label className="search-field"><IconSearch size={18} aria-hidden="true" /><input type="search" aria-label="Search activities" value={query} placeholder="Search your training" onChange={event => setQuery(event.target.value)} /></label><label>Sport<select value={sport} onChange={event => setSport(event.target.value)}><option value="">All sports</option>{[...new Set((activities.data ?? []).filter(activity => isReadableSport(activity.sport)).map(activity => activity.sport))].map(value => <option key={value}>{value}</option>)}</select></label><label>Source<select value={provider} onChange={event => setProvider(event.target.value)}><option value="">All sources</option><option value="coros">COROS</option><option value="garmin">Garmin</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>Until<input type="date" value={until} onChange={event => setUntil(event.target.value)} /></label><Button onClick={() => { setQuery(""); setSport(""); setProvider(""); setFrom(""); setUntil(""); }}>Reset filters</Button></div>
+    <div className="desk-toolbar"><div className="journal-toolbar"><Button className="filters-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)}><IconFilter size={18} aria-hidden="true" />{filtersOpen ? "Hide filters" : "Filters"}{activeFilters > 0 && <span className="filter-count">{activeFilters}</span>}</Button><span className="muted journal-count">{filtered.length} {filtered.length === 1 ? "activity" : "activities"}</span></div></div>
+    <Presence>{filtersOpen && <div className="journal-tools" key="filters"><label className="search-field"><IconSearch size={18} aria-hidden="true" /><input type="search" aria-label="Search activities" value={query} placeholder="Search your training" onChange={event => setQuery(event.target.value)} /></label><label>Sport<select value={sport} onChange={event => setSport(event.target.value)}><option value="">All sports</option>{[...new Set((activities.data ?? []).filter(activity => isReadableSport(activity.sport)).map(activity => activity.sport))].map(value => <option key={value}>{value}</option>)}</select></label><label>Source<select value={provider} onChange={event => setProvider(event.target.value)}><option value="">All sources</option><option value="coros">COROS</option><option value="garmin">Garmin</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>Until<input type="date" value={until} onChange={event => setUntil(event.target.value)} /></label><Button onClick={() => { setQuery(""); setSport(""); setProvider(""); setFrom(""); setUntil(""); }}>Reset filters</Button></div>}</Presence>
     <ErrorNotice error={activities.error} retry={activities.retry} />
     {activities.loading ? <Loading label="Loading training history" /> : <div className={`journal-workspace ${selected ? "has-inspector" : ""}`}>
-      <section className="activity-library" aria-label="Activity history" aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span aria-live="polite">{filtered.length} activities</span><span>Most recent first</span></div>
+      <section className="activity-library" aria-label="Activity history" aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>Most recent first</span></div>
         <Change identity={`${search}:${sport}:${provider}:${from}:${until}`}>
-        {!filtered.length && <Empty title={activities.data?.length ? "No matching activities" : "Your training story starts here"}>{activities.data?.length ? "Try another date or clear the filters." : "Sync your watch to bring your completed activities into the journal."}</Empty>}
-        {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={() => navigate("journal", String(activity.id))}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{activity.sport}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
+        {!filtered.length && <Empty title={activities.data?.length ? "No matching activities" : "Your training story starts here"}>{activities.data?.length ? "Try another date or clear the filters." : "Sync your watch to bring your completed activities here."}</Empty>}
+        {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={() => navigate("journal", String(activity.id))}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong>{matchOf(activity) && <small className="activity-purpose">{matchOf(activity)?.purpose}</small>}<small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
         </Change>
       </section>
-      <Presence>{selected && <Inspector key="review" title="Activity review" onClose={() => navigate("journal")}><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Inspector>}</Presence>
-    </div>}</>}
+      <Presence>{selected && <Inspector key="review" title="Activity review" onClose={() => navigate("journal")}><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Inspector>}</Presence>
+    </div>}
   </>;
-}
-
-function TrainingMap() {
-  const data = useRemote(() => Promise.all([tauri.heatPoints(), tauri.getSettings()]));
-  return <section className="training-map"><div className="section-heading"><h2>Where you train</h2><span className="muted">All recorded routes</span></div><ErrorNotice error={data.error} retry={data.retry} />{data.loading ? <Loading label="Loading route history" /> : data.data?.[0].length ? <Suspense fallback={<Loading label="Loading training map" />}><RouteMap track={[]} heat={data.data[0]} settings={data.data[1]} /></Suspense> : <Empty title="No routes recorded yet">GPS activities appear here after syncing.</Empty>}</section>;
 }
 
 /// Below this width a lap column is too thin to aim at, so the chart is widened
@@ -153,40 +159,29 @@ function LapExecution({ laps, prescribed }: { laps: LapSlice[]; prescribed: bool
         </div>
         <p className="lap-pace-selection" aria-live="polite"><strong>Lap {selected.index}: {selected.label}</strong><span>{paceLabel(selected)} / Target: {targetLabel(selected)}</span><span>{resultLabel(selected)}</span></p>
       </figure>}
-      <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Recorded laps"><table className={`lap-execution-table${hasTargets ? " has-targets" : ""}`}><caption className="sr-only">Recorded laps and prescribed pace</caption><thead>{hasTargets ? <tr><th>Lap</th><th>Distance</th><th>Time</th><th>Pace</th></tr> : <tr><th>Lap</th><th>Distance</th><th>Time</th><th>Avg. pace</th><th>Target</th><th>Result</th></tr>}</thead><tbody>{laps.map(lap => {
-        // A graded lap gets a row for what it ran and a row for what was asked,
-        // so the two are never stacked inside one cell; an ungraded lap has no
-        // range to give a second row, so it stays a single row.
-        if (hasTargets) {
-          const isSelected = selected.index === lap.index;
-          return <Fragment key={lap.index}>
-            <tr className="lap-avg-row" data-selected={isSelected ? "true" : undefined}>
-              <th scope="row" rowSpan={2}><button type="button" className="lap-row-button" title={lap.label} aria-label={`Lap ${lap.index}: ${lap.label}`} aria-pressed={isSelected} onClick={() => setSelectedIndex(lap.index)}>{lap.index}</button></th>
-              <td rowSpan={2}>{fmtKm(lap.meters)}</td><td rowSpan={2}>{fmtDuration(lap.durationS)}</td>
-              <td><span className="lap-row-label">Avg</span><span className="lap-row-pace">{paceLabel(lap)}</span></td>
-            </tr>
-            <tr className="lap-range-row" data-selected={isSelected ? "true" : undefined}>
-              <td><span className="lap-row-label">Target</span><span className={`lap-row-target${lap.verdict === "in" && validPace(lap.avgPaceSKm) ? " on-target" : ""}`}>{targetLabel(lap)}</span><span className="lap-row-result">{resultLabel(lap)}</span></td>
-            </tr>
-          </Fragment>;
-        }
-        return <tr key={lap.index}>
-          <th scope="row"><span className="lap-row-index">{lap.index}</span>{lap.label}</th>
+      <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Recorded laps"><table className="lap-execution-table"><caption className="sr-only">Recorded laps and prescribed pace</caption><thead><tr><th>Lap</th><th>Distance</th><th>Time</th><th>Pace</th><th>Target pace</th></tr></thead><tbody>{laps.map(lap => {
+        // One row per lap: what it ran and what was asked sit side by side,
+        // so a lap reads as one line instead of a pair to reconcile. The
+        // verdict the old Result column spelled out stays available as the
+        // target cell's tooltip and in the selection line under the chart.
+        const isSelected = selected.index === lap.index;
+        return <tr key={lap.index} data-selected={isSelected ? "true" : undefined}>
+          <th scope="row"><button type="button" className="lap-row-button" title={lap.label} aria-label={`Lap ${lap.index}: ${lap.label}`} aria-pressed={isSelected} onClick={() => setSelectedIndex(lap.index)}>{lap.index}</button></th>
           <td>{fmtKm(lap.meters)}</td><td>{fmtDuration(lap.durationS)}</td>
           <td><span className="lap-row-pace">{paceLabel(lap)}</span></td>
-          <td>{targetLabel(lap)}</td><td>{resultLabel(lap)}</td>
+          <td><span className={`lap-row-target${targetFor(lap) && lap.verdict === "in" && validPace(lap.avgPaceSKm) ? " on-target" : ""}`} title={resultLabel(lap)}>{targetLabel(lap)}</span></td>
         </tr>;
       })}</tbody></table></div>
     </>}
   </section>;
 }
 
-function ActivityReview({ activity, score, tab, onTab }: { activity: Activity; score?: RunScore; tab: ReviewTab; onTab: (tab: ReviewTab) => void }) {
+function ActivityReview({ activity, score, match, tab, onTab }: { activity: Activity; score?: RunScore; match?: MatchedSession; tab: ReviewTab; onTab: (tab: ReviewTab) => void }) {
   const [range, setRange] = useState<TimeRange>("7d");
   const review = useRemote(() => tauri.activityReview(activity.id), [activity.id]);
   const detail = useRemote(() => tauri.activityDetail(activity.id, range), [activity.id, range]);
   const settings = useRemote(tauri.getSettings);
-  return <article className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{activity.sport}</h2></div>
+  return <article className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{match ? cleanTitle(match.title) : capitalizeFirst(activity.sport)}</h2></div>
     <ReviewTabs activityId={activity.id} tab={tab} onSelect={onTab} />
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label="Loading recorded route and splits" /> : review.data && <Change identity={tab}>
@@ -196,8 +191,13 @@ function ActivityReview({ activity, score, tab, onTab }: { activity: Activity; s
         {score && <section className="review-section"><h3>Recorded session impact</h3><dl className="metrics-line"><Metric label="Training load" value={score.load ?? "Not recorded"} /><Metric label="Risk at completion" value={score.risk} unit="/100" /><Metric label="Risk change" value={`${score.riskDelta > 0 ? "+" : ""}${score.riskDelta.toFixed(1)}`} unit="points" /></dl></section>}
       </ReviewPanel>}
       {tab === "execution" && <ReviewPanel activityId={activity.id} tab="execution"><LapExecution key={activity.id} laps={review.data.laps} prescribed={review.data.prescribed} /></ReviewPanel>}
-      {tab === "splits" && <ReviewPanel activityId={activity.id} tab="splits"><section className="review-section"><h3>Kilometre splits</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Kilometre splits"><table><caption className="sr-only">Kilometre splits, with pace change compared with the previous kilometre</caption><thead><tr><th>Km</th><th>Pace /km</th><th>vs previous km</th><th>HR</th></tr></thead><tbody>{review.data.splits.map(split => <tr key={split.km}><th scope="row">{split.km}{split.meters < 990 ? ` (${Math.round(split.meters)} m)` : ""}</th><td>{fmtPace(split.avgPaceSKm)}</td><td>{split.deltaPrevSKm == null ? "Not available" : `${split.deltaPrevSKm > 0 ? "+" : ""}${Math.round(split.deltaPrevSKm)} s`}</td><td>{split.avgHr ?? "Not recorded"}</td></tr>)}</tbody></table></div></section></ReviewPanel>}
-      {tab === "context" && <ReviewPanel activityId={activity.id} tab="context"><section className="review-section"><div className="section-heading"><h3>Training context</h3><label><span className="sr-only">Context range</span><select value={range} onChange={event => setRange(event.target.value as TimeRange)}><option value="1d">Day</option><option value="7d">Week</option><option value="1mo">Month</option></select></label></div><ErrorNotice error={detail.error} retry={detail.retry} />{detail.data && <><dl className="metrics-line"><Metric label="Load ratio" value={detail.data.load?.ratio?.toFixed(2) ?? "Not available"} /><Metric label="Injury risk" value={detail.data.injuryRisk} unit="/100" /><Metric label="VO2 max" value={detail.data.fitness?.vo2max?.toFixed(1) ?? "Not available"} /></dl>{detail.data.riskFactors.map(factor => <p key={factor.label}><strong>{factor.label}</strong><br />{factor.detail}</p>)}</>}</section></ReviewPanel>}
+      {tab === "splits" && (() => {
+        const splits = review.data.splits;
+        const paces = splits.map(split => split.avgPaceSKm).filter((pace): pace is number => pace != null);
+        const fastest = paces.length ? Math.min(...paces) : null;
+        return <ReviewPanel activityId={activity.id} tab="splits"><section className="review-section"><h3>Kilometre splits</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Kilometre splits"><table className="splits-chart"><caption className="sr-only">Kilometre splits; each bar is that kilometre's pace measured against the fastest kilometre of the run</caption><thead><tr><th>Km</th><th>Pace /km</th><th><span className="sr-only">Relative pace</span></th><th>Elevation</th><th>HR</th></tr></thead><tbody>{splits.map(split => <tr key={split.km}><th scope="row">{split.km}{split.meters < 990 ? ` (${Math.round(split.meters)} m)` : ""}</th><td>{fmtPace(split.avgPaceSKm)}</td><td className="split-bar">{split.avgPaceSKm != null && fastest != null && <span aria-hidden="true" style={{ width: `${Math.round(fastest / split.avgPaceSKm * 100)}%` }} />}</td><td>{split.elevationGainM == null ? "Not recorded" : `+${Math.round(split.elevationGainM)} m`}</td><td>{split.avgHr ?? "Not recorded"}</td></tr>)}</tbody></table></div></section></ReviewPanel>;
+      })()}
+      {tab === "context" && <ReviewPanel activityId={activity.id} tab="context"><section className="review-section"><div className="section-heading"><h3>Training context</h3><label><span className="sr-only">Context range</span><select value={range} onChange={event => setRange(event.target.value as TimeRange)}><option value="1d">Day</option><option value="7d">Week</option><option value="1mo">Month</option></select></label></div>{match && <div className="prescribed-session"><h4>Prescribed session</h4>{match.notes.split("\n").filter(line => line.trim() && !line.startsWith("Made with")).map(line => <p key={line}>{line.replace(/^🏃\s*/, "").trim()}</p>)}</div>}<ErrorNotice error={detail.error} retry={detail.retry} />{detail.data && <><dl className="metrics-line"><Metric label="Load ratio" value={detail.data.load?.ratio?.toFixed(2) ?? "Not available"} /><Metric label="Injury risk" value={detail.data.injuryRisk} unit="/100" /><Metric label="VO2 max" value={detail.data.fitness?.vo2max?.toFixed(1) ?? "Not available"} /></dl>{detail.data.riskFactors.map(factor => <p key={factor.label}><strong>{factor.label}</strong><br />{factor.detail}</p>)}</>}</section></ReviewPanel>}
     </Change>}
   </article>;
 }

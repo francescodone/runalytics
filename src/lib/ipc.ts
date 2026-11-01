@@ -8,6 +8,7 @@ import type {
   DashboardPayload,
   HeatPoint,
   LlmStatus,
+  MatchedSession,
   PainEntry,
   PainMessage,
   PacingReport,
@@ -31,6 +32,7 @@ import type {
   TimeRange,
   TrainingPlan,
   WeekDeviation,
+  WeekProgress,
 } from "./types";
 
 /** True when running inside a Tauri webview. */
@@ -92,6 +94,7 @@ export const tauri = {
     call<ActivityReview>("activity_review", { activityId }),
   allActivities: () => call<Activity[]>("all_activities"),
   runScores: () => call<RunScore[]>("run_scores"),
+  matchedSessions: () => call<MatchedSession[]>("matched_sessions"),
   createPlan: (request: PlanRequest) =>
     call<[TrainingPlan, PlanWorkout[]]>("create_plan", { request }),
   planDefaults: () => call<PlanDefaults>("plan_defaults"),
@@ -126,6 +129,9 @@ export const tauri = {
   // sessions before any of them moves.
   weekDeviations: (weekStart: string) =>
     call<WeekDeviation[]>("week_deviations", { weekStart }),
+  /// Per-week planned vs ran mileage of the current plan, oldest week first —
+  /// what lets the roadmap mark weeks done/current/upcoming with real numbers.
+  planWeekProgress: () => call<WeekProgress[]>("plan_week_progress"),
   resetWeek: (weekStart: string) => call<number>("reset_week", { weekStart }),
   setWorkoutSkipped: (workoutId: string, skipped: boolean) =>
     call<void>("set_workout_skipped", { workoutId, skipped }),

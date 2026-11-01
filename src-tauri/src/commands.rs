@@ -145,6 +145,12 @@ pub async fn run_full_sync(
             eprintln!("[calendar] {message}");
         }
     }
+    // Publish whatever this sync produced — a reconciliation that matched a
+    // session, an adaptive softening, a completion imported and re-stamped —
+    // so the other device's next pull sees it. Silent when sync is off, and
+    // idempotent: pushing an unchanged revision is what keeps the channel
+    // honest about who is current.
+    plan_sync::push_if_enabled(state).await;
     state.syncing.store(false, Ordering::SeqCst);
     let _ = app.emit("sync://completed", serde_json::json!({ "ok": out.is_ok() }));
     out
@@ -158,10 +164,11 @@ async fn run_full_sync_inner(
     let p = get_provider(state, provider)?;
     let mut messages = Vec::new();
     let activities_new = p.sync_activities(&state.store, 30).await?;
-    // On the phone the plan is not created, it arrives: fetch the one the
-    // desktop published before reconciling, so the imported workouts are
-    // matched against the activities that have just synced.
-    plan_sync::pull_if_missing(state).await;
+    // Take the channel's newer copy before reconciling, on either device: the
+    // phone's edits reach the desktop this way and the desktop's reach the
+    // phone, and an imported plan's workouts are matched against the
+    // activities that have just synced.
+    plan_sync::pull_if_newer(state).await;
     {
         let _guard = state.calendar_lock.lock().await;
         calendar::reconcile(&state.store)?;
@@ -460,6 +467,45 @@ pub async fn run_scores(state: State<'_, AppState>) -> Result<Vec<RunScore>> {
         .collect())
 }
 
+/// A banked run that matched a plan session, with the session's plan title and
+/// its training description, so the activities list can name the run after the
+/// session it ran and say what that session was for. `purpose` is the one-line
+/// "why" that fits a list row; `notes` is the full session description the
+/// exported calendar event carries, which the review has room to show.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchedSession {
+    pub activity_id: i64,
+    pub title: String,
+    pub purpose: String,
+    pub notes: String,
+}
+
+#[tauri::command]
+pub async fn matched_sessions(state: State<'_, AppState>) -> Result<Vec<MatchedSession>> {
+    let Some((plan, workouts)) = state.store.current_plan()? else {
+        return Ok(Vec::new());
+    };
+    let workout_by_id: std::collections::HashMap<String, PlanWorkout> = workouts
+        .into_iter()
+        .map(|workout| (workout.id.clone(), workout))
+        .collect();
+    Ok(state
+        .store
+        .calendar_completions()?
+        .into_iter()
+        .filter_map(|(workout_id, activity_id, _)| {
+            let workout = workout_by_id.get(&workout_id)?;
+            Some(MatchedSession {
+                activity_id,
+                title: workout.title.clone(),
+                purpose: calendar::workout_purpose(workout, &plan),
+                notes: calendar::workout_notes(workout, &plan),
+            })
+        })
+        .collect())
+}
+
 #[tauri::command]
 pub async fn create_plan(
     state: State<'_, AppState>,
@@ -744,6 +790,9 @@ pub async fn match_calendar_activity(
         }
     }
     calendar_publish::refresh(&state).await?;
+    // The pairing is a plan edit like any other: the other device has to see
+    // that this session is done, and against which run.
+    plan_sync::push_if_enabled(&state).await;
     Ok(())
 }
 
@@ -804,6 +853,42 @@ pub struct WeekDeviation {
     /// Restoring this one would land it on today, which is the case a runner
     /// most wants to know before agreeing: it changes what they are doing now.
     pub is_today: bool,
+    /// The reset moves this session's day back onto its generated day.
+    pub restores_date: bool,
+    /// A benchmark overwrote what the plan generated here, and the reset puts
+    /// the planned session back.
+    pub restores_content: bool,
+    /// The benchmark created this session on a rest day, so putting the plan
+    /// back removes it rather than rewriting it.
+    pub removes: bool,
+}
+
+/// One week of the current plan: Monday, metres prescribed, metres banked.
+/// The plan roadmap marks each week from these numbers rather than from the
+/// sessions' `done` flags alone, so "done" means the mileage actually landed.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekProgress {
+    pub week_start: String,
+    pub planned_m: f64,
+    pub ran_m: f64,
+}
+
+/// Per-week planned vs ran mileage of the current plan, oldest week first.
+#[tauri::command]
+pub async fn plan_week_progress(
+    state: State<'_, AppState>,
+) -> Result<Vec<WeekProgress>> {
+    Ok(state
+        .store
+        .plan_week_progress()?
+        .into_iter()
+        .map(|(week_start, planned_m, ran_m)| WeekProgress {
+            week_start,
+            planned_m,
+            ran_m,
+        })
+        .collect())
 }
 
 /// How many sessions a "reset this week" would put back, and from which days.
@@ -816,16 +901,19 @@ pub async fn week_deviations(
     let today = chrono::Local::now().date_naive();
     Ok(calendar::week_deviations(&state.store, monday, today)?
         .into_iter()
-        .map(|(workout, planned, restorable)| WeekDeviation {
-            workout_id: workout.id,
-            title: workout.title,
-            from: workout.date.format("%Y-%m-%d").to_string(),
-            to: planned.format("%Y-%m-%d").to_string(),
+        .map(|drift| WeekDeviation {
+            restorable: drift.restorable(),
+            workout_id: drift.workout.id,
+            title: drift.workout.title,
+            from: drift.workout.date.format("%Y-%m-%d").to_string(),
+            to: drift.planned.format("%Y-%m-%d").to_string(),
             // A session already run, or whose generated day has already passed,
             // can never be restored — the preview says so rather than promising
             // a move the reset will skip.
-            restorable,
-            is_today: planned == today,
+            is_today: drift.planned == today,
+            restores_date: drift.restores_date,
+            restores_content: drift.original.is_some() && !drift.removes,
+            removes: drift.removes,
         })
         .collect())
 }

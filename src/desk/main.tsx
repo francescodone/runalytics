@@ -15,7 +15,7 @@ import "./interaction.css";
 
 const workspaces = [
   { id: "training", title: "Training", Icon: IconCalendarWeek },
-  { id: "journal", title: "Journal", Icon: IconRun },
+  { id: "journal", title: "Activities", Icon: IconRun },
   { id: "health", title: "Health", Icon: IconHeart },
 ] as const;
 
@@ -41,7 +41,7 @@ function App() {
     paint(); media.addEventListener("change", paint);
     return () => media.removeEventListener("change", paint);
   }, [settings.data]);
-  const title = route.workspace[0].toUpperCase() + route.workspace.slice(1);
+  const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? route.workspace[0].toUpperCase() + route.workspace.slice(1);
   return <>
     <a className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>Skip to workspace</a>
     <header className="desk-appbar">

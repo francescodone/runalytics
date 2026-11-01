@@ -21,7 +21,7 @@ export function readRoute(): Route {
   if (file === "achievements.html") {
     if (workspace === "milestones") return { workspace: "health", section: "milestones", detail: "" };
     if (["performance", "recovery", "risk"].includes(workspace)) return { workspace: "health", section: "", detail: "" };
-    return { workspace: "journal", section: workspace === "routes" ? "map" : "", detail: "" };
+    return { workspace: "journal", section: "", detail: "" };
   }
   return { workspace: "training", section: file === "plan.html" ? "plan" : file === "calendar.html" ? "month" : "week", detail: "" };
 }
@@ -39,12 +39,20 @@ export function useRoute() {
 }
 
 type Notice = { text: string; action?: { label: string; run: () => Promise<unknown> } } | null;
+/// How long a notice stays up on its own, matching the classic page's toast.
+/// Hover or focus holds it open: a notice with an Undo button must not vanish
+/// while the runner is reaching for it. The hold is read from the live element
+/// when the timer fires rather than tracked in state, because a notice removed
+/// under a resting pointer never gets the leave event that would clear a flag.
+const NOTICE_MS = 6000;
+const NOTICE_HOLD_POLL_MS = 500;
 type WorkspaceContext = { revision: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
 const Context = createContext<WorkspaceContext>({ revision: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
 export const useWorkspace = () => useContext(Context);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
   const [acting, setActing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [planProgress, setPlanProgress] = useState<PlanSyncProgress | null>(null);
@@ -76,9 +84,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("runalytics:calendar-updated", changed);
     };
   }, []);
+  useEffect(() => {
+    if (!notice) return;
+    let timer = 0;
+    const expire = () => {
+      const node = noticeRef.current;
+      if (node && (node.matches(":hover") || node.contains(document.activeElement))) {
+        timer = window.setTimeout(expire, NOTICE_HOLD_POLL_MS);
+        return;
+      }
+      setNotice(null);
+    };
+    timer = window.setTimeout(expire, NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   return <Context.Provider value={{ revision, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }) }}>
     {children}
-    <Presence>{notice && <motion.div key="notice" className="desk-notice" role="status" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}><Change identity={notice.text}><span>{notice.text}</span></Change>
+    <Presence>{notice && <motion.div key="notice" ref={noticeRef} className="desk-notice" role="status" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}><Change identity={notice.text}><span>{notice.text}</span></Change>
       {notice.action && <button disabled={acting} onClick={async () => {
         setActing(true);
         try { await notice.action!.run(); refresh(); setNotice({ text: "Change undone." }); }
@@ -145,6 +167,10 @@ export function monday(date: string) { return shiftDate(date, -((dateValue(date)
 export const shortDate = (date: string) => fmtDateDMY(date);
 export const dayName = (date: string) => dateValue(date).toLocaleDateString("en-GB", { weekday: "short" });
 export const cleanTitle = (title: string) => title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+/// Upper-cases only the first letter, leaving an already-capitalised or
+/// deliberately-styled label alone; provider codes arrive in any case.
+export const capitalizeFirst = (value: string) =>
+  value.charAt(0).toUpperCase() + value.slice(1);
 export const kindName = (kind: string) => ({ longRun: "Long run", easy: "Easy", tempo: "Tempo", intervals: "Intervals", race: "Race", rest: "Rest", completed: "Recorded" }[kind] ?? kind);
 export async function patchSettings(patch: Partial<Settings>) {
   const latest = await tauri.getSettings();

@@ -89,6 +89,13 @@ pub fn workout_notes(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
     notes
 }
 
+/// The one-line "why" of a session — the same sentence [`workout_notes`] puts
+/// after `Why:` — exposed on its own so a list row can describe a matched run
+/// without the full multi-line export note.
+pub fn workout_purpose(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
+    session::details_for_plan(workout, plan).purpose
+}
+
 /// Open-ended (easy) steps only have a floor; everything slower is fine.
 ///
 /// The ceiling is stated as permission, not as an objective: a cap on an easy
@@ -556,39 +563,101 @@ pub fn move_workout(
     Ok(moved)
 }
 
-/// The sessions in one ISO week that have drifted off their generated days,
-/// each with the day a reset would restore it to and whether it can be. Feeds
-/// the confirm sheet, which must name the days it is about to move before it
-/// moves them — and must not promise a session it is going to refuse.
+/// One session a week reset is offering to put back, and what putting it back
+/// would actually do. A session can need both halves: a benchmarked session the
+/// runner also dragged to another day has a date to restore *and* content to
+/// restore, and the sheet has to say so rather than implying a simple move.
+#[derive(Debug, Clone)]
+pub struct WeekDrift {
+    pub workout: PlanWorkout,
+    /// The day the plan generated this session into.
+    pub planned: NaiveDate,
+    /// The date can go back to `planned`. False when that day has passed —
+    /// there is no Tuesday to return to once Tuesday is gone.
+    pub restores_date: bool,
+    /// What the plan generated here before a benchmark overwrote it. `Some`
+    /// means the reset also puts the kind, title and distance back.
+    pub original: Option<OriginalContent>,
+    /// The benchmark created this session on what the plan left as a rest day,
+    /// and the reset can remove it. Only ever true alongside `original`.
+    pub removes: bool,
+}
+
+impl WeekDrift {
+    /// Whether the reset will change this session at all. The preview must not
+    /// offer what the reset is going to refuse.
+    pub fn restorable(&self) -> bool {
+        self.restores_date || self.original.is_some()
+    }
+}
+
+/// The sessions in one ISO week that have drifted off the plan's initial
+/// layout. A session counts as drifted either because the runner moved its day
+/// or because a benchmark overwrote what the plan had generated there — the
+/// "I'm not going to make this race" reset has to undo both, or the week never
+/// gets back to the plan it started from. Feeds the confirm sheet, which must
+/// name what it is about to change before it changes it.
 pub fn week_deviations(
     store: &Store,
     week_start: NaiveDate,
     today: NaiveDate,
-) -> Result<Vec<(PlanWorkout, NaiveDate, bool)>> {
+) -> Result<Vec<WeekDrift>> {
     let completions = store.calendar_completions()?;
+    let originals = store.workout_originals()?;
     let (_, workouts) = store
         .current_plan()?
         .ok_or_else(|| AppError::Other("No active plan".into()))?;
     let (from, to) = iso_week_bounds(week_start);
     Ok(workouts
         .iter()
-        .filter(|w| w.date >= from && w.date <= to && w.is_moved())
+        .filter(|w| {
+            w.date >= from
+                && w.date <= to
+                && (w.is_moved() || originals.contains_key(&w.id))
+        })
         .map(|w| {
             let planned = w.planned_date;
-            let restorable = can_restore(w, planned, today, &completions);
-            (w.clone(), planned, restorable)
+            let original = originals.get(&w.id).cloned();
+            // A session that has been run, or deliberately skipped, is history
+            // rather than a deviation to erase — neither its day nor its
+            // content comes back. Shared by both halves of the reset.
+            let still_pending = !w.done
+                && w.status == WorkoutStatus::Planned
+                && !completions.iter().any(|entry| entry.0 == w.id);
+            // A benchmark's row reads as a Race, and [`can_restore`] refuses a
+            // Race because race day is fixed by the event. A benchmark is not
+            // an event: undoing it removes the Race-ness too, so its day may go
+            // back like any other session's — which is the whole point of the
+            // reset this offers.
+            let restores_date = w.is_moved()
+                && if original.is_some() {
+                    still_pending && planned >= today
+                } else {
+                    can_restore(w, planned, today, &completions)
+                };
+            // Restoring content (kind, title, distance) says nothing about the
+            // day, so the past-date rule that bounds a move does not apply here.
+            WeekDrift {
+                removes: original.as_ref().is_some_and(|content| content.created),
+                workout: w.clone(),
+                restores_date,
+                planned,
+                original: original.filter(|_| still_pending),
+            }
         })
         .collect())
 }
 
-/// Whether a reset may put one session back. Shared with [`week_deviations`] so
-/// the preview can never promise a move the reset will skip.
+/// Whether a reset may put one session's *day* back.
 ///
 /// The past case is the subtle one: restoring a session to the day the plan
 /// generated is only sensible while that day is still ahead of the runner. A
 /// Tuesday session dragged to Saturday has no Tuesday to go back to, and
 /// pretending otherwise would file a pending run under a day that has already
 /// happened — the one thing the move guards exist to prevent.
+///
+/// Race day is refused because the event fixes it; a benchmark's row is exempt,
+/// since undoing the benchmark removes the Race-ness along with the date.
 fn can_restore(
     workout: &PlanWorkout,
     planned: NaiveDate,
@@ -602,36 +671,51 @@ fn can_restore(
         && !completions.iter().any(|entry| entry.0 == workout.id)
 }
 
-/// Put one ISO week back onto the days the plan generated. Only sessions that
-/// were *moved* return: race day is fixed by the event, a completed run is
-/// history, a deliberately skipped session stays skipped on the day it was
-/// skipped, and a session whose generated day has already passed has nowhere to
-/// come back to (see [`can_restore`]).
+/// Put one ISO week back onto the plan's initial layout. Two kinds of drift
+/// come back: a session the runner *moved* returns to its generated day, and a
+/// session a benchmark *overwrote* returns to the content the plan generated —
+/// which is what "I'm not going to make this race" actually asks for. Race day
+/// written by the plan itself is fixed by the event, a completed run is history,
+/// a deliberately skipped session stays skipped where it was skipped, and a
+/// moved session whose generated day has already passed has nowhere to come
+/// back to (see [`can_restore`]).
 ///
-/// Returns how many sessions were restored, so the caller can say so out loud
-/// rather than leaving the calendar to shift silently.
+/// Returns how many sessions changed, so the caller can say so out loud rather
+/// than leaving the calendar to shift silently.
 pub fn reset_week(store: &Store, week_start: NaiveDate, today: NaiveDate) -> Result<usize> {
-    let completions = store.calendar_completions()?;
-    let pending: Vec<PlanWorkout> = {
-        let (_, workouts) = store
-            .current_plan()?
-            .ok_or_else(|| AppError::Other("No active plan".into()))?;
-        let (from, to) = iso_week_bounds(week_start);
-        workouts
-            .iter()
-            .filter(|w| {
-                w.date >= from && w.date <= to && w.is_moved() && can_restore(w, w.planned_date, today, &completions)
-            })
-            .cloned()
-            .collect()
-    };
-    let count = pending.len();
-    for workout in pending {
-        store.update_workout(&PlanWorkout {
-            date: workout.planned_date,
-            moved_at: None,
-            ..workout
-        })?;
+    let drifts: Vec<WeekDrift> = week_deviations(store, week_start, today)?
+        .into_iter()
+        .filter(WeekDrift::restorable)
+        .collect();
+    let count = drifts.len();
+    for drift in drifts {
+        if drift.removes {
+            // The benchmark created this session on a rest day: the plan had
+            // nothing here, so putting the plan back removes the row.
+            store.delete_workout(&drift.workout.id)?;
+            continue;
+        }
+        // One write carries both halves of the undo: `update_workout` rewrites
+        // every content column, so a content restore applied in a separate
+        // statement would simply be overwritten again by the date write.
+        let mut restored = drift.workout.clone();
+        if let Some(original) = &drift.original {
+            restored.kind = original.kind;
+            restored.title = original.title.clone();
+            restored.distance_m = original.distance_m;
+            restored.duration_min = original.duration_min;
+            restored.pace_lo_s_km = original.pace_lo_s_km;
+            restored.pace_hi_s_km = original.pace_hi_s_km;
+        }
+        if drift.restores_date {
+            restored.date = drift.planned;
+            restored.moved_at = None;
+        }
+        if drift.original.is_some() {
+            store.update_workout_clearing_original(&restored)?;
+        } else {
+            store.update_workout(&restored)?;
+        }
     }
     Ok(count)
 }
@@ -1265,7 +1349,7 @@ mod tests {
         let deviations = week_deviations(&store, monday, today).unwrap();
         assert_eq!(deviations.len(), 2);
         assert!(
-            deviations.iter().all(|(_, _, ok)| *ok),
+            deviations.iter().all(WeekDrift::restorable),
             "both drifted sessions are unfinished, so both are restorable"
         );
 
@@ -1273,10 +1357,10 @@ mod tests {
         let activity = insert_run(&store, &first, "running", "reset-run");
         match_activity(&store, &first.id, activity).unwrap();
         let deviations = week_deviations(&store, monday, today).unwrap();
-        let listed = |id: &str| deviations.iter().find(|(w, _, _)| w.id == id);
+        let listed = |id: &str| deviations.iter().find(|drift| drift.workout.id == id);
         assert!(listed(&first.id).is_some(), "the drift is still visible");
-        assert!(!listed(&first.id).unwrap().2, "but not restorable");
-        assert!(listed(&second.id).unwrap().2);
+        assert!(!listed(&first.id).unwrap().restorable(), "but not restorable");
+        assert!(listed(&second.id).unwrap().restorable());
 
         let restored = reset_week(&store, monday, today).unwrap();
         assert_eq!(restored, 1, "only the unfinished session came back");
@@ -1315,6 +1399,90 @@ mod tests {
         );
         let stored = store.plan_workouts(&plan.id).unwrap();
         assert!(stored.iter().find(|w| w.id == second.id).unwrap().is_moved());
+    }
+
+    /// "I scheduled a race but I am not going to make it": resetting the week
+    /// has to give back the session the benchmark overwrote — kind, title and
+    /// distance — and un-soften the neighbour it eased, not just put moved
+    /// dates back. Without this the reset says it worked while the race row
+    /// stays on the calendar.
+    #[test]
+    fn reset_week_undoes_a_scheduled_benchmark() {
+        let (store, plan, workouts) = fixture();
+        let today = Utc::now().date_naive();
+        let date = today + Duration::days(14);
+        let mut adjacent = workouts
+            .iter()
+            .find(|workout| workout.date != date)
+            .unwrap()
+            .clone();
+        adjacent.date = date + Duration::days(1);
+        adjacent.kind = WorkoutKind::LongRun;
+        adjacent.distance_m = Some(16000.0);
+        store.update_workout(&adjacent).unwrap();
+        let before = store.plan_workouts(&plan.id).unwrap();
+        let replaced = before
+            .iter()
+            .find(|workout| workout.date == date)
+            .cloned();
+        schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+
+        let monday = date - Duration::days(date.weekday().num_days_from_monday() as i64);
+        let deviations = week_deviations(&store, monday, today).unwrap();
+        assert!(
+            deviations
+                .iter()
+                .any(|drift| drift.workout.date == date && drift.original.is_some() && drift.restorable()),
+            "the benchmarked session is offered back by the reset"
+        );
+
+        let changed = reset_week(&store, monday, today).unwrap();
+        assert!(changed >= 1, "the reset reports the session it changed");
+        let after = store.plan_workouts(&plan.id).unwrap();
+        match replaced {
+            Some(original) => {
+                let back = after.iter().find(|w| w.id == original.id).unwrap();
+                assert_eq!(back.kind, original.kind, "the planned kind comes back");
+                assert_eq!(back.title, original.title, "with the planned title");
+                assert_eq!(back.distance_m, original.distance_m, "and the planned distance");
+            }
+            None => assert!(
+                !after.iter().any(|w| w.date == date),
+                "a benchmark created on a rest day is removed, not rewritten"
+            ),
+        }
+        // The eased neighbour is in the reset's week only when date+1 has not
+        // crossed into the next ISO week; assert it where it applies.
+        if (adjacent.date - monday).num_days() <= 6 {
+            let recovery = after.iter().find(|w| w.id == adjacent.id).unwrap();
+            assert_eq!(recovery.kind, WorkoutKind::LongRun, "the eased neighbour comes back too");
+            assert_eq!(recovery.distance_m, Some(16000.0));
+        }
+    }
+
+    /// A benchmark the runner actually ran is history: the reset previews it as
+    /// staying, exactly as it does for a run matched to a moved session.
+    #[test]
+    fn reset_week_leaves_a_run_benchmark_alone() {
+        let (store, plan, _) = fixture();
+        let today = Utc::now().date_naive();
+        let date = today + Duration::days(14);
+        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+        let activity = insert_run(&store, &benchmark, "running", "bench-run");
+        match_activity(&store, &benchmark.id, activity).unwrap();
+
+        let monday = date - Duration::days(date.weekday().num_days_from_monday() as i64);
+        let deviations = week_deviations(&store, monday, today).unwrap();
+        let drift = deviations
+            .iter()
+            .find(|drift| drift.workout.id == benchmark.id);
+        if let Some(drift) = drift {
+            assert!(!drift.restorable(), "a run benchmark is listed but refused");
+        }
+        reset_week(&store, monday, today).unwrap();
+        let after = store.plan_workouts(&plan.id).unwrap();
+        let kept = after.iter().find(|w| w.id == benchmark.id).unwrap();
+        assert_eq!(kept.kind, WorkoutKind::Race, "the ran benchmark keeps its content");
     }
 
     #[test]

@@ -15,9 +15,16 @@ export const deskFixture = `(function () {
   let deskSync = {config:{enabled:true,gistId:'synthetic-gist',hasToken:true,canPublish:false,lastPushed:'2026-10-29T12:00:00Z',lastPulled:null,installedRev:7,lastError:null},accountLinked:true,code:'synthetic-account-channel'};
   let deskKey = true;
   let deskConnected = true;
+  // Stands in for the backend's original_json snapshot: what a session was
+  // before a benchmark overwrote it ('created' when the plan had a rest day).
+  const deskBenchmarks = new Map();
   const callbacks = new Map();
   const listeners = new Map();
   let callbackId = 0;
+  // The first three done plan sessions stand in for matched runs: the same
+  // pairing the backend derives from calendar_completions, so the journal can
+  // name a matched run after its session and the review can show its plan.
+  const deskMatched = async () => { const pair = await window.__TAURI_INTERNALS__.invoke('current_plan'); return (pair?.[1] ?? []).filter(workout => workout.done).slice(0, 3); };
   window.__TAURI_INTERNALS__.transformCallback = callback => { callbacks.set(++callbackId, callback); return callbackId; };
   window.__TAURI_INTERNALS__.unregisterCallback = identifier => callbacks.delete(identifier);
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
@@ -26,6 +33,7 @@ export const deskFixture = `(function () {
   if (new URLSearchParams(location.search).has('pacingProposal')) proposal = {id:'synthetic-pacing',source:'pacing',status:'pending',summary:'Sharpen quality pace by 5 s/km and review future session distances',reason:'Three completed quality sessions consistently faster than their own targets; recovery and load support progression.',createdAt:'2026-10-31',planQualityOffsetSecKm:-5,planQualityOffsetFrom:'2026-11-01',edits:[{workoutId:'synthetic-workout',date:'2026-11-02',oldTitle:'Tempo',oldDistanceM:10000,title:'Tempo',distanceM:10300,kind:'tempo',paceLoSKm:275,paceHiSKm:285}]};
   window.__deskCalls = [];
   window.__deskFail = '';
+  window.__deskHoldPush = new URLSearchParams(location.search).has('holdPush');
   window.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
     window.__deskCalls.push({command:cmd, args});
     if (cmd === window.__deskFail) throw new Error('Unable to save right now');
@@ -34,6 +42,9 @@ export const deskFixture = `(function () {
       if (new URLSearchParams(location.search).has('noPlan')) return null;
       const pair = await deskOriginal(cmd, args);
       deskCurrent = [pair[0], pair[1].map(workout => ({...workout, plannedDate:workout.date, status:'planned', movedAt:null}))];
+      // ?noPush=1 stands in for a plan that has never reached the watch —
+      // the state in which the Training page pushes on its own.
+      if (new URLSearchParams(location.search).has('noPush')) deskCurrent[0] = {...deskCurrent[0], status:'active', pushedId:null};
       return deskCurrent;
     }
     if (cmd === 'get_settings') return deskSettings ?? {...await deskOriginal(cmd, args), theme:new URLSearchParams(location.search).get('theme') ?? 'light', palette:new URLSearchParams(location.search).get('palette') ?? 'reference',llmEnabled:true,llmEndpoint:'https://example.test/v1',llmModel:'test-model'};
@@ -48,6 +59,8 @@ export const deskFixture = `(function () {
       deskCurrent = [{id:'synthetic-plan',...args.request,status:'active',createdAt:new Date().toISOString(),pushedId:null,baselineWeeklyKm:args.request.currentWeeklyKm,qualityOffsetSecKm:0,qualityOffsetFrom:null},[]];
       return deskCurrent;
     }
+    if (cmd === 'run_scores') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, workoutId: workout.id, load: 120 + index * 15, risk: 40 + index, riskDelta: index % 2 ? 1.4 : -0.8 })).concat([{ activityId: 4, workoutId: null, load: 96, risk: 38, riskDelta: -1.2 }]); }
+    if (cmd === 'matched_sessions') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, title: workout.title, purpose: 'Build endurance at conversational pace so the body adapts without accumulating fatigue.', notes: 'Made with Runalytics - a virtual personal vibecoded coach \\n\\n' + workout.title + '\\n\\nPlan:\\n  2 km easy\\n\\nWhy: Build endurance at conversational pace.' })); }
     if (cmd === 'calendar_events') {
       const pair = await window.__TAURI_INTERNALS__.invoke('current_plan');
       const events = (pair?.[1] ?? []).filter(workout => workout.date >= args.from && workout.date <= args.to).map(workout => ({...workout,workoutId:workout.id,activityId:workout.activityId ?? (workout.done ? 1 : null),notes:'Warm-up\\n2 km easy\\n\\nRepeat 4 times:\\n  1 km at 4:40/km\\n  60 seconds walking rest\\n\\nCool-down\\n1 km easy',adjusted:null,moved:workout.date!==workout.plannedDate,missed:false,start:workout.date,end:workout.date,allDay:true}));
@@ -57,16 +70,25 @@ export const deskFixture = `(function () {
     if (cmd === 'move_workout') { deskCurrent[1].find(workout => workout.id === args.workoutId).date = args.date; return null; }
     if (cmd === 'schedule_benchmark') {
       const existing = deskCurrent[1].find(workout => workout.date === args.date);
+      if (existing && !deskBenchmarks.has(existing.id)) deskBenchmarks.set(existing.id, {...existing});
       const benchmark = {...existing,id:existing?.id ?? 'synthetic-benchmark',planId:deskCurrent[0].id,date:args.date,plannedDate:existing?.plannedDate ?? args.date,kind:'race',title:'Benchmark: '+args.name,distanceM:args.distanceM,done:false,status:'planned'};
+      if (!existing) deskBenchmarks.set(benchmark.id, 'created');
       deskCurrent[1] = deskCurrent[1].filter(workout => workout.id !== benchmark.id).concat(benchmark);
       return null;
     }
     if (cmd === 'set_workout_skipped') { deskCurrent[1].find(workout => workout.id === args.workoutId).status = args.skipped ? 'skipped' : 'planned'; return null; }
     if (cmd === 'abort_plan') { deskCurrent = null; return null; }
-    if (cmd === 'push_plan_to_provider') { if (window.__deskHoldPush) await new Promise(resolve => { window.__deskResolvePush=resolve; }); deskCurrent[0].pushedId = 'watch-plan'; return 'published'; }
+    if (cmd === 'push_plan_to_provider') { if (window.__deskHoldPush) await new Promise(resolve => { window.__deskResolvePush=resolve; }); deskCurrent[0] = {...deskCurrent[0], pushedId:'watch-plan', status:'pushed'}; return 'published'; }
     if (cmd === 'match_calendar_activity') { const workout=deskCurrent[1].find(workout=>workout.id===args.workoutId);workout.activityId=args.activityId;workout.done=true;return null; }
-    if (cmd === 'week_deviations') return (deskCurrent?.[1] ?? []).filter(workout=>workout.date!==workout.plannedDate).map(workout=>({workoutId:workout.id,title:workout.title,from:workout.date,to:workout.plannedDate,restorable:true}));
-    if (cmd === 'reset_week') { deskCurrent[1].forEach(workout=>{workout.date=workout.plannedDate;});return null; }
+    if (cmd === 'week_deviations') { const sunday = new Date(args.weekStart + 'T12:00:00'); sunday.setDate(sunday.getDate() + 6); const key = d => d.toISOString().slice(0,10); return (deskCurrent?.[1] ?? []).filter(workout=>workout.date>=args.weekStart && workout.date<=key(sunday) && (workout.date!==workout.plannedDate || deskBenchmarks.has(workout.id))).map(workout=>{const original=deskBenchmarks.get(workout.id);const pending=!workout.done && workout.status!=='skipped';const restoresDate=workout.date!==workout.plannedDate && pending && workout.plannedDate>=new Date().toISOString().slice(0,10);return {workoutId:workout.id,title:workout.title,from:workout.date,to:workout.plannedDate,restorable:restoresDate || (pending && original!==undefined),isToday:workout.plannedDate===new Date().toISOString().slice(0,10),restoresDate,restoresContent:pending && original!==undefined && original!=='created',removes:original==='created',};});}
+    if (cmd === 'plan_week_progress') { const weeks = new Map(); for (const workout of deskCurrent?.[1] ?? []) { const monday = new Date(workout.date + 'T12:00:00'); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7)); const key = monday.getFullYear() + '-' + String(monday.getMonth()+1).padStart(2,'0') + '-' + String(monday.getDate()).padStart(2,'0'); const entry = weeks.get(key) ?? {weekStart:key,plannedM:0,ranM:0}; entry.plannedM += workout.distanceM ?? 0; if (workout.done) entry.ranM += workout.distanceM ?? 0; weeks.set(key, entry); } return [...weeks.values()].sort((a,b)=>a.weekStart.localeCompare(b.weekStart)); }
+    if (cmd === 'reset_week') { const sunday = new Date(args.weekStart + 'T12:00:00'); sunday.setDate(sunday.getDate() + 6); const key = d => d.toISOString().slice(0,10); let count = 0; for (const workout of deskCurrent[1].filter(workout=>workout.date>=args.weekStart && workout.date<=key(sunday))) {
+      const original = deskBenchmarks.get(workout.id);
+      const pending = !workout.done && workout.status !== 'skipped';
+      if (original === 'created' && pending) { deskCurrent[1] = deskCurrent[1].filter(entry=>entry.id!==workout.id); deskBenchmarks.delete(workout.id); count += 1; continue; }
+      if (original && pending) { Object.assign(workout, original, {date: workout.date, plannedDate: workout.plannedDate}); deskBenchmarks.delete(workout.id); count += 1; continue; }
+      if (workout.date !== workout.plannedDate && pending && workout.plannedDate >= new Date().toISOString().slice(0,10)) { workout.date = workout.plannedDate; workout.movedAt = null; count += 1; }
+    } return count; }
     if (cmd === 'plan_sync_status') return deskSync;
     if (cmd === 'plan_sync_configure') { deskSync.config.enabled = args.config.enabled; if (args.token) deskSync.config.hasToken=true; return deskSync; }
     if (cmd === 'plan_sync_check') return {status:'upToDate',planName:'Synthetic plan',workouts:33,syncedAt:Math.floor(Date.now()/1000)};

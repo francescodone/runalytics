@@ -315,6 +315,49 @@ pub fn export_path(data_dir: &Path) -> String {
         .to_string()
 }
 
+/// Adopt the other device's gist subscription target, when this device never
+/// configured one. Called from a plan pull that carried a gist target: the
+/// plan channel authenticated with the shared GitHub token, and a gist
+/// upload needs exactly that token, so the second device can start keeping
+/// the same subscription fresh without being configured by hand.
+///
+/// Deliberately narrow: it only fires when this device's publishing is
+/// unconfigured (no upload URL at all). A device with its own target —
+/// another gist, or a WebDAV calendar — keeps what its runner chose, and a
+/// device that switched publishing off on purpose is not switched back on.
+pub async fn adopt_gist_target(
+    state: &AppState,
+    target: &crate::plan_sync::CalendarWire,
+) {
+    let _guard = state.calendar_lock.lock().await;
+    let mut config = match load(&state.data_dir) {
+        Ok(config) if config.upload_url.is_empty() => config,
+        _ => return,
+    };
+    let Some(token) = crate::plan_sync::stored_token() else {
+        return;
+    };
+    config.enabled = true;
+    config.upload_url = target.upload_url.clone();
+    config.subscription_url = target.subscription_url.clone();
+    config.username = target.username.clone();
+    let entry = match credential(&config) {
+        Ok(entry) => entry,
+        Err(_) => return,
+    };
+    if entry.set_password(&token).is_err() {
+        return;
+    }
+    config.has_password = true;
+    config.last_published = None;
+    config.last_error = None;
+    if save(&state.data_dir, &config).is_err() {
+        return;
+    }
+    sync_github_token(&config, Some(&token));
+    eprintln!("[calendar] adopted the plan channel's gist subscription target");
+}
+
 pub async fn refresh(state: &AppState) -> Result<String> {
     let _guard = state.calendar_lock.lock().await;
     refresh_locked(state).await

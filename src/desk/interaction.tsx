@@ -24,7 +24,7 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   useEffect(() => {
-    const selector = ".health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor, .milestones > *, .desk-empty";
+    const selector = ".health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor, .milestones > *, .desk-empty, .review-section, .plan-basis, .plan-roadmap, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-board, .week-board";
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -66,6 +66,42 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     document.addEventListener("animationend", settle);
     document.addEventListener("animationcancel", settle);
     return () => { observer.disconnect(); mutations.disconnect(); document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle); };
+  }, []);
+  // Scroll-edge cues: a list or tab strip that still has room to travel marks
+  // the open edges, and CSS wears an inner shadow on exactly those edges, so
+  // the runner can see which way there is more to see before they try to
+  // scroll. Attributes rather than classes because the marks are pure
+  // presentation and must never collide with a component's own class logic.
+  useEffect(() => {
+    const selector = ".data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .plan-roadmap, .activity-library";
+    const mark = (element: HTMLElement) => {
+      const slackX = element.scrollWidth - element.clientWidth;
+      const slackY = element.scrollHeight - element.clientHeight;
+      element.dataset.scrollLeft = element.scrollLeft > 2 ? "1" : "";
+      element.dataset.scrollRight = element.scrollLeft < slackX - 2 ? "1" : "";
+      element.dataset.scrollTop = element.scrollTop > 2 ? "1" : "";
+      element.dataset.scrollBottom = element.scrollTop < slackY - 2 ? "1" : "";
+    };
+    const refresh = () => document.querySelectorAll<HTMLElement>(selector).forEach(mark);
+    const onScroll = (event: Event) => {
+      const element = event.target;
+      if (element instanceof HTMLElement && element.matches(selector)) mark(element);
+    };
+    let frame = 0;
+    const mutations = new MutationObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(refresh);
+    });
+    refresh();
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    window.addEventListener("resize", refresh);
+    mutations.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", refresh);
+      mutations.disconnect();
+    };
   }, []);
   return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
 }
@@ -128,7 +164,23 @@ export function SelectionMarker() {
 }
 
 export function Change({ children, identity, className = "" }: { children: ReactNode; identity: string | number; className?: string }) {
-  return <div key={identity} className={`motion-change ${className}`}>{children}</div>;
+  const reduced = useReducedMotion();
+  // Switching what is mounted (a horizon, a health tab, a selected day) reads as
+  // one surface dissolving into the next: the outgoing pane blurs away, then the
+  // incoming pane sharpens in. The arrival is a CSS keyframe rather than an
+  // inline motion style on purpose — a settled inline filter would turn this
+  // wrapper into the containing block for the mobile full-screen inspector.
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={identity}
+        className={`motion-change ${className}`}
+        exit={reduced ? undefined : { opacity: 0, filter: "blur(8px)", transition: { duration: tempo.exit, ease: "easeIn" } }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
 }
 
 export function useCompactLayout() {

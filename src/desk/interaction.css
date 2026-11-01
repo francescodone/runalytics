@@ -15,12 +15,21 @@ button, a, input, select, textarea, summary {
 }
 :is(button, a, summary):active:not(:disabled):not([aria-disabled="true"]) { scale: .96; transition-duration: var(--motion-press); }
 button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { transform: none; }
-.desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active { scale: .96; transition-duration: var(--motion-press); }
+.desk-button:active:not(:disabled), .mobile-date-ribbon button:active { scale: .96; transition-duration: var(--motion-press); }
+/* The press deepens the same accent tint the hover opens with, on every
+   ghost control alike, so hover and click read as one accent family. */
+.desk-button:active:not(:disabled):not(.primary), .mobile-date-ribbon button:active:not([aria-pressed="true"]), .pace-mode button:active:not([aria-pressed="true"]), .lap-row-button:active:not([aria-pressed="true"]), .notice-close:active { background-color: color-mix(in srgb, var(--desk-action) 24%, var(--desk-surface)); }
 .session-tile, .activity-row, .settings-task-list a, .roadmap-row { transition: background-color var(--motion-change) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle), scale var(--motion-change) var(--motion-settle), translate var(--motion-change) var(--motion-settle); }
 .session-tile:active, .activity-row:active, .settings-task-list a:active, .roadmap-row:active { background: var(--desk-selection); translate: 0; scale: .985; transition-duration: var(--motion-press); }
 .session-tile.is-dragging { opacity: .35; }
-.day-sessions { border-radius: 6px; transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
-.day-sessions[data-drop-target="true"] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
+/* A movable tile answers to horizontal drags; a vertical pull stays the
+   reader scrolling the page, which is what a touch reader expects there. */
+.session-tile.movable { touch-action: pan-y; }
+/* The tile travels as a fixed clone: the pointer sits over the lane under it,
+   so the copy must never intercept the hit-test that picks the drop target. */
+.tile-ghost { position: fixed; top: 0; left: 0; z-index: 60; pointer-events: none; opacity: .92; box-shadow: 0 10px 26px #0e1f1840; }
+.day-sessions, .day-lane, .month-day, .mobile-date-ribbon button { border-radius: 6px; transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
+.day-lane[data-drop-target], .month-day[data-drop-target], .mobile-date-ribbon button[data-drop-target] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
 .button-content { transition: opacity var(--motion-feedback) var(--motion-settle); }
 .button-result { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .desk-button[data-result] .button-content { opacity: 0; }
@@ -32,7 +41,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button:focus-visible::before { opacity: 1; }
 .desk-button:active:not(:disabled)::before { opacity: .25; }
 .desk-button.primary:active:not(:disabled)::before { opacity: 0; }
-.desk-button.primary:active:not(:disabled) { box-shadow: inset 0 1px 3px #00000024; }
+.desk-button.primary:active:not(:disabled) { background-color: color-mix(in srgb, var(--desk-action) 80%, #000); box-shadow: inset 0 1px 3px #00000024; }
 .desk-button .button-content { min-width: 0; }
 .button-content:has(.control-tooltip) { width: 100%; }
 .control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: 7px 10px; background: var(--desk-ink); color: var(--desk-surface); border-radius: 6px; font-size: 12px; font-weight: 500; line-height: 1.4; pointer-events: none; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: 50; transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
@@ -47,6 +56,71 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .pace-session-picker button[aria-pressed="true"]:has(.selection-marker) { border-color: transparent; }
 .pace-session-picker button, .lap-pace-column { transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle); }
 .pace-session-picker button:active, .lap-pace-column:active { background: var(--desk-soft); }
+/* Scroll-edge cues: the shadow must stay pinned to the visible edge while
+   content scrolls beneath it, whatever the surface underneath is — these
+   panels are glass, solid, or transparent depending on theme. The attribute
+   only appears while there is slack left in that direction. */
+.data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .plan-roadmap, .activity-library {
+  --scroll-edge: color-mix(in srgb, var(--desk-ink) 26%, transparent);
+  border-radius: var(--desk-radius);
+}
+/* Vertical lists pin the cue to the scrollport with sticky strips: a sticky
+   ::before rides the visible top edge and a sticky ::after the visible
+   bottom edge, so the shadow never travels with the rows. The gradient lives
+   on the strip's own background — an element's inset box-shadow would sit
+   *below* its content, and an opaque selected row scrolling under an edge
+   would punch a hole in it — while the negative margin keeps the 14px strip
+   from shifting the rows, and the positioned z-index paints it above every
+   row, selected included. */
+.plan-roadmap::before, .activity-library::before,
+.plan-roadmap::after, .activity-library::after {
+  content: "";
+  display: block;
+  position: sticky;
+  height: 14px;
+  z-index: 1;
+  pointer-events: none;
+}
+.plan-roadmap::before, .activity-library::before { top: 0; margin-bottom: -14px; }
+.plan-roadmap::after, .activity-library::after { bottom: 0; margin-top: -14px; }
+.plan-roadmap[data-scroll-top="1"]::before, .activity-library[data-scroll-top="1"]::before { background: linear-gradient(to bottom, var(--scroll-edge), transparent); }
+.plan-roadmap[data-scroll-bottom="1"]::after, .activity-library[data-scroll-bottom="1"]::after { background: linear-gradient(to top, var(--scroll-edge), transparent); }
+/* Horizontal scrollers pin the cue with background layers instead: a
+   background with attachment `scroll` is fixed to the element's own box and
+   does not ride the scrolled content, unlike `local`. The layers are absent
+   until the matching edge has slack. */
+.data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch {
+  --edge-left-image: none;
+  --edge-left-size: 0 0;
+  --edge-left-pos: 0 0;
+  --edge-right-image: none;
+  --edge-right-size: 0 0;
+  --edge-right-pos: 0 0;
+  background-image: var(--edge-left-image), var(--edge-right-image);
+  background-size: var(--edge-left-size), var(--edge-right-size);
+  background-position: var(--edge-left-pos), var(--edge-right-pos);
+  background-repeat: no-repeat, no-repeat;
+}
+.data-table-scroll[data-scroll-left="1"], .lap-chart-scroll[data-scroll-left="1"], .review-tabs[data-scroll-left="1"], .horizon-switch[data-scroll-left="1"] {
+  --edge-left-image: linear-gradient(to right, var(--scroll-edge), transparent);
+  --edge-left-size: 14px 100%;
+  --edge-left-pos: left top;
+}
+.data-table-scroll[data-scroll-right="1"], .lap-chart-scroll[data-scroll-right="1"], .review-tabs[data-scroll-right="1"], .horizon-switch[data-scroll-right="1"] {
+  --edge-right-image: linear-gradient(to left, var(--scroll-edge), transparent);
+  --edge-right-size: 14px 100%;
+  --edge-right-pos: right top;
+}
+/* The splits bar reads as a chart, not as decoration: the cell is the track,
+   the span inside it is the bar, and the width comes from the row's own pace
+   against the run's fastest kilometre. A 6% floor keeps the hardest kilometre
+   of a surging run visible instead of collapsing to a hairline. */
+.splits-chart .split-bar { width: 34%; min-width: 84px; }
+.splits-chart .split-bar > span { display: block; height: 10px; min-width: 6%; border-radius: 3px; background: var(--desk-action); }
+@media (prefers-contrast: more), (forced-colors: active) {
+  .plan-roadmap::before, .plan-roadmap::after, .activity-library::before, .activity-library::after { background: none; }
+  .data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch { background-image: none; }
+}
 .pace-point-session circle, .pace-point-range { transition: opacity var(--motion-feedback) var(--motion-settle), stroke var(--motion-feedback) var(--motion-settle); }
 .pace-point-session:not(.selected) .pace-point-range { opacity: .35; }
 .desk-navigation a[aria-current]:has(.selection-marker), .horizon-switch a[aria-current]:has(.selection-marker), .pace-mode button[aria-pressed="true"]:has(.selection-marker) { background: transparent; box-shadow: none; }
@@ -70,7 +144,7 @@ input[type="range"] { accent-color: var(--desk-action); }
 progress { accent-color: var(--desk-action); }
 .native-progress { animation: status-arrive var(--motion-feedback) var(--motion-settle); }
 .desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) 120ms both; }
-.motion-change { min-width: 0; }
+.motion-change { min-width: 0; animation: morph-arrive var(--motion-change) var(--motion-settle) backwards; }
 [data-reveal="visible"] { animation: content-arrive var(--motion-surface) var(--motion-settle) var(--reveal-delay, 0ms) backwards; }
 [data-reveal="visible"]:is(:hover, :focus-within, :active) { animation: none; }
 .choice-row label, .toggle-setting { transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
@@ -95,6 +169,7 @@ details[open] > summary { color: var(--desk-action); }
 @keyframes scrim-leave { from { opacity: 1; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); } to { opacity: 0; -webkit-backdrop-filter: blur(0); backdrop-filter: blur(0); } }
 @keyframes status-arrive { from { opacity: 0; } to { opacity: 1; } }
 @keyframes content-arrive { from { opacity: .35; translate: 0 8px; filter: blur(3px); } to { opacity: 1; translate: 0; filter: blur(0); } }
+@keyframes morph-arrive { from { opacity: 0; filter: blur(8px); } to { opacity: 1; filter: blur(0); } }
 @keyframes message-arrive { from { opacity: 0; translate: 0 6px; filter: blur(2px); } to { opacity: 1; translate: 0; filter: blur(0); } }
 @keyframes result-arrive { from { opacity: 0; scale: .25; filter: blur(4px); } to { opacity: 1; scale: 1; filter: blur(0); } }
 
@@ -102,7 +177,8 @@ details[open] > summary { color: var(--desk-action); }
   .desk-button:not(:disabled):not(:active):hover::before { opacity: 1; }
   .session-tile:not(:active):not(.is-dragging):hover { translate: 0 -2px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--desk-action) 45%, transparent), 0 8px 18px #00000012; }
   .activity-row:hover, .roadmap-row:hover, .settings-task-list a:hover { background: color-mix(in srgb, var(--desk-selection) 65%, transparent); }
-  .desk-button:not(.primary):not(:disabled):hover { background-color: color-mix(in srgb, var(--desk-surface) 88%, transparent); box-shadow: inset 0 1px 0 var(--desk-highlight), 0 3px 10px #00000012; }
+  .desk-button:not(.primary):not(:disabled):hover { box-shadow: inset 0 1px 0 var(--desk-highlight), 0 3px 10px #00000012; }
+  .mobile-date-ribbon button:hover:not([aria-pressed="true"]), .pace-mode button:hover:not([aria-pressed="true"]), .lap-row-button:hover:not([aria-pressed="true"]), .notice-close:hover { background-color: color-mix(in srgb, var(--desk-action) 12%, transparent); }
   .desk-navigation a:not([aria-current]):hover, .horizon-switch a:not([aria-current]):hover { background-color: color-mix(in srgb, var(--desk-selection) 65%, transparent); }
   .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: 450ms; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: 2px 0; }
@@ -114,8 +190,6 @@ details[open] > summary { color: var(--desk-action); }
   .session-tile:hover, .activity-row:hover, .settings-task-list a:hover, .roadmap-row:hover { transform: none; box-shadow: none; }
 }
 @media (min-width: 801px) {
-  .schedule-workspace:has(.desk-inspector) { grid-template-columns: minmax(0, 1fr) 360px; }
-  .schedule-workspace:has(.desk-inspector) .schedule-canvas { padding-right: 24px; }
   .journal-workspace:has(.desk-inspector) { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.5fr); gap: 32px; align-items: start; }
   .journal-workspace:has(.desk-inspector) .activity-row { grid-template-columns: 26px minmax(100px, 1fr) 85px 16px; gap: 10px; }
   .journal-workspace:has(.desk-inspector) .activity-pace { display: none; }
@@ -133,7 +207,7 @@ details[open] > summary { color: var(--desk-action); }
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
   :is(button, a, summary):active, .session-tile:hover { scale: 1 !important; translate: none !important; }
   .desk-button.primary .button-content { transform: none !important; }
-  .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }
+  .desk-button:active:not(:disabled), .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }
   .desk-button:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
 }

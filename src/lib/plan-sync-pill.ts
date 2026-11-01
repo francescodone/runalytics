@@ -1,20 +1,18 @@
 // The plan-sync status pill.
 //
-// The channel already keeps a monotonic revision (`installed_rev`), but until
-// now nothing showed it: the Settings pane reported whether the *channel* was
-// available, never whether *this device* held what the channel holds. The pill
-// answers the runner's actual question — "is my plan the one I published?" —
-// and, on the phone, offers the import that answers it.
+// The channel keeps a monotonic revision per plan, and the pill shows it: the
+// Settings pane reports whether the *channel* is available, the pill answers
+// the runner's actual question — "does this device hold the newest version of
+// the plan?" — and offers the one action that settles it.
 //
 // It is a read-only check (`plan_sync_check`): a status light must never
-// install anything, and the monotonic rule that stops a downgrade lives in
-// `pull`, unchanged. The backend reports the same relation the pull would
+// install anything. The backend reports the same relation the pull would
 // enforce, so the pill cannot promise an import the guard would then refuse.
 //
-// Placement follows the writer/importer split rather than one fixed slot: on
-// the desktop it sits in the Plan actions header beside the facts it qualifies,
-// on the phone in the page header, where it is the first thing read — iOS is
-// pull-only, so this is the surface where a stale plan is most likely.
+// Both devices now publish and both import, so the copy is driven by the
+// status alone: the same verdict means the same action wherever it appears.
+// The pill sits in the Plan actions header beside the facts it qualifies, and
+// moves to the page header on narrow screens, where it is the first thing read.
 
 import { tauri, inTauri, fmtDateDMY } from "./ipc";
 import type { RemotePlan, SyncPillStatus } from "./types";
@@ -26,9 +24,6 @@ type Slot = "page" | "panel";
 
 let pill: HTMLElement | null = null;
 let current: RemotePlan | null = null;
-/// Which end of the channel this device is. Set from the backend, because the
-/// platform — not the runner — decides it.
-let writer = false;
 
 /// "12 minutes ago" style, capped at a week: past that the date is more useful
 /// than a number nobody can compare in their head.
@@ -52,27 +47,19 @@ interface Copy {
   action?: string;
 }
 
-/// What to say, given which end of the channel this device is. The same status
-/// means opposite things to the two ends: the writer's remote is its own
-/// output, the importer's is an offer.
+/// What to say, given what the channel holds relative to this device. Both
+/// ends publish and both import, so the status alone decides the copy: the
+/// same verdict means the same action on either device.
 function copyFor(status: SyncPillStatus, remote: RemotePlan): Copy {
   const when = ago(remote.syncedAt);
-  if (writer) {
-    // The writer stamps `rev` from the plan's creation time, so an equal
-    // revision is the published copy of exactly this plan.
-    if (status === "upToDate") return { text: `Published ${when}`, tone: "ok" };
-    return {
-      text:
-        status === "unpublished"
-          ? "This plan is not published yet"
-          : "The published plan is not this one",
-      tone: "warn",
-      action: "Publish now",
-    };
-  }
   switch (status) {
     case "upToDate":
-      return { text: `Plan up to date · published ${when}`, tone: "ok" };
+      return { text: `In sync · published ${when}`, tone: "ok" };
+    case "unpublished":
+      // This device's plan is newer than anything on the channel — the edit
+      // that made it newer happened here, so the publish is this device's to
+      // make.
+      return { text: "Newer than the published plan", tone: "warn", action: "Publish now" };
     case "updateAvailable":
       return {
         text: `New plan version · ${remote.workouts} workouts · ${when}`,
@@ -87,11 +74,6 @@ function copyFor(status: SyncPillStatus, remote: RemotePlan): Copy {
         tone: "warn",
         action: "Import",
       };
-    default:
-      // `unpublished` is a writer-side verdict the backend only reports on the
-      // publishing platform; an importer that somehow sees it has nothing
-      // newer to take, which is the honest settled reading.
-      return { text: `Plan up to date · published ${when}`, tone: "ok" };
   }
 }
 
@@ -101,9 +83,9 @@ function render(remote: RemotePlan | null): void {
   disarm();
   const text = pill.querySelector<HTMLElement>(".sync-pill-text");
   const action = pill.querySelector<HTMLButtonElement>(".sync-pill-action");
-  // Nothing to report, or a writer with no plan of its own to compare against
-  // — in both cases a pill would be noise.
-  if (!remote || !text || !action || (writer && remote.status === "importAvailable")) {
+  // Nothing to report — sync off, a prerequisite missing, or the channel
+  // unreachable. A pill with no verdict would be noise.
+  if (!remote || !text || !action) {
     pill.hidden = true;
     return;
   }
@@ -140,7 +122,9 @@ function arm(): void {
 }
 
 async function act(): Promise<void> {
-  if (writer) {
+  // The verdict picks the direction: only this device can publish what it
+  // holds, and only the channel can supply a version it does not.
+  if (current?.status === "unpublished") {
     await tauri.planSyncPush();
     return;
   }
@@ -165,7 +149,6 @@ function place(slot: Slot): void {
 export async function refreshSyncPill(): Promise<void> {
   if (!pill || !inTauri) return;
   try {
-    writer = (await tauri.planSyncStatus()).config.canPublish;
     render(await tauri.planSyncCheck());
   } catch {
     render(null);
@@ -196,7 +179,7 @@ export function initSyncPill(): void {
     // Arming happens before withBusy, not inside it: withBusy snapshots the
     // button's children and restores them when the call settles, so a label
     // set inside the action would be undone the moment it returned.
-    if (!writer && current?.status === "otherPlan" && !armed) {
+    if (current?.status === "otherPlan" && !armed) {
       arm();
       return;
     }

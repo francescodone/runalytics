@@ -40,6 +40,27 @@
 
   /// An open route along the Isar with some wiggle, so the route map, its
   /// start/finish dots and its controls all render.
+  /// Barometric altitude over the run's progress (0..1): rolling hills with a
+  /// net climb, so the splits' elevation column shows gains, near-flat
+  /// kilometres, and descents reading as a small gain rather than zero.
+  function altAt(t) {
+    return 520 + Math.sin(t * Math.PI * 2) * 40 + t * 10;
+  }
+
+  /// Metres climbed between two fractions of the run, sampled the same way
+  /// the backend sums positive altitude steps per kilometre.
+  function elevationGain(fromT, toT) {
+    const steps = 24;
+    let gain = 0;
+    let prev = altAt(fromT);
+    for (let i = 1; i <= steps; i++) {
+      const alt = altAt(fromT + ((toT - fromT) * i) / steps);
+      gain += Math.max(0, alt - prev);
+      prev = alt;
+    }
+    return Math.round(gain);
+  }
+
   function trackFor(activity) {
     const base = Math.floor(Date.parse(activity.startTime) / 1000);
     const track = [];
@@ -50,6 +71,7 @@
         lat: 48.1345 + t * 0.038 + Math.sin(t * 9) * 0.0016,
         lon: 11.5768 + t * 0.014 + Math.sin(t * 7) * 0.0022,
         hr: 140 + Math.round(20 * Math.sin(t * 4)),
+        alt: Math.round(altAt(t) * 10) / 10,
       });
     }
     return track;
@@ -98,11 +120,13 @@
     // the same laps so the table and the chart can never tell two stories.
     // The last window is a part-kilometre, exactly like the backend's.
     const splits = [];
+    const runMeters = laps.reduce((sum, lap) => sum + lap.meters, 0);
     let pi = 0;
     let piUsed = 0;
     let kmMetres = 0;
     let kmDur = 0;
     let kmHr = 0;
+    let kmFrom = 0;
     let prev = null;
     while (pi < laps.length || kmMetres > 0) {
       if (pi < laps.length) {
@@ -129,10 +153,12 @@
           durationS: Math.round(kmDur),
           avgPaceSKm: Math.round(avg),
           avgHr: Math.round(kmHr / kmMetres),
+          elevationGainM: elevationGain(kmFrom / runMeters, (kmFrom + kmMetres) / runMeters),
           deltaPrevSKm: prev == null ? null : Math.round(avg - prev),
           bandLoSKm: seg.bandLo ?? null,
           bandHiSKm: seg.bandHi ?? null,
         });
+        kmFrom += kmMetres;
         prev = avg;
         kmMetres = 0;
         kmDur = 0;
@@ -172,6 +198,7 @@
         durationS: Math.round((meters / 1000) * pace),
         avgPaceSKm: Math.round(pace),
         avgHr: activity.avgHr == null ? null : activity.avgHr + 6 - i,
+        elevationGainM: elevationGain((i * 1000) / total, (i * 1000 + meters) / total),
         deltaPrevSKm: prev == null ? null : Math.round(pace - prev),
         bandLoSKm: null,
         bandHiSKm: null,

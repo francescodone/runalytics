@@ -264,6 +264,7 @@ pub fn kilometre_splits(points: &[TrackPoint]) -> Vec<KmSplit> {
                     duration_s: secs,
                     avg_pace_s_km: Some(secs / metres * 1000.0),
                     avg_hr: mean_hr(points, &cum, from, to),
+                    elevation_gain_m: elevation_gain(points, &cum, from, to),
                     delta_prev_s_km: None,
                     band_lo_s_km: None,
                     band_hi_s_km: None,
@@ -368,6 +369,29 @@ fn mean_hr(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<i64
     (seconds > 0.0).then(|| (weighted / seconds).round() as i64)
 }
 
+/// Metres climbed over a stretch of track, summed from consecutive barometric
+/// altitudes inside it. Only positive steps count — a split that netted zero
+/// but climbed a hill and came back down still cost the runner the climb,
+/// which is the question a split's elevation answers. `None` when no sample in
+/// the stretch carries an altitude, so the UI can say "Not recorded" instead
+/// of claiming a flat kilometre the device never measured.
+fn elevation_gain(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<f64> {
+    let start = cum.partition_point(|&c| c < from).saturating_sub(1);
+    let mut gain = None;
+    let mut last: Option<f64> = None;
+    let mut i = start;
+    while i < points.len() && cum[i] <= to {
+        if let Some(alt) = points[i].alt {
+            if let Some(prev) = last {
+                gain = Some(gain.unwrap_or(0.0) + (alt - prev).max(0.0));
+            }
+            last = Some(alt);
+        }
+        i += 1;
+    }
+    gain.map(|metres| metres.round())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +419,7 @@ mod tests {
             lat,
             lon: -96.8,
             hr: None,
+            alt: None,
         });
         for pace in paces {
             ts_f += STEP_M / 1000.0 * pace;
@@ -404,6 +429,7 @@ mod tests {
                 lat,
                 lon: -96.8,
                 hr: None,
+                alt: None,
             });
         }
         out

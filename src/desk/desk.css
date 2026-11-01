@@ -23,7 +23,10 @@
 :root[data-desk-theme="dark"][data-desk-palette="sakura"] { --desk-action: #f2b5d0; --desk-selection: #462d38; }
 :root[data-desk-theme="dark"][data-desk-palette="ember"] { --desk-action: #f4b59a; --desk-selection: #473329; }
 * { box-sizing: border-box; letter-spacing: 0; }
-body { margin: 0; min-width: 300px; }
+/* The gradient is painted on the body box, so the body must always cover the
+   viewport: a short page would otherwise clip the background to its content
+   and leave the canvas colour below. dvh with a vh fallback for older WebKit. */
+body { margin: 0; min-width: 300px; min-height: 100vh; min-height: 100dvh; }
 /* The app is operated, not read: every pointer gesture here is a press, a
    scroll, or a drag (a session tile to a new day, the map, the inspector).
    Starting a text selection mid-gesture turns a drag into a blue sweep, so
@@ -82,7 +85,7 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .desk-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; padding: 10px 15px; color: var(--desk-ink); background: transparent; border: 1px solid var(--desk-line); border-radius: var(--desk-radius); font-weight: 550; font-size: 14px; line-height: 1.4; }
 .desk-button.primary { background: var(--desk-action); color: var(--desk-on-action); border-color: transparent; }
 .desk-button.danger { color: var(--desk-danger); }
-.desk-button.icon-button { width: 44px; height: 44px; padding: 10px; border-color: transparent; }
+.desk-button.icon-button { width: 44px; height: 44px; padding: 10px; }
 .desk-button { position: relative; }
 .button-content { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .button-progress { position: absolute; inset: 0; display: grid; place-items: center; }
@@ -118,16 +121,42 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .training-context { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .training-context h2 { font-size: 32px; margin: 4px 0 0; }
 .training-context > div > .muted { font-size: 13px; }
-.training-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+.training-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; max-width: 100%; }
 .desk-toolbar { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--desk-line); border-bottom: 1px solid var(--desk-line); margin-bottom: 24px; }
 .horizon-switch { display: flex; gap: 4px; margin-right: auto; }
 .horizon-switch a { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 18px; text-decoration: none; color: var(--desk-muted); border-radius: var(--desk-radius); }
 .horizon-switch a[aria-current] { color: var(--desk-ink); background: var(--desk-surface); box-shadow: 0 1px 3px #162d2010; font-weight: 600; }
 .date-controls { display: flex; gap: 4px; }
-.schedule-workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 520px; }
-.schedule-workspace.has-inspector { grid-template-columns: minmax(0, 1fr) 360px; }
-.schedule-workspace.has-inspector .schedule-canvas { padding-right: 24px; }
-.week-board { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 480px; }
+.schedule-workspace { display: grid; grid-template-columns: minmax(0, 1fr); position: relative; }
+/* The done-count belongs under the horizon switch, where the week or month
+   being looked at is the subject, not at the foot of a board that may run
+   taller than the screen. */
+.schedule-summary { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 24px; color: var(--desk-muted); font-size: 13px; }
+/* The reset belongs on the same line as the week it describes, but it is an
+   action, not another reading — so it carries the link colour and the others
+   stay muted, and it sits at the end rather than between the two numbers. */
+.schedule-summary .reset-week-link { appearance: none; border: 0; background: none; padding: 0; color: var(--desk-action); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.reset-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+.reset-list > li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--desk-radius); background: var(--desk-soft); }
+.reset-list > li.not-restorable { opacity: .6; }
+.reset-title { font-weight: 600; }
+.reset-days { color: var(--desk-muted); text-align: right; }
+/* The session sidebar overlays the calendar rather than stealing its width:
+   the board keeps its geometry (no reflow of every lane) and recedes behind a
+   blur, which is what tells the runner the calendar is waiting for the sheet
+   to close. Scoped above the compact breakpoint because there the inspector is
+   a full-screen sheet instead, and a plain class selector would lose to it. */
+@media (min-width: 801px) {
+  .schedule-workspace.has-inspector .schedule-canvas { filter: blur(4px) saturate(.85); pointer-events: none; transition: filter var(--motion-change, 300ms) ease; }
+  /* Centred in the viewport rather than docked inside the board: the session
+     sheet is the thing being read, so it takes the middle of the screen at a
+     modal's size. Fixed (the same trick the mobile sheet uses) keeps it
+     centred even though the board it belongs to now only as tall as its
+     content; the inset + auto-margin pair centres it on both axes without
+     the box having to know its own height. */
+  .schedule-workspace .desk-inspector { position: fixed; inset: 24px; margin: auto; width: min(640px, calc(100vw - 48px)); height: min(660px, calc(100dvh - 48px)); z-index: 12; overflow-y: auto; border: 1px solid var(--desk-line); border-radius: 24px; box-shadow: var(--desk-shadow); }
+}
+.week-board { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .day-lane { border-right: 1px solid var(--desk-line); min-width: 0; padding: 0 8px; }
 .day-lane:first-child { padding-left: 0; }
 .day-lane:last-child { border-right: 0; padding-right: 0; }
@@ -135,7 +164,7 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .day-lane > header strong { font-size: 25px; font-weight: 500; color: var(--desk-ink); }
 .day-lane.is-today > header strong { width: 40px; height: 40px; display: grid; place-items: center; background: var(--desk-action); color: var(--desk-on-action); border-radius: 50%; }
 .day-lane > header small { color: var(--desk-action); }
-.day-sessions { min-height: 300px; }
+.day-sessions { min-height: 44px; }
 .session-tile { position: relative; display: flex; flex-direction: column; text-align: left; gap: 10px; width: 100%; min-height: 136px; border: 2px solid var(--session-color, var(--desk-action)); border-radius: var(--desk-radius); color: var(--desk-ink); background: var(--desk-surface); padding: 14px 10px; margin-bottom: 12px; font-size: 13px; overflow-wrap: anywhere; }
 .session-tile strong { font-size: 15px; line-height: 1.4; font-weight: 600; }
 .session-tile.selected { background: var(--desk-selection); outline: 2px solid var(--desk-action); outline-offset: -2px; }
@@ -143,24 +172,55 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .session-type { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--desk-muted); }
 .kind-tempo { --session-color: #be781d; }.kind-intervals { --session-color: #cc565f; }.kind-longRun { --session-color: #7571b7; }.kind-race { --session-color: #3188a0; }.kind-completed { --session-color: #648470; }
 .rest-label { text-align: center; padding-top: 20px; font-size: 12px; color: var(--desk-muted); }
-.schedule-foot { display: flex; justify-content: space-between; padding: 20px 0; border-top: 1px solid var(--desk-line); color: var(--desk-muted); font-size: 13px; }
+
 .mobile-date-ribbon, .day-itinerary { display: none; }
 .month-labels, .month-dates { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .month-labels { text-align: center; color: var(--desk-muted); font-size: 12px; margin-bottom: 12px; }
 .month-day { min-height: 120px; border-top: 1px solid var(--desk-line); border-right: 1px solid var(--desk-line); padding: 4px; min-width: 0; }
 .month-day:nth-child(7n) { border-right: 0; }
-.month-number { min-height: 44px; min-width: 44px; border: 0; background: transparent; color: var(--desk-ink); border-radius: var(--desk-radius); }
-.month-number[aria-pressed="true"] { background: var(--desk-action); color: var(--desk-on-action); }
+.month-number { display: inline-grid; place-items: center; min-height: 44px; min-width: 44px; color: var(--desk-ink); border-radius: var(--desk-radius); }
 .month-number i { display: none; }
-.outside-month .month-number:not([aria-pressed="true"]) { color: var(--desk-muted); }
+.outside-month .month-number { color: var(--desk-muted); }
+/* Today wears the same filled disc as the week board's header, so the one day
+   that is "now" reads the same way in both horizons. */
+.month-number[aria-current="date"] { background: var(--desk-action); color: var(--desk-on-action); border-radius: 999px; }
+/* The day number is a label, not a target: sessions are the things you open,
+   so the cell keeps a clear band between the number and the activities. */
+.month-sessions { margin-top: 8px; }
 .month-sessions .session-tile { min-height: 70px; padding: 8px; gap: 4px; font-size: 11px; }
-.month-sessions .session-tile strong { font-size: 12px; }
-.month-sessions .session-type { display: none; }
-.plan-studio { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 48px; }
-.plan-basis { border-left: 1px solid var(--desk-line); padding-left: 32px; font-size: 13px; }
-.roadmap-row { display: grid; grid-template-columns: 130px minmax(30px, 1fr) 110px 24px; gap: 20px; align-items: center; width: 100%; min-height: 80px; text-align: left; background: transparent; color: var(--desk-ink); border: 0; border-top: 1px solid var(--desk-line); }
+.month-sessions .session-tile strong { font-size: 12px; padding-right: 15px; }
+/* The month cell is too small for the kind label, but the done/skipped mark
+   must still read here exactly as it does on the week board: the icon stays,
+   lifted into the tile corner, and only the kind text steps out. */
+.month-sessions .session-type { position: absolute; top: 5px; right: 5px; color: var(--desk-action); }
+.month-sessions .session-kind { display: none; }
+/* Vertical stack: the horizon first, then what the pacing evidence says the
+   plan did with the runs, then the basis paperwork behind it. */
+.plan-studio { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; align-items: start; }
+.plan-basis { font-size: 13px; padding: 24px; border: 1px solid var(--desk-line); border-radius: 20px; background: linear-gradient(165deg, color-mix(in srgb, var(--desk-action) 7%, var(--desk-surface)), var(--desk-surface) 55%); box-shadow: var(--desk-shadow); }
+.plan-basis > h3 { letter-spacing: .08em; text-transform: uppercase; font-size: 11px; color: var(--desk-muted); margin-bottom: 16px; }
+/* The plan-basis facts read as a two-column key/value table: label muted in
+   the row header, value flush right, the way the definition list did before. */
+.plan-basis table th[scope="row"] { color: var(--desk-muted); font-weight: 400; width: 45%; }
+.plan-basis table td { text-align: right; overflow-wrap: anywhere; }
+.plan-basis .data-table-scroll { margin-bottom: 20px; }
+/* Five weeks at a time: the roadmap scrolls and opens on the current week,
+   so the runner scrolls up for history and down for what is coming. */
+.plan-roadmap { position: relative; max-height: max(240px, calc(100dvh - 500px)); overflow-y: auto; }
+.roadmap-row { display: grid; grid-template-columns: 132px minmax(30px, 1fr) 86px 86px 24px; gap: 16px; align-items: center; width: 100%; min-height: 80px; text-align: left; background: transparent; color: var(--desk-ink); border: 0; border-top: 1px solid var(--desk-line); }
 .roadmap-row small { display: block; color: var(--desk-muted); font-weight: 400; }
+/* The week's state reads at a glance: past weeks settle and carry their ran
+   km, the current week is the one lit up, upcoming weeks stay quiet. */
+.roadmap-row em { display: block; margin-top: 2px; font-style: normal; font-size: 12px; font-weight: 600; color: var(--desk-muted); }
+.roadmap-row.is-past { opacity: .72; }
+.roadmap-row.is-past em { color: var(--desk-action); }
+.roadmap-row.is-past .roadmap-track i { opacity: .55; }
+.roadmap-row.is-current { background: color-mix(in srgb, var(--desk-action) 7%, transparent); box-shadow: inset 3px 0 0 var(--desk-action); }
+.roadmap-row.is-current em { color: var(--desk-action); }
 .roadmap-track { height: 12px; background: var(--desk-soft); }
+/* The bar fills with the kilometres actually run, measured against that
+   week's own planned mileage: a full bar means the week was completed. */
+.roadmap-track { position: relative; }
 .roadmap-track i { display: block; background: var(--desk-action); height: 100%; min-width: 2px; }
 .definition-list { margin: 0 0 24px; }
 .definition-list > div { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--desk-line); padding: 12px 0; }
@@ -181,17 +241,39 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .plain-list li { display: flex; flex-direction: column; gap: 6px; padding: 16px 0; border-bottom: 1px solid var(--desk-line); }
 .plain-list li span { color: var(--desk-muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; clip: rect(0,0,0,0); overflow: hidden; white-space: nowrap; border: 0; }
+.journal-toolbar { display: flex; align-items: center; gap: 12px; width: 100%; }
+.journal-count { margin-left: auto; }
+.filter-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 8px; padding: 0 6px; border-radius: 999px; background: var(--desk-action); color: var(--desk-on-action); font-size: 12px; font-weight: 700; }
 .journal-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding-bottom: 24px; border-bottom: 1px solid var(--desk-line); }
+/* Filters arrive scattered rather than sliding as one block: each control
+   drifts in from its own offset so the panel feels assembled, not dropped.
+   The global reduced-motion kill switch below leaves them in place. */
+@keyframes filter-scatter { from { opacity: 0; transform: translate(var(--scatter-x, -14px), var(--scatter-y, 16px)) rotate(var(--scatter-r, -3deg)) scale(.9); } to { opacity: 1; transform: none; } }
+.journal-tools > * { animation: filter-scatter var(--motion-change, 300ms) var(--desk-ease) backwards; }
+.journal-tools > :nth-child(1) { --scatter-x: -22px; --scatter-y: 18px; --scatter-r: -4deg; animation-delay: 0ms; }
+.journal-tools > :nth-child(2) { --scatter-x: 16px; --scatter-y: -14px; --scatter-r: 3deg; animation-delay: 40ms; }
+.journal-tools > :nth-child(3) { --scatter-x: -10px; --scatter-y: 24px; --scatter-r: 5deg; animation-delay: 80ms; }
+.journal-tools > :nth-child(4) { --scatter-x: 22px; --scatter-y: 10px; --scatter-r: -5deg; animation-delay: 120ms; }
+.journal-tools > :nth-child(5) { --scatter-x: -18px; --scatter-y: -12px; --scatter-r: 4deg; animation-delay: 160ms; }
+.journal-tools > :nth-child(6) { --scatter-x: 12px; --scatter-y: 20px; --scatter-r: -3deg; animation-delay: 200ms; }
 .journal-tools > label { flex: 1 1 140px; font-size: 12px; }
 .search-field { position: relative; flex: 2 1 220px !important; }
 .search-field svg { position: absolute; top: 13px; left: 12px; color: var(--desk-muted); }
 .search-field input { width: 100%; padding-left: 40px; }
 .journal-workspace { margin-top: 24px; }
+/* Tall enough to fill the screen below its heading, short enough that its
+   bottom edge — and the scroll shadow that marks it — stays in view; a list
+   that ran past the viewport could never show that cue. The floor keeps it
+   usable on short windows even though the page then scrolls. */
+.activity-library { max-height: max(320px, calc(100dvh - 270px)); overflow-y: auto; }
 .journal-workspace.has-inspector { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.5fr); gap: 32px; align-items: start; }
 .list-heading { display: flex; justify-content: space-between; gap: 12px; color: var(--desk-muted); font-size: 12px; margin-bottom: 8px; }
 .activity-row { width: 100%; display: grid; grid-template-columns: 30px minmax(120px, 1fr) 100px 100px 20px; gap: 16px; align-items: center; text-align: left; border: 0; border-bottom: 1px solid var(--desk-line); color: var(--desk-ink); background: transparent; min-height: 88px; padding: 16px 12px; }
 .activity-row > svg:first-child { color: var(--desk-action); }
 .activity-row strong { font-weight: 550; }.activity-row small { display: block; color: var(--desk-muted); margin-top: 4px; }
+/* The session's one-line purpose, printed between the name and the date on a
+   matched row; clamped so a long "why" never turns the row into a paragraph. */
+.activity-row .activity-purpose { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .activity-row[aria-pressed="true"] { background: var(--desk-selection); }
 .activity-distance { text-align: right; font-variant-numeric: tabular-nums; }
 .activity-pace { text-align: right; color: var(--desk-muted); font-size: 13px; }
@@ -219,6 +301,12 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .review-panel { min-width: 0; }
 .review-panel > .review-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .review-section { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--desk-line); }
+/* What the plan prescribed for the session this run matched — the same
+   description the exported calendar event carries, kept quiet so the recorded
+   numbers above it stay the headline. */
+.prescribed-session { margin: 12px 0 16px; padding: 12px 16px; border-left: 3px solid var(--desk-action); background: var(--desk-soft); font-size: 13px; }
+.prescribed-session h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--desk-muted); }
+.prescribed-session p { margin: 4px 0; white-space: pre-line; }
 .data-table-scroll { overflow-x: auto; }
 /* The lap bars are drawn in the palette itself, so switching theme or palette
    recolours the chart the way it recolours the map line and the pace dots. */
@@ -244,29 +332,23 @@ legend { font-weight: 600; margin-bottom: 12px; }
 .lap-pace-selection { display: grid; gap: 2px; font-size: 13px; margin: 16px 0 0; min-height: 88px; }
 .lap-pace-selection > span { color: var(--desk-muted); }
 .lap-execution-table tr[data-selected="true"] { background: var(--desk-soft); }
-.lap-execution-table th[scope="row"] { min-width: 140px; max-width: 200px; white-space: normal; }
-.lap-execution-table.has-targets { table-layout: fixed; }
-.lap-execution-table.has-targets th:first-child { width: 48px; min-width: 0; padding-inline: 0; vertical-align: middle; }
-.lap-execution-table.has-targets th:nth-child(2) { width: 64px; }
-.lap-execution-table.has-targets th:nth-child(3) { width: 58px; }
-.lap-execution-table.has-targets th, .lap-execution-table.has-targets td { padding-inline: 4px; }
-.lap-execution-table.has-targets td[rowspan] { vertical-align: middle; }
-/* The row header and the distance/time cells span both rows of a lap, so their
-   bottom border is what separates one lap from the next; only the pace cell
-   needs its rule removed, or the pair would read as two unrelated rows. */
-.lap-execution-table .lap-avg-row td:last-child { border-bottom: 0; padding-bottom: 0; }
-.lap-execution-table .lap-range-row td { padding-top: 2px; }
-.lap-row-label { display: block; color: var(--desk-muted); font-size: 11px; }
-.lap-row-button { display: block; width: 44px; height: 44px; padding: 0; border: 0; color: var(--desk-muted); background: transparent; border-radius: var(--desk-radius); font-variant-numeric: tabular-nums; }
+/* Five narrow numeric columns have to fit a 320px screen without a sideways
+   scroll, so the widths are pinned and the gutter between cells closes in. */
+.lap-execution-table { table-layout: fixed; }
+.lap-execution-table th, .lap-execution-table td { padding-inline: 4px; }
+.lap-execution-table th[scope="row"] { width: 48px; padding-inline: 0; }
+.lap-execution-table th:nth-child(2), .lap-execution-table td:nth-child(2) { width: 58px; }
+.lap-execution-table th:nth-child(3), .lap-execution-table td:nth-child(3) { width: 62px; }
+.lap-execution-table th:nth-child(4), .lap-execution-table td:nth-child(4) { width: 66px; }
+.lap-execution-table td:last-child { overflow-wrap: anywhere; }
+.lap-row-button { display: inline-block; width: 44px; height: 44px; padding: 0; border: 0; color: var(--desk-muted); background: transparent; border-radius: var(--desk-radius); font-variant-numeric: tabular-nums; vertical-align: middle; }
 .lap-row-button[aria-pressed="true"] { color: var(--desk-action); font-weight: 650; text-decoration: underline; text-underline-offset: 4px; }
-.lap-row-index { display: inline-block; min-width: 20px; margin-right: 8px; color: var(--desk-muted); font-variant-numeric: tabular-nums; }
 .lap-row-pace { display: block; font-variant-numeric: tabular-nums; }
 .lap-row-target { font-variant-numeric: tabular-nums; }
 /* Biased toward the ink rather than the raw fill: the fill is a mid green that
    only clears contrast on one of the two themes, and --lap-edge is unreadable
    on the dark one. */
 .lap-row-target.on-target { color: color-mix(in srgb, var(--lap-fill) 55%, var(--desk-ink)); font-weight: 600; }
-.lap-row-result { display: block; color: var(--desk-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
 .lap-target-band.on-target { background: color-mix(in srgb, var(--desk-action) 45%, var(--desk-surface)); border: 2px solid var(--lap-edge); box-shadow: 0 0 0 2px color-mix(in srgb, var(--lap-fill) 24%, transparent); }
 table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; font-variant-numeric: tabular-nums; }
 th, td { padding: 12px 8px; border-bottom: 1px solid var(--desk-line); }
@@ -356,7 +438,10 @@ meter { width: 100%; height: 10px; display: block; margin-top: 10px; accent-colo
    the history arrives. */
 .spinner-reverse { animation-direction: reverse; }
 @keyframes desk-spin { to { transform: rotate(360deg); } }
-@media (hover: hover) { .desk-button:hover:not(:disabled):not(.primary) { background: color-mix(in srgb, var(--desk-action) 10%, var(--desk-surface)); } .desk-navigation a:hover { background: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface)); } }
+/* Every button answers the pointer the same way: secondary buttons take an
+   accent tint and an accent border, primary buttons deepen the accent itself,
+   so the hover always reads as the theme colour rather than a wash of grey. */
+@media (hover: hover) { .desk-button:hover:not(:disabled):not(.primary) { background-color: color-mix(in srgb, var(--desk-action) 14%, var(--desk-surface)); border-color: color-mix(in srgb, var(--desk-action) 55%, var(--desk-line)); } .desk-button.primary:hover:not(:disabled) { background-color: color-mix(in srgb, var(--desk-action) 86%, #000); } .desk-navigation a:hover { background: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface)); } }
 @media (max-width: 800px) {
   .health-history { grid-template-columns: 1fr; }.native-progress { flex-wrap: wrap; }
   .settings-task-list { grid-template-columns: 1fr; margin-top: 16px; }.settings-task-list a { padding: 20px 14px; }.settings-editor > header h2 { font-size: 24px; }.palette-options { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -377,7 +462,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: 10px; accent-colo
   .horizon-switch a { padding: 8px 12px; }
   .date-controls { margin-left: auto; }
   .schedule-workspace, .schedule-workspace.has-inspector { display: block; min-height: 0; }
-  .schedule-workspace.has-inspector .schedule-canvas { padding-right: 0; }
+  .schedule-workspace.has-inspector .schedule-canvas { padding-right: 0; filter: none; }
   .week-board { display: none; }
   .mobile-date-ribbon { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; margin-bottom: 28px; }
   .mobile-date-ribbon button { border: 0; border-radius: var(--desk-radius); padding: 10px 0; min-height: 80px; background: transparent; color: var(--desk-muted); display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; }
@@ -390,22 +475,24 @@ meter { width: 100%; height: 10px; display: block; margin-top: 10px; accent-colo
   .day-itinerary .session-tile strong { font-size: 22px; }
   .month-day { min-height: 48px; padding: 0; border-right: 0; }
   .month-number { width: 100%; min-width: 0; position: relative; }
+  /* The full-width cell would stretch today's disc into a bar; keep it a circle. */
+  .month-number[aria-current="date"] { width: 44px; }
   .month-number i { display: block; position: absolute; bottom: 1px; right: 4px; font-size: 9px; font-style: normal; }
   .month-sessions { display: none; }
   .month-board { margin-bottom: 28px; }
-  .plan-studio { display: block; }.plan-basis { padding: 24px 0 0; margin-top: 32px; border: 0; border-top: 1px solid var(--desk-line); }
-  .roadmap-row { grid-template-columns: 90px minmax(20px, 1fr) 88px; gap: 12px; font-size: 13px; }.roadmap-row > svg { display: none; }
+  .plan-studio { display: grid; }.plan-basis { padding: 20px; }
+  .roadmap-row { grid-template-columns: 90px minmax(20px, 1fr) 64px 64px; gap: 10px; font-size: 13px; }.roadmap-row > svg { display: none; }
   .plan-composer { display: flex; flex-direction: column-reverse; gap: 24px; }.composer-summary { padding: 16px; }.composer-summary h3 { margin-bottom: 8px; }.composer-summary .definition-list { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 0; }.composer-summary .definition-list > div { flex-direction: column; gap: 2px; border: 0; padding: 0; }.composer-summary dd { text-align: left; }.composer-summary p { display: none; }
   .setup-band { padding: 20px; flex-direction: column; align-items: flex-start; gap: 16px; }
   .desk-appbar { height: calc(64px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 16px 0; grid-template-columns: 1fr auto; gap: 8px; }
   .desk-brand { font-size: 17px; }
   .desk-brand img { width: 26px; height: 26px; }
-  .desk-navigation { position: fixed; bottom: 0; left: 0; right: 0; height: calc(68px + env(safe-area-inset-bottom)); padding: 4px 16px calc(4px + env(safe-area-inset-bottom)); background: var(--desk-surface); border-top: 1px solid var(--desk-line); z-index: 10; gap: 8px; }
-  .desk-navigation a { flex: 1; flex-direction: column; gap: 3px; padding: 7px; font-size: 12px; }
-  .desk-workspace { padding: 24px 16px calc(96px + env(safe-area-inset-bottom)); }
+  .desk-navigation { position: fixed; bottom: calc(10px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(430px, calc(100% - 28px)); height: 64px; padding: 6px 10px; background: var(--desk-surface); border: 1px solid var(--desk-glass-border); border-radius: 999px; box-shadow: var(--desk-elevation), 0 10px 28px #0e1f1826; z-index: 10; gap: 6px; }
+  .desk-navigation a { flex: 1; flex-direction: column; gap: 3px; padding: 7px; font-size: 12px; border-radius: 999px; }
+  .desk-workspace { padding: 24px 16px calc(100px + env(safe-area-inset-bottom)); }
   .connection-state { display: none; }
   .workspace-heading { margin-bottom: 20px; }
-  .desk-notice { bottom: calc(80px + env(safe-area-inset-bottom)); flex-wrap: wrap; }
+  .desk-notice { bottom: calc(92px + env(safe-area-inset-bottom)); flex-wrap: wrap; }
   .desk-inspector { position: fixed; inset: 0; z-index: 15; overflow-y: auto; border: 0; padding: calc(16px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom)); }
   .desk-dialog { max-height: calc(100dvh - 24px); }
   .dialog-surface { padding: 20px; }
@@ -439,14 +526,30 @@ meter { width: 100%; height: 10px; display: block; margin-top: 10px; accent-colo
 .pace-mode button { border-radius: 8px; }
 @media (max-width: 800px) {
   .desk-appbar { z-index: 11; }
-  .desk-navigation { background: var(--desk-surface); border-color: var(--desk-glass-border); border-radius: 20px 20px 0 0; box-shadow: inset 0 1px 0 var(--desk-highlight), 0 -4px 20px #11251e0c; }
   .desk-inspector, .journal-workspace .desk-inspector { border-radius: 0; border: 0; padding: calc(16px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom)); }
   .desk-toolbar { padding: 8px; }
   .desk-toolbar .horizon-switch { max-width: 100%; overflow-x: auto; }
   .desk-toolbar .horizon-switch a { white-space: nowrap; }
 }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-   .desk-appbar, .desk-toolbar, .desk-dialog, .desk-inspector, .journal-workspace .desk-inspector, .route-controls {
+   .desk-appbar { background: transparent; }
+   /* The header's glass lives on a layer, not on the header itself: a
+      backdrop-filter on an element makes it the containing block for every
+      fixed descendant, and the mobile nav island is fixed — blurred on the
+      appbar it would anchor to the header and float over it instead of the
+      foot of the screen. */
+   .desk-appbar::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background: var(--desk-glass);
+      -webkit-backdrop-filter: blur(20px) saturate(135%);
+      backdrop-filter: blur(20px) saturate(135%);
+   }
+   .desk-appbar { border-color: var(--desk-glass-border); box-shadow: inset 0 1px 0 var(--desk-highlight), 0 6px 24px #00000009; }
+   .desk-toolbar, .desk-dialog, .desk-inspector, .journal-workspace .desk-inspector, .route-controls {
       background: var(--desk-glass);
       -webkit-backdrop-filter: blur(20px) saturate(135%);
       backdrop-filter: blur(20px) saturate(135%);
@@ -456,17 +559,17 @@ meter { width: 100%; height: 10px; display: block; margin-top: 10px; accent-colo
    .health-verdict, .health-analysis, .health-history { background: color-mix(in srgb, var(--desk-surface) 48%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
    .session-tile { background: color-mix(in srgb, var(--desk-surface) 72%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
    .session-tile.selected { background: var(--desk-selection); }
-   .desk-button:not(.primary) { background-color: color-mix(in srgb, var(--desk-surface) 55%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+   .desk-button:not(.primary) { background-color: color-mix(in srgb, var(--desk-surface) 90%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
    .desk-notice { background: color-mix(in srgb, var(--desk-ink) 92%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
    .desk-dialog::backdrop { background: #0b171b40; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   @media (max-width: 800px) {
-    .desk-appbar { -webkit-backdrop-filter: none; backdrop-filter: none; }
       .desk-navigation { background: var(--desk-glass); -webkit-backdrop-filter: blur(20px) saturate(135%); backdrop-filter: blur(20px) saturate(135%); }
       .desk-dialog, .desk-inspector { background: color-mix(in srgb, var(--desk-surface) 88%, transparent); }
   }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
   :root { --desk-glass: var(--desk-surface); }
+  .desk-appbar::before { display: none; }
    .desk-appbar, .desk-toolbar, .desk-dialog, .desk-inspector, .journal-workspace .desk-inspector, .desk-navigation, .route-controls, .health-verdict, .health-analysis, .health-history, .session-tile, .desk-button:not(.primary) { background: var(--desk-surface); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
    .session-tile.selected { background: var(--desk-selection); }
   .desk-notice { background: var(--desk-ink); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }

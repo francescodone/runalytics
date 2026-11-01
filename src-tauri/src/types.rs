@@ -51,6 +51,8 @@ pub struct TrackPoint {
     pub lat: f64,
     pub lon: f64,
     pub hr: Option<i64>,
+    /// Barometric altitude in metres, when the device recorded it.
+    pub alt: Option<f64>,
 }
 
 /// Everything the activity detail sheet shows: the GPS track, the raw
@@ -449,6 +451,11 @@ pub struct KmSplit {
     /// dropped — a direction, not a verdict, which is why the UI prints it in
     /// plain ink rather than borrowing the traffic-light tones.
     pub delta_prev_s_km: Option<f64>,
+    /// Metres climbed inside this kilometre, summed from the barometric
+    /// altitude of its samples. `None` when the device recorded no altitudes
+    /// (or the track synced before altitudes were stored) — the UI prints
+    /// "Not recorded" rather than a flattering zero.
+    pub elevation_gain_m: Option<f64>,
     /// The band of the prescribed work lap this kilometre fell inside, when
     /// the run had a prescription. Only the work has a band, so a kilometre
     /// under a warm-up, recovery, or cool-down stays unmarked.
@@ -566,6 +573,26 @@ pub struct PlanWorkout {
     /// session still sits on its generated day, which is what the moved marker
     /// and the reset offer both read.
     pub moved_at: Option<DateTime<Utc>>,
+}
+
+/// What the plan generated for a session that a benchmark later overwrote,
+/// stored as JSON on the workout row. Scheduling a race or a test rewrites
+/// kind, title and distance in place, and nothing else keeps the session that
+/// was there — so without this snapshot a reset could only put dates back and
+/// the planned session would be gone for good.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalContent {
+    /// The row did not exist before the benchmark: the session was scheduled
+    /// onto what the plan left as a rest day, so putting the plan back means
+    /// removing the row again. When this is true the fields below are unused.
+    pub created: bool,
+    pub kind: WorkoutKind,
+    pub title: String,
+    pub distance_m: Option<f64>,
+    pub duration_min: Option<f64>,
+    pub pace_lo_s_km: Option<i64>,
+    pub pace_hi_s_km: Option<i64>,
 }
 
 impl PlanWorkout {
