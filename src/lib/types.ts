@@ -171,6 +171,7 @@ export interface PlanRequest {
   distance: RaceDistance;
   /// What the plan is for; the backend defaults an absent kind to "race".
   kind: PlanKind;
+  startDate?: string | null;
   targetDate: string;
   thresholdSecKm: number;
   weeklyFrequency: number;
@@ -207,6 +208,7 @@ export interface TrainingPlan {
   distance: RaceDistance;
   /// What the plan is built for; "race" for plans stored before kinds existed.
   kind: PlanKind;
+  startDate?: string | null;
   targetDate: string;
   status: PlanStatus;
   weeklyFrequency: number;

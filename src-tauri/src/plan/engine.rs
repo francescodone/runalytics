@@ -158,12 +158,8 @@ pub(crate) fn taper_weeks_for(kind: PlanKind, d: RaceDistance) -> i64 {
     }
 }
 
-/// How many weeks [`generate`] laid out for a plan, recovered from the plan
-/// itself. The generator derives it from the day it ran, which is the day the
-/// plan was created, so a stored plan can be measured again without the
-/// original request.
 pub(crate) fn weeks_of(plan: &TrainingPlan) -> usize {
-    ((plan.target_date - plan.created_at.date_naive()).num_days() as f64 / 7.0).ceil() as usize
+    ((plan.target_date - plan.start_date.unwrap_or(plan.created_at.date_naive())).num_days() as f64 / 7.0).ceil() as usize
 }
 
 /// Monday of week 0 of a plan — the same expression the generator lays its
@@ -386,6 +382,7 @@ pub fn generate_with_evidence(
     evidence: &super::threshold::Evidence,
 ) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
     let today = Utc::now().date_naive();
+    let start_date = req.start_date.unwrap_or(today);
     if !req.threshold_sec_km.is_finite() || !(120.0..=1200.0).contains(&req.threshold_sec_km)
         || !baseline_km.is_finite() || baseline_km < 0.0
         || req.current_weekly_km.is_some_and(|km| !km.is_finite() || !(0.0..=300.0).contains(&km)) {
@@ -399,7 +396,10 @@ pub fn generate_with_evidence(
             "the plan's end date must be in the future".into()
         }));
     }
-    let weeks = ((req.target_date - today).num_days() as f64 / 7.0).ceil() as usize;
+    if req.target_date <= start_date {
+        return Err(AppError::Other("the plan's start date must be before its end date".into()));
+    }
+    let weeks = ((req.target_date - start_date).num_days() as f64 / 7.0).ceil() as usize;
     if weeks < 2 {
         return Err(AppError::Other(
             "need at least 2 weeks before the plan ends".into(),
@@ -475,6 +475,7 @@ pub fn generate_with_evidence(
         id: plan_id.clone(),
         distance: req.distance,
         kind: req.kind,
+        start_date: req.start_date,
         target_date: req.target_date,
         status: PlanStatus::Draft,
         weekly_frequency: req.weekly_frequency,
@@ -891,6 +892,9 @@ pub fn generate_with_evidence(
         });
     }
 
+    if req.start_date.is_some() {
+        workouts.retain(|workout| workout.date >= start_date);
+    }
     for workout in &mut workouts {
         workout.duration_min = super::session::details_for_plan(workout, &plan).estimated_min;
     }
@@ -904,6 +908,7 @@ mod tests {
 
     fn req(distance: RaceDistance, weeks_out: i64) -> PlanRequest {
         PlanRequest {
+            start_date: None,
             distance,
             kind: PlanKind::Race,
             target_date: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap()
@@ -914,6 +919,37 @@ mod tests {
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
         }
+    }
+
+    #[test]
+    fn selected_start_date_controls_generated_schedule() {
+        let today = Utc::now().date_naive();
+        let start_date = today + chrono::Duration::days(21);
+        let target_date = start_date + chrono::Duration::days(70);
+        let request: PlanRequest = serde_json::from_value(serde_json::json!({
+            "distance": "21K",
+            "kind": "race",
+            "startDate": start_date,
+            "targetDate": target_date,
+            "thresholdSecKm": 285.0,
+            "weeklyFrequency": 4,
+            "longrunDay": 7,
+            "increase": "moderate",
+            "currentWeeklyKm": 30.0
+        })).unwrap();
+        let (plan, workouts) = generate(&request, 30.0).unwrap();
+        assert!(workouts.iter().all(|workout| workout.date >= start_date));
+        assert_eq!(weeks_of(&plan), 10);
+        assert_eq!(plan.created_at.date_naive(), today);
+        assert!(workouts.iter().any(|workout| workout.kind == WorkoutKind::Race && workout.date == target_date));
+        let maintenance = PlanRequest { kind: PlanKind::Maintenance, target_date: start_date + chrono::Duration::days(16 * 7), ..request.clone() };
+        let (maintenance_plan, maintenance_workouts) = generate(&maintenance, 30.0).unwrap();
+        assert_eq!(weeks_of(&maintenance_plan), 16);
+        assert!(maintenance_workouts.iter().all(|workout| workout.date >= start_date));
+        let invalid = PlanRequest { start_date: Some(target_date), ..request.clone() };
+        assert!(generate(&invalid, 30.0).is_err());
+        let too_short = PlanRequest { target_date: start_date + chrono::Duration::days(7), ..request };
+        assert!(generate(&too_short, 30.0).is_err());
     }
 
     #[test]
@@ -1325,6 +1361,7 @@ mod tests {
     /// how many weeks a plan has and with it any assertion about week counts.
     fn req_from_now(distance: RaceDistance, weeks_out: i64) -> PlanRequest {
         PlanRequest {
+            start_date: None,
             distance,
             kind: PlanKind::Race,
             target_date: Utc::now().date_naive() + chrono::Duration::days(weeks_out * 7),

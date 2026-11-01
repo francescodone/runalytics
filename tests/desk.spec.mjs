@@ -1158,6 +1158,11 @@ for (const width of [390, 1440]) {
 test("plan creation submits the established contract", async ({ page }) => {
   await page.goto("/desk.html?noPlan=1");
   await page.getByRole("button", { name: "Create plan", exact: true }).click();
+  const startDate = await page.getByLabel("Start date", { exact: true }).inputValue();
+  const selectedStart = new Date(startDate + "T12:00:00");
+  selectedStart.setDate(selectedStart.getDate() + 7);
+  const selectedDate = `${selectedStart.getFullYear()}-${String(selectedStart.getMonth() + 1).padStart(2, "0")}-${String(selectedStart.getDate()).padStart(2, "0")}`;
+  await page.getByLabel("Start date", { exact: true }).fill(selectedDate);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByLabel("Threshold pace (min/km)")).toHaveValue("4:40");
   await page.getByLabel("Weekly distance (km)").fill("40");
@@ -1165,8 +1170,40 @@ test("plan creation submits the established contract", async ({ page }) => {
   await page.getByRole("button", { name: "Build plan", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const request = await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request);
-  expect(request).toMatchObject({kind:"race",distance:"21K",thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40});
+  expect(request).toMatchObject({kind:"race",distance:"21K",startDate:selectedDate,thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40});
   await expect(page.locator(".plan-basis")).toContainText("40.0 km/week");
+});
+
+for (const width of [390, 1440]) {
+  test(`plan start date anchors maintenance duration at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/desk.html?noPlan=1");
+    await page.getByRole("button", { name: "Create plan", exact: true }).click();
+    await page.getByLabel("Stay consistent", { exact: true }).check();
+    await page.getByLabel("Start date", { exact: true }).fill("2030-03-06");
+    await page.getByRole("combobox", { name: "Block length", exact: true }).selectOption("16");
+    await expect(page.locator(".composer-summary")).toContainText("06/03/2030");
+    await expect(page.locator(".composer-summary")).toContainText("26/06/2030");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/plan-start-date-${width}.png`, animations: "disabled" });
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByRole("button", { name: "Build plan", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const request = await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request);
+    expect(request).toMatchObject({ kind: "maintenance", startDate: "2030-03-06", targetDate: "2030-06-26" });
+  });
+}
+
+test("plan start date requires a later end date", async ({ page }) => {
+  await page.goto("/desk.html?noPlan=1");
+  await page.getByRole("button", { name: "Create plan", exact: true }).click();
+  const targetDate = await page.getByLabel("Race date", { exact: true }).inputValue();
+  await page.getByLabel("Start date", { exact: true }).fill(targetDate);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByLabel("Start date", { exact: true })).toBeVisible();
+  expect(await page.getByLabel("Race date", { exact: true }).evaluate(input => input.validity.rangeUnderflow)).toBe(true);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "create_plan"))).toEqual([]);
 });
 
 test("failed plan creation keeps the reviewed draft", async ({ page }) => {

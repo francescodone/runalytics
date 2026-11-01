@@ -430,9 +430,7 @@ pub fn title_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> Option<Stri
 /// Shared by `details_for_plan` and the tests so a session's fitness ramp is
 /// reconstructed exactly as it was sized.
 fn plan_week(plan: &TrainingPlan, workout: &PlanWorkout) -> (usize, usize) {
-    let weeks = ((plan.target_date - plan.created_at.date_naive()).num_days() as f64 / 7.0)
-        .ceil()
-        .max(1.0) as usize;
+    let weeks = super::engine::weeks_of(plan).max(1);
     let start = plan.target_date - chrono::Duration::days(7 * weeks as i64 - 1);
     let monday = start - chrono::Duration::days(start.weekday().num_days_from_monday() as i64);
     let week = ((workout.date - monday).num_days() / 7).max(0) as usize;
@@ -1011,6 +1009,7 @@ mod tests {
 
     fn request(distance: RaceDistance, weeks: i64, threshold: f64, baseline: f64) -> PlanRequest {
         PlanRequest {
+            start_date: None,
             distance,
             kind: PlanKind::Race,
             target_date: chrono::Utc::now().date_naive() + chrono::Duration::days(weeks * 7),
@@ -1206,6 +1205,7 @@ mod tests {
     #[test]
     fn steps_preserve_distance_and_include_recovery_and_pace_ranges() {
         let request = PlanRequest {
+            start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,
             target_date: chrono::Utc::now().date_naive() + chrono::Duration::days(56),

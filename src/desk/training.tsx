@@ -408,6 +408,7 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
   const [step, setStep] = useState(0);
   const [kind, setKind] = useState<PlanKind>("race");
   const [distance, setDistance] = useState<PlanRequest["distance"]>("21K");
+  const [startDate, setStartDate] = useState(today());
   const [target, setTarget] = useState(shiftDate(today(), 70));
   const [weeks, setWeeks] = useState(10);
   const [threshold, setThreshold] = useState(defaults?.thresholdSecKm ? fmtPace(defaults.thresholdSecKm) : "");
@@ -416,26 +417,29 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
   const [longDay, setLongDay] = useState(7);
   const [increase, setIncrease] = useState<PlanRequest["increase"]>("moderate");
   const [validation, setValidation] = useState<string | null>(null);
-  const effectiveDate = kind === "maintenance" ? shiftDate(today(), weeks * 7) : target;
+  const effectiveDate = kind === "maintenance" ? shiftDate(startDate || today(), weeks * 7) : target;
+  const earliestEndDate = [shiftDate(startDate || today(), 15), shiftDate(today(), 1)].sort()[1];
   useEffect(() => { if (step > 0) form.current?.querySelector<HTMLElement>(step === 2 ? "h3" : "input,select")?.focus({ preventScroll: true }); }, [step]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setValidation(null);
+    if (!startDate || effectiveDate < earliestEndDate) { setValidation("Choose an end date at least 15 days after the start date and later than today."); return; }
     if (step === 1 && (parsePace(threshold) == null || parsePace(threshold)! <= 0)) { setValidation("Enter a threshold pace such as 4:45."); return; }
     if (step < 2) { setStep(step + 1); return; }
     const parsed = parsePace(threshold);
-    if (parsed == null || parsed <= 0 || effectiveDate < shiftDate(today(), 15)) { setValidation("Check your pace and choose an end date at least 15 days from today."); return; }
-    if (await command.run(() => tauri.createPlan({ kind, distance, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, increase, currentWeeklyKm: mileage ? Number(mileage) : null }), "Your plan is ready.")) { navigate("training", "plan"); onClose(); }
+    if (parsed == null || parsed <= 0) { setValidation("Enter a threshold pace such as 4:45."); return; }
+    if (await command.run(() => tauri.createPlan({ kind, distance, startDate, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, increase, currentWeeklyKm: mileage ? Number(mileage) : null }), "Your plan is ready.")) { navigate("training", "plan"); onClose(); }
   }
   return <Dialog title="Create training plan" wide onClose={onClose}><div className="plan-composer"><form ref={form} onSubmit={submit}><div className="composer-progress" aria-label={`Step ${step + 1} of 3`}>{["Direction", "Your baseline", "Review"].map((label, index) => <span key={label} aria-current={index === step ? "step" : undefined}>{index + 1}. {label}</span>)}</div>
     <ErrorNotice error={validation ?? command.error} />
     <Change identity={step}>
     {step === 0 && <div className="form-grid"><fieldset className="full"><legend>What are you training for?</legend>{([ ["race", "A race"], ["improvement", "Improve my fitness"], ["maintenance", "Stay consistent"] ] as const).map(([value, label]) => <label key={value}><input type="radio" name="plan-kind" value={value} checked={kind === value} onChange={() => setKind(value)} />{label}</label>)}</fieldset>
       <label>Distance<select value={distance} onChange={event => setDistance(event.target.value as PlanRequest["distance"])}><option value="5K">5 km</option><option value="10K">10 km</option><option value="21K">Half marathon</option><option value="42K">Marathon</option></select></label>
-      {kind === "maintenance" ? <label>Block length<select value={weeks} onChange={event => setWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map(value => <option key={value} value={value}>{value} weeks</option>)}</select></label> : <label>{kind === "race" ? "Race date" : "Time trial date"}<input type="date" required min={shiftDate(today(), 15)} value={target} onChange={event => setTarget(event.target.value)} /></label>}
+      <label>Start date<input type="date" required value={startDate} onChange={event => setStartDate(event.target.value)} /></label>
+      {kind === "maintenance" ? <label>Block length<select value={weeks} onChange={event => setWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map(value => <option key={value} value={value}>{value} weeks</option>)}</select></label> : <label>{kind === "race" ? "Race date" : "Time trial date"}<input type="date" required min={earliestEndDate} value={target} onChange={event => setTarget(event.target.value)} /></label>}
     </div>}
     {step === 1 && <div className="form-grid"><label>Threshold pace (min/km)<input required value={threshold} placeholder="4:45" pattern="[0-9]{1,2}:[0-5][0-9]" onChange={event => setThreshold(event.target.value)} /></label><label>Weekly distance (km)<input type="number" min="5" max="250" step="0.1" value={mileage} onChange={event => setMileage(event.target.value)} /></label><label>Runs per week<input type="number" min="3" max="7" required value={frequency} onChange={event => setFrequency(Number(event.target.value))} /></label><label>Long run day<select value={longDay} onChange={event => setLongDay(Number(event.target.value))}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day, index) => <option key={day} value={index + 1}>{day}</option>)}</select></label>{kind !== "maintenance" && <label className="full">Mileage progression<select value={increase} onChange={event => setIncrease(event.target.value as PlanRequest["increase"])}><option value="conservative">Conservative / 5%</option><option value="moderate">Moderate / 8%</option><option value="ambitious">Ambitious / 12%</option></select></label>}</div>}
     {step === 2 && <><h3 tabIndex={-1}>Ready to build your plan</h3><p>Your schedule is generated locally from these inputs. Sending it to your watch is a separate action.</p>{defaults?.activePain && <p className="context-note">Unresolved pain: {defaults.activePain.bodyPart}, {defaults.activePain.intensity}/10. Consider reviewing it in Health before starting a new plan.</p>}</>}
     </Change>
     <div className="form-actions">{step > 0 && <Button onClick={() => setStep(step - 1)}>Back</Button>}<Button tone="primary" type="submit" busy={command.busy}>{step === 2 ? "Build plan" : "Continue"}</Button></div>
-    </form><aside className="composer-summary"><h3>Your training brief</h3><dl className="definition-list"><div><dt>Goal</dt><dd>{kind}</dd></div><div><dt>Distance</dt><dd>{distance}</dd></div><div><dt>End date</dt><dd>{fmtDateDMY(effectiveDate)}</dd></div><div><dt>Frequency</dt><dd>{frequency} runs/week</dd></div><div><dt>Starting volume</dt><dd>{mileage ? `${mileage} km/week` : "From synced history"}</dd></div><div><dt>Threshold</dt><dd>{threshold || "Not entered"}</dd></div></dl>{defaults?.weeksObserved ? <p className="muted">Baseline from {defaults.weeksObserved} complete weeks of training.</p> : null}</aside></div></Dialog>;
+    </form><aside className="composer-summary"><h3>Your training brief</h3><dl className="definition-list"><div><dt>Goal</dt><dd>{kind}</dd></div><div><dt>Distance</dt><dd>{distance}</dd></div><div><dt>Start date</dt><dd>{startDate ? fmtDateDMY(startDate) : "Not entered"}</dd></div><div><dt>End date</dt><dd>{fmtDateDMY(effectiveDate)}</dd></div><div><dt>Frequency</dt><dd>{frequency} runs/week</dd></div><div><dt>Starting volume</dt><dd>{mileage ? `${mileage} km/week` : "From synced history"}</dd></div><div><dt>Threshold</dt><dd>{threshold || "Not entered"}</dd></div></dl>{defaults?.weeksObserved ? <p className="muted">Baseline from {defaults.weeksObserved} complete weeks of training.</p> : null}</aside></div></Dialog>;
 }

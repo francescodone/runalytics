@@ -279,6 +279,8 @@ pub struct PlanRequest {
     /// mean a race build, which is what every plan in the database is.
     #[serde(default = "PlanKind::default_race")]
     pub kind: PlanKind,
+    #[serde(default)]
+    pub start_date: Option<NaiveDate>,
     pub target_date: NaiveDate,
     /// Current threshold pace, seconds per km.
     pub threshold_sec_km: f64,
@@ -301,6 +303,7 @@ pub struct TrainingPlan {
     /// What the plan is built for; `Race` for plans stored before kinds existed.
     #[serde(default = "PlanKind::default_race")]
     pub kind: PlanKind,
+    pub start_date: Option<NaiveDate>,
     pub target_date: NaiveDate,
     pub status: PlanStatus,
     pub weekly_frequency: u32,

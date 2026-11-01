@@ -298,6 +298,7 @@ mod tests {
     fn request(days_out: i64) -> PlanRequest {
         let today = Utc::now().date_naive();
         PlanRequest {
+            start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,
             target_date: today + chrono::Duration::days(days_out),

@@ -725,6 +725,7 @@ impl Store {
         )?;
         add_column_if_missing(&conn, "training_plans", "quality_offset_from", "TEXT")?;
         add_column_if_missing(&conn, "training_plans", "threshold_state", "TEXT")?;
+        add_column_if_missing(&conn, "training_plans", "start_date", "TEXT")?;
         // Why the plan softened a session on its own. Added as a repair rather
         // than a numbered migration for the usual reason, and nullable rather
         // than defaulted: a session nobody softened genuinely has no reason,
@@ -1492,8 +1493,8 @@ impl Store {
         conn.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             params![
                 p.id,
                 distance_name(p.distance),
@@ -1513,7 +1514,8 @@ impl Store {
                 // A brand-new plan's revision is its creation instant; every
                 // later edit moves it forward from there.
                 p.created_at.timestamp(),
-                p.threshold_state.as_ref().map(serde_json::to_string).transpose()?
+                p.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
+                p.start_date.map(|date| date.format("%Y-%m-%d").to_string())
             ],
         )?;
         Ok(())
@@ -1648,7 +1650,7 @@ impl Store {
             let row = conn.query_row(
                 "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
                         increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                        kind, quality_offset_sec_km, quality_offset_from, threshold_state
+                        kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date
                  FROM training_plans
                  WHERE status IN ('draft', 'active', 'pushed')
                  ORDER BY created_ts DESC LIMIT 1",
@@ -1670,6 +1672,7 @@ impl Store {
                         r.get::<_, f64>(12)?,
                         r.get::<_, Option<String>>(13)?,
                         r.get::<_, Option<String>>(14)?,
+                        r.get::<_, Option<String>>(15)?,
                     ))
                 },
             );
@@ -1691,10 +1694,12 @@ impl Store {
                     q_offset,
                     q_from,
                     threshold_state,
+                    start_date,
                 )) => TrainingPlan {
                     id,
                     distance: distance_from(&dist),
                     kind: plan_kind_from(&kind),
+                    start_date: start_date.as_deref().map(parse_date).transpose()?,
                     target_date: parse_date(&target)?,
                     status: status_from(&status),
                     weekly_frequency: freq,
@@ -1775,8 +1780,8 @@ impl Store {
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             params![
                 plan.id,
                 distance_name(plan.distance),
@@ -1794,7 +1799,8 @@ impl Store {
                 plan.quality_offset_from
                     .map(|d| d.format("%Y-%m-%d").to_string()),
                 rev,
-                plan.threshold_state.as_ref().map(serde_json::to_string).transpose()?
+                plan.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
+                plan.start_date.map(|date| date.format("%Y-%m-%d").to_string())
             ],
         )?;
         for w in workouts {
@@ -3589,6 +3595,7 @@ mod tests {
         assert!(m.total_m >= m.this_week_m);
 
         let req = crate::types::PlanRequest {
+            start_date: None,
             distance: crate::types::RaceDistance::K21,
             kind: crate::types::PlanKind::Race,
             target_date: Utc::now().date_naive() + chrono::Duration::days(70),

@@ -131,6 +131,8 @@ struct PlanWire {
     distance: crate::types::RaceDistance,
     #[serde(default = "crate::types::PlanKind::default_race")]
     kind: crate::types::PlanKind,
+    #[serde(default)]
+    start_date: Option<NaiveDate>,
     target_date: NaiveDate,
     status: crate::types::PlanStatus,
     weekly_frequency: u32,
@@ -207,6 +209,7 @@ impl PlanWire {
             id: p.id.clone(),
             distance: p.distance,
             kind: p.kind,
+            start_date: p.start_date,
             target_date: p.target_date,
             status: p.status,
             weekly_frequency: p.weekly_frequency,
@@ -227,6 +230,7 @@ impl PlanWire {
             id: self.id.clone(),
             distance: self.distance,
             kind: self.kind,
+            start_date: self.start_date,
             target_date: self.target_date,
             status: self.status,
             weekly_frequency: self.weekly_frequency,
@@ -1228,6 +1232,7 @@ mod tests {
             rev: 1_700_000_000,
             synced_at: 1_700_000_100,
             plan: PlanWire {
+                start_date: None,
                 id: "plan-1".into(),
                 distance: crate::types::RaceDistance::K21,
                 kind: crate::types::PlanKind::Race,
@@ -1268,6 +1273,7 @@ mod tests {
 
     fn shipped_plan() -> TrainingPlan {
         TrainingPlan {
+            start_date: None,
             id: "plan-1".into(),
             distance: crate::types::RaceDistance::K21,
             kind: crate::types::PlanKind::Race,
@@ -1429,6 +1435,26 @@ mod tests {
     }
 
     #[test]
+    fn start_date_survives_wire_and_store_round_trips() {
+        let mut plan = shipped_plan();
+        plan.start_date = Some(NaiveDate::from_ymd_opt(2026, 11, 1).unwrap());
+        let json = serde_json::to_vec(&PlanWire::from_plan(&plan)).unwrap();
+        let decoded: PlanWire = serde_json::from_slice(&json).unwrap();
+        let restored = decoded.to_plan();
+        assert_eq!(restored.start_date, plan.start_date);
+        let directory = std::env::temp_dir().join(format!("plan-start-{}", uuid::Uuid::new_v4()));
+        let store = crate::store::Store::open(&directory.join("start-date.sqlite")).unwrap();
+        store.insert_plan(&restored).unwrap();
+        assert_eq!(store.current_plan().unwrap().unwrap().0.start_date, plan.start_date);
+        store.replace_plan(&restored, &[], 123).unwrap();
+        drop(store);
+        let reopened = crate::store::Store::open(&directory.join("start-date.sqlite")).unwrap();
+        assert_eq!(reopened.current_plan().unwrap().unwrap().0.start_date, plan.start_date);
+        drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn threshold_policy_survives_wire_and_store_round_trips() {
         let mut plan = shipped_plan();
         plan.threshold_state = Some(crate::plan::threshold::athlete_state(&Default::default(), Utc::now().date_naive(), 250.0));
@@ -1455,6 +1481,7 @@ mod tests {
             "increase":"conservative","thresholdSecKm":250.0,"createdAt":"2026-10-01T00:00:00Z"},
             "workouts":[]}"#;
         let blob: PlanBlob = serde_json::from_str(minimal).unwrap();
+        assert_eq!(blob.plan.start_date, None);
         assert_eq!(blob.plan.quality_offset_sec_km, 0.0);
         assert_eq!(blob.plan.kind, crate::types::PlanKind::Race);
     }

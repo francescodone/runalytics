@@ -970,6 +970,7 @@ mod tests {
     fn fixture() -> (Store, TrainingPlan, Vec<PlanWorkout>) {
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let request = PlanRequest {
+            start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,
             target_date: Utc::now().date_naive() + Duration::days(56),

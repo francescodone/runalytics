@@ -44,7 +44,9 @@ distributed.
   threshold pace, weekly frequency, long-run day, and mileage-increase method
   (+5 / +8 / +12 % per week). Geometric ramp with 3-build/1-down cycles,
   taper, and race week.
-  Creation uses Direction, Baseline and Review steps. The plan horizon combines
+  Creation uses Direction, Baseline and Review steps, including a start date
+  that defaults to today. Workouts begin no earlier than the selected day;
+  maintenance block lengths are counted from that date. The plan horizon combines
   a week-by-week roadmap with inputs, predictions, publishing and management.
   Creation is unavailable while a plan is active; ending it requires confirmation.
 - **Adaptive adjustments**: after every sync, poor recovery (sleep / RHR / HRV
