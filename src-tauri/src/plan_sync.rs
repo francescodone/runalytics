@@ -89,6 +89,7 @@ pub struct PlanSync {
     /// Revision currently installed on this device, so a pull never downgrades.
     pub installed_rev: Option<i64>,
     pub last_error: Option<String>,
+    pub reset_plan_id: Option<String>,
 }
 
 // ---- wire format -----------------------------------------------------------
@@ -318,6 +319,16 @@ fn save(directory: &std::path::Path, config: &PlanSync) -> Result<()> {
     std::fs::write(&tmp, serde_json::to_vec_pretty(config)?)?;
     std::fs::rename(tmp, directory.join("plan-sync.json"))?;
     Ok(())
+}
+
+pub fn remember_reset(directory: &std::path::Path, plan_id: &str) -> Result<()> {
+    let mut config = load(directory)?;
+    config.reset_plan_id = Some(plan_id.to_owned());
+    save(directory, &config)
+}
+
+fn is_reset_plan(config: &PlanSync, plan_id: &str, force: bool) -> bool {
+    !force && config.reset_plan_id.as_deref() == Some(plan_id)
 }
 
 /// The shared GitHub credential — the same one calendar gist publishing uses.
@@ -824,6 +835,14 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     }
 
     let incoming = blob.plan.to_plan();
+    if is_reset_plan(&config, &incoming.id, force) {
+        return Ok((config, PullOutcome {
+            installed: false,
+            plan_name: String::new(),
+            workouts: 0,
+            conflict: Some(incoming.id),
+        }));
+    }
     let local_rev = state
         .store
         .current_plan_rev()?
@@ -930,6 +949,9 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
         crate::calendar_publish::adopt_gist_target(state, calendar).await;
     }
 
+    if force && config.reset_plan_id.as_deref() == Some(incoming.id.as_str()) {
+        config.reset_plan_id = None;
+    }
     config.installed_rev = Some(blob.rev);
     config.last_pulled = Some(Utc::now().to_rfc3339());
     config.last_error = None;
@@ -1223,6 +1245,17 @@ fn b64_index(c: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reset_plan_is_not_automatically_reimported() {
+        let directory = std::env::temp_dir().join(format!("plan-reset-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        super::remember_reset(&directory, "old-plan").unwrap();
+        let config = super::load(&directory).unwrap();
+        assert!(super::is_reset_plan(&config, "old-plan", false));
+        assert!(!super::is_reset_plan(&config, "new-plan", false));
+        assert!(!super::is_reset_plan(&config, "old-plan", true));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     use super::*;
     use chrono::TimeZone;
 

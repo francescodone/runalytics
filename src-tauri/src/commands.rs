@@ -512,6 +512,7 @@ pub async fn create_plan(
     request: PlanRequest,
     threshold_evidence: Option<crate::plan::threshold::Evidence>,
 ) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
+    let _sync_guard = state.sync_lock.lock().await;
     // Only one plan may own the calendar at a time: the current plan must be
     // aborted before a new one can be created.
     if state.store.current_plan()?.is_some() {
@@ -673,6 +674,7 @@ pub async fn push_plan_to_provider(
 
 #[tauri::command]
 pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let _sync_guard = state.sync_lock.lock().await;
     if let Some((plan, _)) = state.store.current_plan()? {
         // A plan that was pushed to a watch must be cancelled there first:
         // COROS keeps every plan it is handed, so dropping only the local
@@ -707,6 +709,7 @@ pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         }
         // Delete the plan outright: cascading removes its workouts, which is
         // what actually clears them from the calendar view and the .ics file.
+        plan_sync::remember_reset(&state.data_dir, &plan.id)?;
         state.store.delete_plan(&plan.id)?;
         calendar_publish::refresh(&state).await?;
         plan_sync::push_if_enabled(&state).await;
