@@ -1182,6 +1182,17 @@ impl Store {
         Ok(())
     }
 
+    pub fn save_benchmark_schedule(&self, workouts: &[PlanWorkout]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn.transaction()?;
+        let sql = format!("{WORKOUT_INSERT_COLS} ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, distance_m=excluded.distance_m, duration_min=excluded.duration_min, pace_lo_s_km=excluded.pace_lo_s_km, pace_hi_s_km=excluded.pace_hi_s_km");
+        for workout in workouts {
+            transaction.execute(&sql, rusqlite::params_from_iter(workout_params(workout)))?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// The most recent plan that is not finished.
     pub fn current_plan(&self) -> Result<Option<(TrainingPlan, Vec<PlanWorkout>)>> {
         let plan = {

@@ -10,6 +10,8 @@ import {
   fmtDuration,
   fmtKm,
   fmtPace,
+  estimatedTimeRange,
+  fmtTimeRange,
 } from "./lib/ipc";
 import { fetchFlowState, nextAction } from "./lib/flow";
 import type { FlowState } from "./lib/flow";
@@ -167,11 +169,7 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
     ? todays
         .map((workout) => {
           const distanceKm = workout.distanceM ? workout.distanceM / 1000 : null;
-          const paceRange = distanceKm && workout.paceLoSKm != null && workout.paceHiSKm != null
-            ? [distanceKm * Math.min(workout.paceLoSKm, workout.paceHiSKm) / 60, distanceKm * Math.max(workout.paceLoSKm, workout.paceHiSKm) / 60]
-            : null;
-          const durationRange = paceRange ?? (workout.durationMin ? [workout.durationMin * 0.9, workout.durationMin * 1.1] : null);
-          const duration = durationRange ? `${Math.max(1, Math.floor(durationRange[0]))}-${Math.max(1, Math.ceil(durationRange[1]))} min` : null;
+          const duration = fmtTimeRange(estimatedTimeRange(workout));
           const title = workout.title || KIND_LABEL[workout.kind] || workout.kind;
           const distance = distanceKm ? `<span><small>Distance</small><strong class="today-workout-distance">${distanceKm.toFixed(1)} <span>km</span></strong></span>` : "";
           const pace = workout.paceLoSKm != null && workout.paceHiSKm != null
@@ -204,7 +202,7 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
   el("today-hero").innerHTML = `
     <div class="today-hero">
       <section class="today-focus" aria-label="Daily session">
-        <div class="today-context"><span>${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>${plan && totalWeeks ? `<a href="plan.html">Week ${currentWeek} of ${totalWeeks} ${icons.chevronRight}</a>` : ""}</div>
+        <div class="today-context"><span>${new Date().toLocaleDateString(undefined, { weekday: "long" })} · ${fmtDateDMY(new Date())}</span>${plan && totalWeeks ? `<a href="plan.html">Week ${currentWeek} of ${totalWeeks} ${icons.chevronRight}</a>` : ""}</div>
         <div class="today-action">
           <h2>Today's session</h2>
           <div class="today-session">${session ?? `<span class="rest-symbol" aria-hidden="true">${plan ? icons.moon : icons.flag}</span><h3>${plan ? "Room to recover." : "Your next training block"}</h3><p class="session-rest-copy">${plan ? "No run scheduled today." : "A plan built around your goal and your week."}</p>`}</div>

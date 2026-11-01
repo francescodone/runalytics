@@ -1,4 +1,4 @@
-import { tauri, fmtKm, fmtDateDMY, ymdLocal } from "./ipc";
+import { tauri, fmtKm, fmtDateDMY, ymdLocal, estimatedTimeRange, fmtTimeRange } from "./ipc";
 import { icons } from "./icons";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
@@ -77,9 +77,14 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
     adjusted.textContent = `${adjustedLabel(event.adjusted)}. An easier day today keeps the rest of the block on schedule.`;
     adjusted.hidden = false;
   }
+  // A banked run's time was measured, so it reads as a single number; a
+  // planned session's is an estimate, and an estimate is a whole-minute range.
+  const estimated = event.activityId == null ? fmtTimeRange(estimatedTimeRange(event)) : null;
   card.querySelector(".workout-summary")!.innerHTML = [
     event.distanceM ? `<div><strong>${fmtKm(event.distanceM)}</strong><small>Distance</small></div>` : "",
-    event.durationMin ? `<div><strong>${Math.round(event.durationMin)} min</strong><small>Duration</small></div>` : "",
+    event.activityId != null
+      ? (event.durationMin ? `<div><strong>${Math.round(event.durationMin)} min</strong><small>Duration</small></div>` : "")
+      : (estimated ? `<div><strong>${estimated}</strong><small>Estimated time</small></div>` : ""),
   ].join("");
   const notes = card.querySelector(".workout-notes")!;
   const paragraphs = event.notes.split(/\n\s*\n/).filter((paragraph) => paragraph.trim());

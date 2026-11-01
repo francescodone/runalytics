@@ -537,7 +537,7 @@ exists · **CLOSED** already done (kept only where load-bearing for another item
   target — run at whatever pace feels truly easy!"* and *"(or slower!)"* on
   cool-down (`ux §7.2`).
 - **Runalytics today** — **CLOSED (2026-10-27)**: `no_faster_than()` now reads
-  "no faster than 5:30/km, at conversational pace 🗣️ — a limit, not a target:
+  "no faster than 5:30/km, at conversational pace; a limit, not a target:
   slower is fine, and often better" (`src-tauri/src/calendar.rs`), with a doc
   comment stating why (easy-day pace is the one number an athlete is tempted to
   chase). Pinned by the warm-up assertions in `calendar.rs`.

@@ -375,7 +375,8 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     }
     let reviews = adaptation_reviews(store, plan, th)?;
     let (count, direction) = streak(&reviews);
-    let Some(direction) = direction.filter(|_| count >= th.pace_streak as usize) else {
+    let benchmark = reviews.last().is_some_and(|review| review.kind == WorkoutKind::Race);
+    let Some(direction) = direction.filter(|_| benchmark || count >= th.pace_streak as usize) else {
         return Ok(None);
     };
     let Some(offset) = next_offset(plan, direction) else {
@@ -387,7 +388,11 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
 
     // One unanswered pacing offer at a time, and a dismissed one is not asked
     // again until the plan has actually moved or a week has passed.
-    let signature = format!("pacing:{}:{}", direction_key(direction), plan.id);
+    let signature = if benchmark {
+        format!("pacing:benchmark:{}:{}:{}", reviews.last().unwrap().workout_id, direction_key(direction), plan.id)
+    } else {
+        format!("pacing:{}:{}", direction_key(direction), plan.id)
+    };
     if store.has_pending_pacing(&plan.id)? {
         return Ok(None);
     }
@@ -411,7 +416,7 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
         "soften".to_string()
     };
     let recent: Vec<&SessionReview> = reviews.iter().rev().take(count).collect();
-    let summary = format!(
+    let mut summary = format!(
         "{} of the last {} {} sessions landed {} the range — {} quality pace by {:.0} s/km and review {} future session distances from {}.",
         count,
         recent.len().max(count),
@@ -427,7 +432,13 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
         count,
         direction.label()
     );
-    for r in recent.iter().rev() {
+    if benchmark {
+        let result = reviews.last().unwrap();
+        summary = format!("{} supports a {:.0} s/km {} quality pace from {}.", result.title, STEP_SEC_KM,
+            if direction == Execution::Ahead { "faster" } else { "slower" }, from.format("%b %e"));
+        reason = format!("A matched benchmark result was converted to an equivalent one-hour threshold of {} min/km using the plan's Riegel race model. This is an estimate from one hard effort, not a watch fitness measurement.", fmt_pace(result.actual_s_km.unwrap().round() as i64));
+    }
+    for r in recent.iter().rev().filter(|_| !benchmark) {
         if let Some(actual) = r.actual_s_km {
             reason.push_str(&format!(
                 " {} — held {} min/km against {}-{}.",
@@ -506,7 +517,7 @@ pub fn adaptation_edits(
 pub fn adaptation_reviews(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Vec<SessionReview>> {
     let insights = insights_with_limit(store, plan, LOOKBACK)?;
     let workouts = store.plan_workouts(&plan.id)?;
-    Ok(insights.speed.into_iter().filter(|session| !session.outdated).filter(|insight| {
+    let mut reviews: Vec<_> = insights.speed.into_iter().filter(|session| !session.outdated).filter(|insight| {
         let Some(workout) = workouts.iter().find(|workout| workout.id == insight.workout_id) else { return false };
         let expected: u32 = session::details_for_plan(workout, plan).steps.iter().filter(|step| !step.open_ended && step.pace_lo_s_km.is_some()).map(|step| step.repeats.max(1)).sum();
         expected > 0 && insight.reps.len() as f64 / expected as f64 >= 0.8
@@ -525,7 +536,39 @@ pub fn adaptation_reviews(store: &Store, plan: &TrainingPlan, th: &Thresholds) -
             measured_m: 0.0,
             execution: if ahead / total >= 0.75 { Execution::Ahead } else if behind / total >= 0.75 { Execution::Behind } else { Execution::InRange },
         }
-    }).collect())
+    }).collect();
+    let completions = store.calendar_completions()?;
+    for workout in workouts.iter().filter(|workout| workout.kind == WorkoutKind::Race
+        && workout.title.starts_with("Benchmark: ") && workout.done
+        && workout.date <= Utc::now().date_naive()
+        && plan.quality_offset_from.is_none_or(|from| workout.date >= from)) {
+        let Some(completion) = completions.iter().find(|entry| entry.0 == workout.id) else { continue };
+        let Some(activity) = store.activity_by_id(completion.1)? else { continue };
+        let Some(planned) = workout.distance_m else { continue };
+        let Some(actual) = benchmark_threshold(planned, activity.distance_m, activity.duration_s) else { continue };
+        let target = plan.threshold_sec_km + plan.quality_offset_sec_km;
+        reviews.push(SessionReview {
+            workout_id: workout.id.clone(), date: workout.date, kind: WorkoutKind::Race,
+            title: workout.title.clone(), band_lo_s_km: (target - 5.0).round() as i64,
+            band_hi_s_km: (target + 5.0).round() as i64, actual_s_km: Some(actual),
+            measured_m: activity.distance_m,
+            execution: if actual < target - 5.0 - th.pace_tolerance_sec_km { Execution::Ahead }
+                else if actual > target + 5.0 + th.pace_tolerance_sec_km { Execution::Behind }
+                else { Execution::InRange },
+        });
+    }
+    reviews.sort_by_key(|review| review.date);
+    Ok(reviews)
+}
+
+fn benchmark_threshold(planned_m: f64, actual_m: f64, seconds: f64) -> Option<f64> {
+    if !planned_m.is_finite() || !(1000.0..=10000.0).contains(&planned_m)
+        || !actual_m.is_finite() || !(0.95..=1.05).contains(&(actual_m / planned_m))
+        || !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    let threshold = 3600.0 / (actual_m / 1000.0 * (3600.0 / seconds).powf(1.0 / 1.06));
+    (120.0..=900.0).contains(&threshold).then_some(threshold)
 }
 
 fn direction_key(direction: Execution) -> &'static str {
@@ -708,6 +751,39 @@ mod tests {
     use super::*;
     use crate::plan::engine;
     use crate::store::Store;
+
+    #[test]
+    fn benchmark_threshold_has_correct_magnitude_and_rejects_non_race_recordings() {
+        let threshold = benchmark_threshold(5000.0, 5000.0, 1200.0).unwrap();
+        assert!((threshold - 255.4).abs() < 1.0);
+        let expected_pace = engine::race_pace_s_km(285.0, 10000.0);
+        assert!((benchmark_threshold(10000.0, 10000.0, expected_pace * 10.0).unwrap() - 285.0).abs() < 0.001);
+        assert!(benchmark_threshold(5000.0, 7000.0, 1800.0).is_none());
+        assert!(benchmark_threshold(5000.0, 5000.0, f64::NAN).is_none());
+        assert!(benchmark_threshold(5000.0, 5000.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn benchmark_result_offers_bounded_adjustment_and_is_not_reused_after_acceptance() {
+        let store = store();
+        let (plan, sessions) = plan_with_quality(&store, &[1]);
+        let mut benchmark = sessions[0].clone();
+        benchmark.kind = WorkoutKind::Race;
+        benchmark.title = "Benchmark: parkrun".into();
+        benchmark.distance_m = Some(5000.0);
+        benchmark.done = true;
+        store.update_workout(&benchmark).unwrap();
+        let activity_id = synthetic_track(&store, "benchmark-result", benchmark.date, 5000.0, 240.0, None);
+        store.complete_calendar_workout(&benchmark.id, activity_id, "").unwrap();
+        let th = Thresholds::default();
+        let proposal = build(&store, &plan, &th).unwrap().expect("one benchmark supports a review");
+        assert_eq!(proposal.plan_quality_offset_sec_km, Some(-5.0));
+        assert!(proposal.summary.contains("parkrun"));
+        store.insert_proposal(&proposal).unwrap();
+        store.accept_pacing_proposal(&plan, &proposal).unwrap();
+        let accepted = store.current_plan().unwrap().unwrap().0;
+        assert!(build(&store, &accepted, &th).unwrap().is_none());
+    }
 
     fn store() -> Store {
         let path = std::env::temp_dir().join(format!("rk-paced-{}.sqlite", uuid::Uuid::new_v4()));

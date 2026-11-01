@@ -120,6 +120,8 @@ export const tauri = {
   planSyncCheck: () => call<RemotePlan | null>("plan_sync_check"),
   moveWorkout: (workoutId: string, date: string) =>
     call<void>("move_workout", { workoutId, date }),
+  scheduleBenchmark: (date: string, name: string, distanceM: number) =>
+    call<void>("schedule_benchmark", { date, name, distanceM }),
   // What a "reset this week" would put back, so the confirm sheet can name the
   // sessions before any of them moves.
   weekDeviations: (weekStart: string) =>
@@ -208,11 +210,32 @@ export function fmtKm(m: number): string {
   return `${(m / 1000).toFixed(1)} km`;
 }
 
-export function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+/// Estimated session time as a whole-minute range. A plan prescribes a pace
+/// band, not a stopwatch result, so a single number is false precision: the
+/// span comes from distance x pace band when both are known, otherwise from
+/// +/-10% around the stored estimate. Bounds are floored and ceiled to whole
+/// minutes. `null` when the session has neither distance+pace nor a duration.
+export function estimatedTimeRange(session: {
+  distanceM: number | null;
+  durationMin: number | null;
+  paceLoSKm?: number | null;
+  paceHiSKm?: number | null;
+}): [number, number] | null {
+  const { distanceM, durationMin, paceLoSKm, paceHiSKm } = session;
+  const km = (distanceM ?? 0) / 1000;
+  const span = km > 0 && paceLoSKm != null && paceHiSKm != null
+    ? [(km * Math.min(paceLoSKm, paceHiSKm)) / 60, (km * Math.max(paceLoSKm, paceHiSKm)) / 60]
+    : durationMin != null
+      ? [durationMin * 0.9, durationMin * 1.1]
+      : null;
+  return span ? [Math.max(1, Math.floor(span[0])), Math.max(1, Math.ceil(span[1]))] : null;
+}
+
+/// The range as display text, e.g. "40-52 min"; collapses to one number when
+/// the bounds meet.
+export function fmtTimeRange(range: [number, number] | null): string | null {
+  if (!range) return null;
+  return range[0] === range[1] ? `${range[0]} min` : `${range[0]}-${range[1]} min`;
 }
 
 /// A date as `dd/MM/yyyy` — the notation every printed date in the app uses.
@@ -228,6 +251,12 @@ export function fmtDateDMY(value: string | number | Date): string {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+/// Same printed date as {@link fmtDateDMY}; kept for the legacy pages that
+/// imported it when it rendered "Oct 3".
+export function fmtDate(iso: string): string {
+  return fmtDateDMY(iso);
 }
 
 /// A moment as `HH:mm dd/MM/yyyy`, local time — the app's timestamp format.

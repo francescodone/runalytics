@@ -1,15 +1,15 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useState, type ReactNode, type RefObject } from "react";
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion, useSpring } from "motion/react";
 
 export const tempo = {
-  press: .08,
-  feedback: .14,
-  change: .22,
-  surface: .32,
-  exit: .18,
-  settle: [ .22, 1, .36, 1 ] as const,
-  leave: [ .4, 0, 1, 1 ] as const,
-  spring: { type: "spring", visualDuration: .28, bounce: 0 } as const,
+  press: .09,
+  feedback: .18,
+  change: .3,
+  surface: .42,
+  exit: .2,
+  settle: [ .16, 1, .3, 1 ] as const,
+  leave: [ .4, 0, .8, .4 ] as const,
+  spring: { type: "spring", visualDuration: .36, bounce: 0 } as const,
 };
 
 let initiatingControl: HTMLButtonElement | null = null;
@@ -23,13 +23,57 @@ export function actionOrigin() {
 }
 
 export function MotionSystem({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const selector = ".health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor, .milestones > *, .desk-empty";
+    const pending = new Set<HTMLElement>();
+    const revealed = new WeakSet<HTMLElement>();
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    const observer = new IntersectionObserver(entries => {
+      let order = 0;
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const element = entry.target as HTMLElement;
+        observer.unobserve(element);
+        pending.delete(element);
+        revealed.add(element);
+        element.style.setProperty("--reveal-delay", `${Math.min(order++, 4) * 45}ms`);
+        element.dataset.reveal = "visible";
+      }
+    }, { threshold: .08 });
+    const register = (root: ParentNode) => {
+      const elements = [...root.querySelectorAll<HTMLElement>(selector)];
+      if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
+      for (const element of elements) {
+        if (revealed.has(element) || pending.has(element)) continue;
+        if (reduced.matches) { revealed.add(element); continue; }
+        pending.add(element);
+        observer.observe(element);
+      }
+    };
+    const mutations = new MutationObserver(records => {
+      for (const element of pending) {
+        if (!element.isConnected) { observer.unobserve(element); pending.delete(element); }
+      }
+      for (const record of records) {
+        for (const node of record.addedNodes) if (node instanceof HTMLElement) register(node);
+      }
+    });
+    register(document);
+    mutations.observe(document.body, { childList: true, subtree: true });
+    const settle = (event: AnimationEvent) => {
+      if (event.animationName === "content-arrive" && event.target instanceof HTMLElement) event.target.dataset.reveal = "settled";
+    };
+    document.addEventListener("animationend", settle);
+    document.addEventListener("animationcancel", settle);
+    return () => { observer.disconnect(); mutations.disconnect(); document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle); };
+  }, []);
   return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
 }
 
 export function useActionDepth(control: RefObject<HTMLButtonElement | null>, enabled: boolean) {
-  const rotateX = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
-  const rotateY = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
-  const lift = useSpring(0, { stiffness: 400, damping: 32, mass: .5 });
+  const rotateX = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
+  const rotateY = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
+  const lift = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
   useEffect(() => {
     const element = control.current;
     if (!element || !enabled) return;
@@ -84,10 +128,7 @@ export function SelectionMarker() {
 }
 
 export function Change({ children, identity, className = "" }: { children: ReactNode; identity: string | number; className?: string }) {
-  const reduced = useReducedMotion();
-  const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; }, []);
-  return <motion.div key={identity} className={`motion-change ${className}`} initial={mounted.current ? { opacity: .65 } : false} animate={{ opacity: 1 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}>{children}</motion.div>;
+  return <div key={identity} className={`motion-change ${className}`}>{children}</div>;
 }
 
 export function useCompactLayout() {
@@ -104,12 +145,12 @@ export function useCompactLayout() {
 export function useSurfaceMotion(kind: "dialog" | "inspector") {
   const compact = useCompactLayout();
   const reduced = useReducedMotion();
-  const offset = reduced ? {} : kind === "inspector" ? { x: compact ? "100%" : 18 } : { y: compact ? "100%" : 12, scale: compact ? 1 : .985 };
+  const offset = reduced ? {} : kind === "inspector" ? { x: compact ? "100%" : 16 } : { y: compact ? "100%" : 16, scale: compact ? 1 : .97 };
   return {
     compact,
     reduced,
-    initial: { opacity: reduced || compact ? 1 : .35, ...offset },
-    animate: { opacity: 1, x: 0, y: 0, scale: 1, transition: reduced ? { duration: .08 } : tempo.spring },
-    exit: { opacity: compact && !reduced ? 1 : 0, ...offset, transition: { duration: reduced ? .08 : tempo.exit, ease: tempo.leave } },
+    initial: { opacity: reduced || compact ? 1 : 0, ...offset },
+    animate: { opacity: 1, x: 0, y: 0, scale: 1, transition: reduced ? { duration: 0 } : tempo.spring },
+    exit: { opacity: compact && !reduced ? 1 : 0, ...(reduced ? {} : kind === "inspector" ? { x: compact ? "100%" : 8 } : { y: compact ? 48 : 8, scale: compact ? 1 : .985 }), transition: { duration: reduced ? 0 : tempo.exit, ease: tempo.leave } },
   };
 }

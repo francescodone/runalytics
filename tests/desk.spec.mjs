@@ -37,15 +37,22 @@ test.describe("motion system", () => {
 
   for (const width of [390, 1440]) {
     for (const theme of ["light", "dark"]) {
-      test(`selective glass and opaque fallbacks ${theme} ${width}px`, async ({ page }) => {
+      test(`frosted surfaces and opaque fallbacks ${theme} ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
         await page.goto(`/desk.html?theme=${theme}#health`);
         await expect(page.locator(".health-verdict")).toBeVisible();
-        for (const selector of [".desk-appbar", ".desk-toolbar", ".health-verdict", ".health-analysis"]) {
-          await expect(page.locator(selector)).toHaveCSS("backdrop-filter", "none");
+        for (const selector of [".desk-toolbar", ".health-verdict", ".health-analysis"]) {
+          await expect(page.locator(selector)).toHaveCSS("backdrop-filter", /blur\(/);
         }
+        await expect(page.locator(".desk-appbar")).toHaveCSS("backdrop-filter", width === 390 ? "none" : "blur(20px) saturate(1.35)");
+        const appbarAlpha = await page.evaluate(() => {
+          const [, , , a] = getComputedStyle(document.querySelector(".desk-appbar")).backgroundColor.match(/[\d.]+/g) ?? [];
+          return a === undefined ? 1 : Number(a);
+        });
+        expect(appbarAlpha).toBeLessThan(1);
         if (width === 390) {
+          await expect(page.locator(".desk-navigation")).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
           const navigation = await page.locator(".desk-navigation").boundingBox();
           expect(Math.round(navigation.y + navigation.height)).toBe(900);
           const settings = page.getByRole("button", { name: "Settings", exact: true });
@@ -55,11 +62,12 @@ test.describe("motion system", () => {
         }
         await page.getByRole("button", { name: "Log pain", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Log pain" });
-        await expect(dialog).toHaveCSS("backdrop-filter", width === 390 ? "blur(10px)" : "blur(12px)");
+        await expect(dialog).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
         expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
         await page.screenshot({ path: `test-results/glass-${theme}-${width}.png`, animations: "disabled" });
         await page.emulateMedia({ contrast: "more" });
         await expect(dialog).toHaveCSS("backdrop-filter", "none");
+        for (const selector of [".desk-toolbar", ".health-verdict", ".health-analysis"]) await expect(page.locator(selector)).toHaveCSS("backdrop-filter", "none");
         const surface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-surface").trim());
         const opaqueColor = await page.evaluate(value => { const probe = document.createElement("span"); probe.style.color = value; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; }, surface);
         await expect(dialog).toHaveCSS("background-color", opaqueColor);
@@ -101,21 +109,28 @@ test.describe("motion system", () => {
             document.addEventListener(type, event => {
               if (event.animationName !== "content-arrive") return;
               const bounds = event.target.getBoundingClientRect();
-              window.__contentReveals.push({ type, className: event.target.className, width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y });
+              window.__contentReveals.push({ type, className: event.target.className, width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y, elapsed: event.elapsedTime, filter: getComputedStyle(event.target).filter });
             });
           }
         });
         await page.goto("/desk.html#health/overview");
         const verdict = page.locator(".health-verdict");
         await expect(verdict).toBeVisible();
-        expect(await verdict.evaluate(element => getComputedStyle(element).animationName)).toBe(reducedMotion === "reduce" ? "none" : "content-arrive");
         if (reducedMotion === "no-preference") {
           await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "animationend").length)).toBe(1);
           const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
-          expect(events[1]).toEqual({ ...events[0], type: "animationend" });
-          expect(await verdict.evaluate(element => getComputedStyle(element).animationDuration)).toBe("0.22s");
+          expect(events[1].width).toBeCloseTo(events[0].width, 3);
+          expect(events[1].height).toBeCloseTo(events[0].height, 3);
+          expect(events[1].elapsed).toBe(.42);
+          expect(events[0].filter).toContain("blur(");
+          await expect(verdict).toHaveAttribute("data-reveal", "settled");
+          await expect(verdict).toHaveCSS("filter", "none");
+          await verdict.hover();
+          await page.mouse.move(0, 0);
+          await expect(verdict).toHaveCSS("animation-name", "none");
         } else {
           expect(await page.evaluate(() => window.__contentReveals)).toEqual([]);
+          await expect(verdict).toHaveCSS("animation-name", "none");
         }
         await page.getByRole("link", { name: "Pace insights", exact: true }).click();
         const selector = page.getByRole("button", { name: "Long", exact: true });
@@ -126,6 +141,7 @@ test.describe("motion system", () => {
         await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.96");
         expect(await selector.evaluate(element => element.offsetWidth)).toBe(Math.round(bounds.width));
         await page.mouse.up();
+        await expect(selector).toHaveCSS("scale", "none");
         await expect(selector).toHaveAttribute("aria-pressed", "true");
         await page.goto("/desk.html#settings");
         await page.getByRole("link", { name: /Offline maps/ }).click();
@@ -359,6 +375,78 @@ test.describe("motion system", () => {
   });
 });
 
+for (const width of [390, 1440]) {
+  test(`map theme overrides preserve contrasting routes and circular finish at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const tile = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 256;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#e5e7eb";
+      context.fillRect(0, 0, 256, 256);
+      return canvas.toDataURL().split(",")[1];
+    });
+    await page.route("https://tile.openstreetmap.org/**", route => route.fulfill({ contentType: "image/png", body: Buffer.from(tile, "base64") }));
+    await page.route("**/src/desk/map.tsx*", async route => {
+      const response = await route.fetch();
+      await route.fulfill({ response, body: `${await response.text()}
+        const originalPaint = maplibregl.Map.prototype.setPaintProperty;
+        maplibregl.Map.prototype.setPaintProperty = function(...args) {
+          window.__themeMap = this;
+          return originalPaint.apply(this, args);
+        };
+      ` });
+    });
+    await page.goto("/desk.html#journal/1");
+    const finish = page.getByRole("img", { name: "Route finish", exact: true });
+    await expect(finish).toBeVisible();
+    await expect(finish).toHaveCSS("border-radius", "50%");
+    await expect(finish).toHaveCSS("width", "24px");
+    await expect(finish).toHaveCSS("height", "24px");
+    const start = page.getByRole("img", { name: "Route start", exact: true });
+    await expect(start).toHaveCSS("width", "24px");
+    await expect(start).toHaveCSS("height", "24px");
+    await expect(finish.locator("svg")).toHaveCSS("clip-path", "circle(50%)");
+    await expect(finish.locator(".flag-pole")).toHaveCount(0);
+    await expect(finish.locator(".flag-check")).toHaveCount(1);
+    await page.evaluate(() => { window.__originalThemeMap = window.__themeMap; });
+    const camera = await page.evaluate(() => ({ center: window.__themeMap.getCenter().toArray(), zoom: window.__themeMap.getZoom() }));
+    for (const theme of ["light", "dark"]) {
+      for (const palette of ["reference", "amethyst", "glacier", "evergreen", "sakura", "ember"]) {
+        await page.evaluate(({ theme, palette }) => {
+          document.documentElement.dataset.deskTheme = theme;
+          document.documentElement.dataset.deskPalette = palette;
+        }, { theme, palette });
+        await expect.poll(() => page.evaluate(() => window.__themeMap.getPaintProperty("base", "raster-brightness-max"))).toBe(theme === "dark" ? .32 : 1);
+        const colors = await page.evaluate(() => {
+          const instance = window.__themeMap;
+          const route = instance.getPaintProperty("route", "line-color");
+          const outline = instance.getPaintProperty("route-outline", "line-color");
+          const luminance = hex => {
+            const full = hex.length === 4 ? `#${[...hex.slice(1)].map(channel => channel + channel).join("")}` : hex;
+            return [1, 3, 5].map(offset => parseInt(full.slice(offset, offset + 2), 16) / 255).map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4).reduce((total, channel, index) => total + channel * [.2126, .7152, .0722][index], 0);
+          };
+          const values = [luminance(route), luminance(outline)].sort((first, second) => second - first);
+          return { ratio: (values[0] + .05) / (values[1] + .05), route, action: getComputedStyle(document.documentElement).getPropertyValue("--desk-action").trim(), gradient: instance.getPaintProperty("route", "line-gradient"), same: instance === window.__originalThemeMap, center: instance.getCenter().toArray(), zoom: instance.getZoom() };
+        });
+        expect(colors.route).toBe(colors.action);
+        expect(colors.gradient).toEqual(["to-color", colors.action]);
+        expect(colors.ratio, `${theme}/${palette}`).toBeGreaterThan(3);
+        expect(colors.same).toBe(true);
+        expect(colors.center).toEqual(camera.center);
+        expect(colors.zoom).toBe(camera.zoom);
+      }
+      await expect.poll(() => page.locator(".maplibregl-canvas").evaluate(canvas => {
+        const context = canvas.getContext("webgl2");
+        const pixel = new Uint8Array(4);
+        context.readPixels(10, 10, 1, 1, context.RGBA, context.UNSIGNED_BYTE, pixel);
+        return pixel[3] === 255 && (document.documentElement.dataset.deskTheme === "dark" ? pixel[0] < 110 : pixel[0] > 180);
+      })).toBe(true);
+      await page.screenshot({ path: `test-results/map-theme-${theme}-${width}.png` });
+    }
+  });
+}
+
 for (const [width, pointCount, span] of [[390, 2, .001], [1440, 1001, .5]]) {
   test(`activity route draws with ease-in-out in three seconds at ${width}px with ${pointCount} GPS points`, async ({page}) => {
     await page.setViewportSize({width, height:1000});
@@ -574,6 +662,10 @@ for (const width of [320, 1440]) {
     }
     await page.getByRole('button',{name:'Open activity review',exact:true}).click();
     await expect(page).toHaveURL(/#journal\/1$/);
+    // The review opens on Overview; the execution chart is one tab away.
+    await expect(page.getByRole('heading',{name:'Session execution',exact:true})).toHaveCount(0);
+    await page.getByRole('tab',{name:'Session execution',exact:true}).click();
+    await expect(page).toHaveURL(/#journal\/1\/execution$/);
     await expect(page.getByRole('heading',{name:'Session execution',exact:true})).toBeVisible();
   });
 }
@@ -613,31 +705,49 @@ for (const session of ['intervals', 'tempo']) {
         return {...result, laps:[result.laps[0], {...result.laps[3], index:2, label:'Continuous tempo'}, {...result.laps.at(-1), index:3}]};
       };
     });
-    await page.goto('/desk.html#journal/1');
+    await page.goto('/desk.html#journal/1/execution');
     const chart = page.getByRole('region',{name:'Lap pace chart'});
     const buttons = chart.getByRole('button');
     await expect(buttons).toHaveCount(session === 'tempo' ? 3 : 9);
     await expect(chart.locator('.lap-target-band')).toHaveCount(session === 'tempo' ? 1 : 4);
-    await expect(page.locator('.lap-pace-range')).toHaveCount(session === 'tempo' ? 1 : 4);
     await expect(chart.locator('.lap-target-band.on-target')).toHaveCount(session === 'tempo' ? 1 : 2);
-    await expect(page.locator('.lap-pace-range.on-target')).toHaveCount(session === 'tempo' ? 1 : 2);
+    // The table states the same thing in words: one avg row and one target row
+    // per lap, with the graded laps' ranges highlighted where the chart does.
+    await expect(page.locator('.lap-execution-table .lap-avg-row')).toHaveCount(session === 'tempo' ? 3 : 9);
+    await expect(page.locator('.lap-execution-table .lap-range-row')).toHaveCount(session === 'tempo' ? 3 : 9);
+    await expect(page.locator('.lap-execution-table .lap-row-target.on-target')).toHaveCount(session === 'tempo' ? 1 : 2);
     const geometry = await buttons.evaluateAll(columns => columns.map(column => ({
       actual:parseFloat(column.querySelector('.lap-pace-actual').style.height),
       bottom:parseFloat(column.querySelector('.lap-target-band')?.style.bottom),
       band:parseFloat(column.querySelector('.lap-target-band')?.style.height),
+      bandPx:column.querySelector('.lap-target-band')?.getBoundingClientRect().height ?? 0,
+      width:column.getBoundingClientRect().width,
     })));
     if (session === 'intervals') {
-      expect(geometry[1].actual).toBeCloseTo(88, 3);
-      expect(geometry[1].bottom).toBeCloseTo(88 * 268 / 285, 3);
-      expect(geometry[1].bottom + geometry[1].band).toBeCloseTo(88 * 268 / 275, 3);
+      // The axis is linear over every pace the chart draws (laps and band edges),
+      // padded 15% of the span either side, so a target range is a readable band
+      // rather than a hairline. Fastest 268 s/km, slowest 402 s/km, so the axis
+      // runs 247.9 to 422.1 over a 174.2 s span.
+      const pos = pace => (422.1 - pace) / 174.2 * 100;
+      expect(geometry[1].actual).toBeCloseTo(pos(268), 3);
+      expect(geometry[1].bottom).toBeCloseTo(pos(285), 3);
+      expect(geometry[1].bottom + geometry[1].band).toBeCloseTo(pos(275), 3);
+      // Each column is as wide as its lap is long: the 24% warm-up is roughly
+      // twice the 12% rep and ten times a 2.5% recovery.
+      expect(geometry[0].width).toBeGreaterThan(geometry[1].width * 1.7);
+      expect(geometry[1].width).toBeGreaterThan(geometry[2].width * 3);
+      expect(geometry[2].width).toBeGreaterThanOrEqual(20);
       expect(geometry[1].actual).toBeGreaterThan(geometry[1].bottom + geometry[1].band);
+      // A 10 s/km target range has to be something the eye can land on, not the
+      // 5 px line the old reciprocal scale drew.
+      expect(geometry[1].bandPx).toBeGreaterThanOrEqual(12);
       expect(geometry[3].actual).toBeGreaterThan(geometry[3].bottom);
       expect(geometry[3].actual).toBeLessThan(geometry[3].bottom + geometry[3].band);
       expect(geometry[5].actual).toBeLessThan(geometry[5].bottom);
       for (const index of [0,2,4,6,8]) await expect(buttons.nth(index).locator('.lap-target-band')).toHaveCount(0);
       await buttons.nth(5).click();
       await expect(page.locator('.lap-pace-selection')).toContainText('Slower than target');
-      await expect(page.locator('.lap-execution-table tr[data-selected="true"]')).toContainText('4:51/km');
+      await expect(page.locator('.lap-execution-table .lap-avg-row[data-selected="true"]')).toContainText('4:51/km');
     } else {
       expect(geometry[1].actual).toBeGreaterThan(geometry[1].bottom);
       expect(geometry[1].actual).toBeLessThan(geometry[1].bottom + geometry[1].band);
@@ -647,16 +757,16 @@ for (const session of ['intervals', 'tempo']) {
     await expect(buttons.nth(1)).toHaveAttribute('aria-pressed','true');
     await expect(page.locator('.lap-pace-selection')).toContainText('4:35 - 4:45/km');
     await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Time',exact:true})).toBeVisible();
-    const rowGeometry = await page.locator('.lap-execution-table tbody tr').evaluateAll(rows => rows.map(row => ({
-      actual:parseFloat(row.querySelector('.lap-pace-fill').style.width),
-      start:parseFloat(row.querySelector('.lap-pace-range')?.style.left),
-      range:parseFloat(row.querySelector('.lap-pace-range')?.style.width),
-    })));
+    const rows = await page.locator('.lap-execution-table tbody tr').evaluateAll(tableRows => tableRows.map(row => row.innerText.replace(/\s+/g, ' ').trim()));
+    const paces = await buttons.evaluateAll(columns => columns.map(column => column.querySelector('.lap-pace-actual > span')?.textContent ?? 'Not recorded'));
     for (const [index, column] of geometry.entries()) {
-      expect(rowGeometry[index].actual).toBeCloseTo(column.actual, 3);
+      const avgRow = rows[index * 2];
+      const rangeRow = rows[index * 2 + 1];
+      expect(avgRow).toContain(paces[index]);
       if (!Number.isNaN(column.bottom)) {
-        expect(rowGeometry[index].start).toBeCloseTo(column.bottom, 3);
-        expect(rowGeometry[index].range).toBeCloseTo(column.band, 3);
+        expect(rangeRow).toContain('4:35 - 4:45/km');
+      } else {
+        expect(rangeRow).toContain('Not prescribed');
       }
     }
     await page.getByRole('region',{name:'Recorded laps'}).getByRole('button').first().click();
@@ -677,7 +787,7 @@ test('lap ranges handle missing measurements and never invent unprescribed targe
       return {...result, prescribed:!new URLSearchParams(location.search).has('unprescribed'), laps:result.laps.map((lap,index) => index === 1 ? {...lap,avgPaceSKm:null} : index === 3 ? {...lap,bandLoSKm:300,bandHiSKm:280} : lap)};
     };
   });
-  await page.goto('/desk.html#journal/1');
+  await page.goto('/desk.html#journal/1/execution');
   const missing = page.getByRole('region',{name:'Lap pace chart'}).getByRole('button').nth(1);
   await expect(missing.locator('.lap-target-band')).toHaveCount(1);
   await expect(missing.locator('.lap-pace-actual')).toHaveCount(0);
@@ -686,9 +796,9 @@ test('lap ranges handle missing measurements and never invent unprescribed targe
   await expect(page.locator('.lap-pace-selection')).toContainText('Not graded');
   await expect(page.locator('.lap-pace-column').nth(3).locator('.lap-target-band')).toHaveCount(0);
   expect(await page.locator('.lap-execution').innerHTML()).not.toMatch(/NaN|Infinity/);
-  await page.goto('/desk.html?unprescribed=1#journal/1');
+  await page.goto('/desk.html?unprescribed=1#journal/1/execution');
   await expect(page.getByRole('heading',{name:'Recorded laps',exact:true})).toBeVisible();
-  await expect(page.locator('.lap-target-band, .lap-pace-range, .lap-pace-chart')).toHaveCount(0);
+  await expect(page.locator('.lap-target-band, .lap-range-row, .lap-pace-chart')).toHaveCount(0);
   await expect(page.getByRole('region',{name:'Recorded laps'})).toContainText('Not prescribed');
 });
 
@@ -696,8 +806,11 @@ for (const width of [320,1440]) {
   test(`review details remain accessible at ${width}px`, async ({page}) => {
     await page.setViewportSize({width,height:1000});
     for(const theme of ['light','dark']) {
-      await page.goto(`/desk.html?theme=${theme}#journal/1`);
+      await page.goto(`/desk.html?theme=${theme}#journal/1/splits`);
       await expect(page.getByRole('heading',{name:'Kilometre splits'})).toBeVisible();
+      expect(await page.getByRole('region',{name:'Kilometre splits'}).evaluate(region => region.scrollWidth <= region.clientWidth)).toBe(true);
+      await page.getByRole('tab',{name:'Session execution',exact:true}).click();
+      await expect(page.getByRole('heading',{name:'Session execution',exact:true})).toBeVisible();
       expect(await page.getByRole('region',{name:'Recorded laps'}).evaluate(region => region.scrollWidth <= region.clientWidth)).toBe(true);
       expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations,'activity review').toEqual([]);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -916,6 +1029,37 @@ test("mobile date selection opens a full-screen session and returns to its opene
   await expect(session).toBeFocused();
 });
 
+for (const width of [390, 1440]) {
+  test(`benchmark scheduling submits parkrun and custom test contracts at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/desk.html#training/week");
+    const open = page.getByRole("button", { name: "Schedule race or test", exact: true });
+    await open.click();
+    const dialog = page.getByRole("dialog", { name: "Schedule race or test", exact: true });
+    await expect(dialog.getByLabel("Distance (km)")).toHaveValue("5");
+    await expect(dialog.getByLabel("Distance (km)")).toBeDisabled();
+    const date = await dialog.getByLabel("Date", { exact: true }).inputValue();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "schedule_benchmark").args)).toEqual({ date, name: "parkrun", distanceM: 5000 });
+    await expect(page.locator(".day-itinerary")).toContainText("Benchmark: parkrun");
+    await open.click();
+    await dialog.getByRole("combobox", { name: "Event", exact: true }).selectOption("trial");
+    await dialog.getByLabel("Event name", { exact: true }).fill("3 km fitness test");
+    await dialog.getByLabel("Distance (km)").fill("3");
+    await page.evaluate(() => { window.__deskFail = "schedule_benchmark"; });
+    await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("Unable to save right now");
+    await expect(dialog.getByLabel("Event name", { exact: true })).toHaveValue("3 km fitness test");
+    await page.screenshot({ path: `test-results/benchmark-${width}.png`, animations: "disabled" });
+    await page.evaluate(() => { window.__deskFail = ""; });
+    await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "schedule_benchmark").pop().args)).toMatchObject({ name: "3 km fitness test", distanceM: 3000 });
+  });
+}
+
 test("plan creation submits the established contract", async ({ page }) => {
   await page.goto("/desk.html?noPlan=1");
   await page.getByRole("button", { name: "Create plan", exact: true }).click();
@@ -965,6 +1109,7 @@ test("Journal combines filters and opens recorded splits", async ({ page }) => {
   await expect(page.locator(".activity-row")).toHaveCount(9);
   await page.locator(".activity-row").first().click();
   await expect(page.getByRole("complementary", { name: "Activity review" })).toBeVisible();
+  await page.getByRole("tab", { name: "Splits", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Kilometre splits" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "vs previous km" })).toBeVisible();
   await page.getByRole("button", { name: "Back", exact: true }).click();

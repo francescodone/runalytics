@@ -151,6 +151,7 @@ pub fn run() {
             commands::plan_sync_check,
             commands::match_calendar_activity,
             commands::move_workout,
+            commands::schedule_benchmark,
             commands::week_deviations,
             commands::reset_week,
             commands::set_workout_skipped,

@@ -1,4 +1,4 @@
-import { tauri, el, fail, fmtDateDMY, fmtKm, inTauri } from "./lib/ipc";
+import { tauri, el, fail, fmtDateDMY, fmtKm, inTauri, estimatedTimeRange, fmtTimeRange } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -244,7 +244,11 @@ function renderProposal(): void {
           ? ` · ${fmtKm(e.oldDistanceM)}`
           : "";
       const nowKm = e.kind === "rest" ? "" : e.distanceM != null ? ` · ${fmtKm(e.distanceM)}` : "";
-      const nowMin = e.kind === "rest" || e.durationMin == null ? "" : ` · ${Math.round(e.durationMin)} min`;
+      const nowMin = e.kind === "rest" ? "" : fmtTimeRange(estimatedTimeRange(e))
+        ? ` · ${fmtTimeRange(estimatedTimeRange(e))}`
+        : e.durationMin != null
+          ? ` · ${Math.round(e.durationMin)} min`
+          : "";
       // The stored title carries its own "(was: …)" suffix; the struck line
       // above already says that, so don't print it twice.
       const nowTitle = e.title.replace(/\s*\(was: .*\)$/, "");

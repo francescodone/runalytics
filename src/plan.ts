@@ -1,4 +1,4 @@
-import { tauri, el, fail, fmtPace, fmtPaceBand, fmtPaceHeld, fmtClock, fmtDateDMY, fmtDateTime, parsePace, inTauri, ymdLocal } from "./lib/ipc";
+import { tauri, el, fail, fmtPace, fmtPaceBand, fmtPaceHeld, fmtClock, fmtDateDMY, fmtDateTime, parsePace, inTauri, ymdLocal, estimatedTimeRange, fmtTimeRange } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { initSyncIndicator } from "./lib/sync";
 import { withBusy } from "./lib/feedback";
@@ -604,7 +604,10 @@ function renderPlanWeeks(workouts: PlanWorkout[]): void {
     sessions.innerHTML = byWeek.get(weeks[index])!.map((workout) => {
       const date = new Date(`${workout.date}T12:00:00`);
       const pace = workout.paceLoSKm != null && workout.paceHiSKm != null ? ` · ${fmtPaceBand(workout.paceLoSKm, workout.paceHiSKm)}` : "";
-      return `<button type="button" class="plan-session chip-${workout.kind}${workout.done ? " session-completed" : ""}" data-session="${escapeHtml(workout.id)}" data-date="${workout.date}"><span class="plan-session-date"><span>${date.toLocaleDateString(undefined, { weekday: "short" })}</span><strong>${date.getDate()}</strong></span><span><strong>${escapeHtml(workout.title)}</strong><small>${workout.distanceM ? `${(workout.distanceM / 1000).toFixed(1)} km` : workout.durationMin ? `${workout.durationMin} min` : "Rest"}${pace}</small>${workout.done || workout.status === "skipped" ? `<span class="session-status">${workout.done ? "Completed" : "Skipped"}</span>` : ""}</span><span class="session-arrow" aria-hidden="true">${workout.done ? icons.check : icons.chevronRight}</span></button>`;
+      const size = workout.distanceM
+        ? `${(workout.distanceM / 1000).toFixed(1)} km`
+        : fmtTimeRange(estimatedTimeRange(workout)) ?? (workout.durationMin != null ? `${Math.round(workout.durationMin)} min` : "Rest");
+      return `<button type="button" class="plan-session chip-${workout.kind}${workout.done ? " session-completed" : ""}" data-session="${escapeHtml(workout.id)}" data-date="${workout.date}"><span class="plan-session-date"><span>${date.toLocaleDateString(undefined, { weekday: "short" })}</span><strong>${date.getDate()}</strong></span><span><strong>${escapeHtml(workout.title)}</strong><small>${size}${pace}</small>${workout.done || workout.status === "skipped" ? `<span class="session-status">${workout.done ? "Completed" : "Skipped"}</span>` : ""}</span><span class="session-arrow" aria-hidden="true">${workout.done ? icons.check : icons.chevronRight}</span></button>`;
     }).join("");
   };
   weeks.forEach((week, index) => {

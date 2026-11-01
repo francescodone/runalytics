@@ -39,6 +39,48 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify glass interaction rewrite",
+			"type": "shell",
+			"command": "npx playwright test tests/desk.spec.mjs --grep 'primary action depth|touch surfaces track|reduced motion keeps|selection continuity|semantic reveals|frosted surfaces' --workers=1",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify benchmarks",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib benchmark --offline && npm run build && npx playwright test tests/desk.spec.mjs --grep 'benchmark'",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify benchmark workflows",
+			"type": "shell",
+			"command": "npx playwright test tests/desk.spec.mjs --grep benchmark --output test-results-benchmarks",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify map themes",
+			"type": "shell",
+			"command": "npx tsc --noEmit && npx playwright test tests/desk.spec.mjs --grep 'map theme overrides|activity route draws' --workers=1 --output=test-results-map-themes",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify benchmark regressions",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline && npx playwright test tests/desk.spec.mjs --grep 'benchmark|schedule mutations|reset previews|plan creation|pacing' --output test-results-benchmark-regressions",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify race test integration",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline -- --skip calendar::tests::quality_sessions_are_named_and_easy_steps_have_no_upper_bound && npm run build && npx playwright test tests/desk.spec.mjs --grep 'benchmark|schedule mutations|reset previews|plan creation|pacing' --output test-results-benchmark-regressions && git diff --check",
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

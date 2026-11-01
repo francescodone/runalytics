@@ -55,6 +55,12 @@ export const deskFixture = `(function () {
       return events;
     }
     if (cmd === 'move_workout') { deskCurrent[1].find(workout => workout.id === args.workoutId).date = args.date; return null; }
+    if (cmd === 'schedule_benchmark') {
+      const existing = deskCurrent[1].find(workout => workout.date === args.date);
+      const benchmark = {...existing,id:existing?.id ?? 'synthetic-benchmark',planId:deskCurrent[0].id,date:args.date,plannedDate:existing?.plannedDate ?? args.date,kind:'race',title:'Benchmark: '+args.name,distanceM:args.distanceM,done:false,status:'planned'};
+      deskCurrent[1] = deskCurrent[1].filter(workout => workout.id !== benchmark.id).concat(benchmark);
+      return null;
+    }
     if (cmd === 'set_workout_skipped') { deskCurrent[1].find(workout => workout.id === args.workoutId).status = args.skipped ? 'skipped' : 'planned'; return null; }
     if (cmd === 'abort_plan') { deskCurrent = null; return null; }
     if (cmd === 'push_plan_to_provider') { if (window.__deskHoldPush) await new Promise(resolve => { window.__deskResolvePush=resolve; }); deskCurrent[0].pushedId = 'watch-plan'; return 'published'; }

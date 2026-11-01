@@ -1,25 +1,23 @@
 :root {
   overflow-x: clip;
-  --motion-press: 80ms;
-  --motion-feedback: 140ms;
-  --motion-change: 220ms;
-  --motion-surface: 320ms;
-  --motion-exit: 180ms;
-  --motion-settle: cubic-bezier(.22, 1, .36, 1);
-  --motion-leave: cubic-bezier(.4, 0, 1, 1);
+  --motion-press: 90ms;
+  --motion-feedback: 180ms;
+  --motion-change: 300ms;
+  --motion-surface: 420ms;
+  --motion-exit: 200ms;
+  --motion-settle: cubic-bezier(.16, 1, .3, 1);
+  --motion-leave: cubic-bezier(.4, 0, .8, .4);
   --desk-ease: var(--motion-settle);
 }
 
 button, a, input, select, textarea, summary {
-  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle);
+  transition: background-color var(--motion-change) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle), scale var(--motion-change) var(--motion-settle), translate var(--motion-change) var(--motion-settle);
 }
-.desk-button, .month-number, .mobile-date-ribbon button {
-  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
-}
+:is(button, a, summary):active:not(:disabled):not([aria-disabled="true"]) { scale: .96; transition-duration: var(--motion-press); }
 button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { transform: none; }
 .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active { scale: .96; transition-duration: var(--motion-press); }
-.session-tile, .activity-row, .settings-task-list a, .roadmap-row { transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle); }
-.session-tile:active, .activity-row:active, .settings-task-list a:active, .roadmap-row:active { background: var(--desk-selection); transform: none; }
+.session-tile, .activity-row, .settings-task-list a, .roadmap-row { transition: background-color var(--motion-change) var(--motion-settle), box-shadow var(--motion-change) var(--motion-settle), scale var(--motion-change) var(--motion-settle), translate var(--motion-change) var(--motion-settle); }
+.session-tile:active, .activity-row:active, .settings-task-list a:active, .roadmap-row:active { background: var(--desk-selection); translate: 0; scale: .985; transition-duration: var(--motion-press); }
 .session-tile.is-dragging { opacity: .35; }
 .day-sessions { border-radius: 6px; transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
 .day-sessions[data-drop-target="true"] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
@@ -30,7 +28,9 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button:disabled:not([aria-busy="true"]) { scale: 1; }
 .desk-button[aria-busy="true"] { border-color: color-mix(in srgb, currentColor 45%, transparent); }
 .desk-button.primary { box-shadow: inset 0 1px 0 #ffffff24, 0 1px 2px #11251e18; }
-.desk-button.primary::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 1px 0 #ffffff38, 0 3px 8px #11251e24; opacity: 0; transition: opacity var(--motion-feedback) var(--motion-settle); }
+.desk-button::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(125deg, #ffffff30, #ffffff00 55%); box-shadow: inset 0 1px 0 #ffffff38; opacity: 0; transition: opacity var(--motion-change) var(--motion-settle); }
+.desk-button:focus-visible::before { opacity: 1; }
+.desk-button:active:not(:disabled)::before { opacity: .25; }
 .desk-button.primary:active:not(:disabled)::before { opacity: 0; }
 .desk-button.primary:active:not(:disabled) { box-shadow: inset 0 1px 3px #00000024; }
 .desk-button .button-content { min-width: 0; }
@@ -40,17 +40,17 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button:active .control-tooltip { opacity: 0; visibility: hidden; }
 .control-tooltip[data-dismissed="true"] { opacity: 0 !important; visibility: hidden !important; }
 .desk-navigation a, .horizon-switch a, .pace-mode button, .mobile-date-ribbon button, .pace-session-picker button { position: relative; isolation: isolate; }
-.selection-marker { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: var(--desk-selection); }
+.selection-marker { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: color-mix(in srgb, var(--desk-selection) 86%, transparent); box-shadow: inset 0 1px 0 var(--desk-highlight), 0 2px 6px #0000000a; }
 .mobile-date-ribbon button[aria-pressed="true"]:has(.selection-marker) { background: transparent; }
 .mobile-date-ribbon .selection-marker { background: var(--desk-action); }
-.pace-session-picker .selection-marker { inset: auto 0 -2px; height: 2px; background: var(--desk-ink); }
+.pace-session-picker .selection-marker { inset: auto 0 -2px; height: 2px; background: var(--desk-action); }
 .pace-session-picker button[aria-pressed="true"]:has(.selection-marker) { border-color: transparent; }
 .pace-session-picker button, .lap-pace-column { transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle); }
 .pace-session-picker button:active, .lap-pace-column:active { background: var(--desk-soft); }
 .pace-point-session circle, .pace-point-range { transition: opacity var(--motion-feedback) var(--motion-settle), stroke var(--motion-feedback) var(--motion-settle); }
 .pace-point-session:not(.selected) .pace-point-range { opacity: .35; }
 .desk-navigation a[aria-current]:has(.selection-marker), .horizon-switch a[aria-current]:has(.selection-marker), .pace-mode button[aria-pressed="true"]:has(.selection-marker) { background: transparent; box-shadow: none; }
-.horizon-switch .selection-marker, .pace-mode .selection-marker { background: var(--desk-surface); box-shadow: 0 1px 3px #162d2018; }
+.pace-mode .selection-marker { background: var(--desk-surface); box-shadow: 0 1px 3px #162d2018; }
 .horizon-switch a, .pace-mode button { font-weight: 600; }
 .desk-navigation a { font-weight: 600; }
 .desk-inspector { overflow-x: clip; }
@@ -71,15 +71,15 @@ progress { accent-color: var(--desk-action); }
 .native-progress { animation: status-arrive var(--motion-feedback) var(--motion-settle); }
 .desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) 120ms both; }
 .motion-change { min-width: 0; }
-.health-verdict, .health-analysis, .health-history, .activity-library, .plan-studio, .settings-editor, .settings-directory, .milestones, .pain-workspace, .desk-empty {
-  animation: content-arrive var(--motion-change) var(--motion-settle);
-}
+[data-reveal="visible"] { animation: content-arrive var(--motion-surface) var(--motion-settle) var(--reveal-delay, 0ms) backwards; }
+[data-reveal="visible"]:is(:hover, :focus-within, :active) { animation: none; }
 .choice-row label, .toggle-setting { transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
 .pace-mode button, .pace-session-picker button, .lap-row-button, .notice-close {
   transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
 }
 .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: .96; transition-duration: var(--motion-press); }
-.chat-message { animation: message-arrive var(--motion-feedback) var(--motion-settle); }
+.chat-message { animation: message-arrive var(--motion-change) var(--motion-settle); }
+.button-result > svg { animation: result-arrive var(--motion-change) var(--motion-settle); }
 .conversation-expansion { overflow: clip; }
 .desk-workspace > .workspace-heading { animation: none; }
 .desk-workspace:focus { outline: none; }
@@ -91,17 +91,19 @@ details[open] > summary { color: var(--desk-action); }
   details::details-content { block-size: 0; overflow: clip; transition: block-size var(--motion-change) var(--motion-settle), content-visibility var(--motion-change) allow-discrete; }
   details[open]::details-content { block-size: auto; }
 }
-@keyframes scrim-arrive { from { opacity: 0; } to { opacity: 1; } }
-@keyframes scrim-leave { from { opacity: 1; } to { opacity: 0; } }
+@keyframes scrim-arrive { from { opacity: 0; -webkit-backdrop-filter: blur(0); backdrop-filter: blur(0); } to { opacity: 1; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); } }
+@keyframes scrim-leave { from { opacity: 1; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); } to { opacity: 0; -webkit-backdrop-filter: blur(0); backdrop-filter: blur(0); } }
 @keyframes status-arrive { from { opacity: 0; } to { opacity: 1; } }
-@keyframes content-arrive { from { opacity: .65; } to { opacity: 1; } }
-@keyframes message-arrive { from { opacity: .65; translate: 0 3px; } to { opacity: 1; translate: 0; } }
+@keyframes content-arrive { from { opacity: .35; translate: 0 8px; filter: blur(3px); } to { opacity: 1; translate: 0; filter: blur(0); } }
+@keyframes message-arrive { from { opacity: 0; translate: 0 6px; filter: blur(2px); } to { opacity: 1; translate: 0; filter: blur(0); } }
+@keyframes result-arrive { from { opacity: 0; scale: .25; filter: blur(4px); } to { opacity: 1; scale: 1; filter: blur(0); } }
 
 @media (hover: hover) and (pointer: fine) {
-  .desk-button.primary:not(:disabled):not(:active):hover::before { opacity: 1; }
-  .session-tile:hover { box-shadow: inset 0 0 0 1px var(--desk-action); }
-  .activity-row:hover, .roadmap-row:hover { background: color-mix(in srgb, var(--desk-selection) 60%, transparent); }
-  .desk-button:not(.primary):not(:disabled):hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent); }
+  .desk-button:not(:disabled):not(:active):hover::before { opacity: 1; }
+  .session-tile:not(:active):not(.is-dragging):hover { translate: 0 -2px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--desk-action) 45%, transparent), 0 8px 18px #00000012; }
+  .activity-row:hover, .roadmap-row:hover, .settings-task-list a:hover { background: color-mix(in srgb, var(--desk-selection) 65%, transparent); }
+  .desk-button:not(.primary):not(:disabled):hover { background-color: color-mix(in srgb, var(--desk-surface) 88%, transparent); box-shadow: inset 0 1px 0 var(--desk-highlight), 0 3px 10px #00000012; }
+  .desk-navigation a:not([aria-current]):hover, .horizon-switch a:not([aria-current]):hover { background-color: color-mix(in srgb, var(--desk-selection) 65%, transparent); }
   .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: 450ms; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: 2px 0; }
   .activity-row > svg:last-child, .settings-task-list a > svg:last-child, .roadmap-row > svg:last-child { transition: translate var(--motion-change) var(--motion-settle); }
@@ -129,8 +131,14 @@ details[open] > summary { color: var(--desk-action); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
+  :is(button, a, summary):active, .session-tile:hover { scale: 1 !important; translate: none !important; }
   .desk-button.primary .button-content { transform: none !important; }
   .desk-button:active:not(:disabled), .month-number:active, .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }
   .desk-button:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .desk-dialog::backdrop { animation: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  [data-reveal="visible"], .chat-message, .button-result > svg { animation-name: status-arrive; }
+  .desk-button::before { display: none; }
 }

@@ -54,6 +54,14 @@ distributed.
   tempo/interval reps. Consistent evidence can propose bounded changes to quality
   paces and upcoming quality distances, with before/after race estimates. Nothing
   changes until you approve; watch fitness predictions remain separate.
+- **Races and tests**: Training > Schedule race or test adds a 5 km parkrun,
+  tune-up race or 1-10 km time trial at least eight days before the plan target.
+  It replaces that day's workout and eases adjacent hard or long sessions.
+  After syncing, match the race-only activity to the benchmark. A recorded
+  distance within 5% of the scheduled distance can support a 5 s/km quality-pace
+  adjustment using the plan's race model. Changes require approval; faster
+  targets also require healthy recovery and load. Completed runs, the target
+  race and watch fitness measurements are preserved.
 - **Calendar**: inspect workouts in Training, including warm-up,
   repetitions, recovery, cool-down, and pace ranges. Completed runs replace
   matched planned events and retain the original plan in their notes.

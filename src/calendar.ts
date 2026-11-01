@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri, fmtDateDMY } from "./lib/ipc";
+import { tauri, el, fail, inTauri, fmtDateDMY, estimatedTimeRange, fmtTimeRange } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -329,7 +329,14 @@ function agendaMeta(w: CalendarEvent): string {
   else if (w.missed) parts.push("Missed");
   if (w.adjusted) parts.push("Adjusted");
   if (w.distanceM) parts.push(`${(w.distanceM / 1000).toFixed(1)} km`);
-  if (w.durationMin) parts.push(`${Math.round(w.durationMin)} min`);
+  // A banked run's time is measured, so it stays a single number; a planned
+  // session's is an estimate, and estimates are shown as a whole-minute range.
+  if (w.activityId != null) {
+    if (w.durationMin) parts.push(`${Math.round(w.durationMin)} min`);
+  } else {
+    const estimated = fmtTimeRange(estimatedTimeRange(w));
+    if (estimated) parts.push(estimated);
+  }
   return parts.join(" · ");
 }
 

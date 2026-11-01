@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { IconArrowLeft, IconArrowRight, IconPlus, IconDeviceWatch, IconRotate, IconCopy, IconCalendarEvent, IconCheck, IconX } from "@tabler/icons-react";
-import { tauri, fmtDateDMY, fmtDuration, fmtKm, fmtPace, parsePace } from "../lib/ipc";
+import { tauri, fmtDateDMY, fmtDuration, fmtKm, fmtPace, parsePace, estimatedTimeRange, fmtTimeRange } from "../lib/ipc";
 import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan } from "../lib/types";
 import { cleanTitle, dateValue, dayName, kindName, monday, navigate, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
@@ -16,6 +16,7 @@ export function Training() {
   const [selectedDay, setSelectedDay] = useState(today);
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
   const [create, setCreate] = useState(false);
+  const [benchmark, setBenchmark] = useState(false);
   const [reset, setReset] = useState(false);
   const [cancel, setCancel] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -48,7 +49,7 @@ export function Training() {
     <div className="training-context">
       <div><span className="muted">{plan ? `${plan.kind === "maintenance" ? "Maintenance" : plan.kind === "improvement" ? "Improvement" : "Race preparation"} / ${plan.distance}` : "Your training"}</span>
         <h2>{horizon === "plan" ? plan ? `Building toward ${shortDate(plan.targetDate)}` : "A plan that fits your life" : horizon === "month" ? dateValue(cursor).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : `${shortDate(first)} - ${shortDate(shiftDate(first, 6))}`}</h2></div>
-      <div className="training-actions">{plan ? <Button disabled={!connected} busy={command.busy} onClick={() => void command.run(() => tauri.pushPlan("coros"), "Plan sent to COROS.")}><IconDeviceWatch size={18} />{plan.pushedId ? "Update watch" : "Send to watch"}</Button> : <Button tone="primary" onClick={() => setCreate(true)} disabled={current.loading || Boolean(current.error) || !connected || !synced}><IconPlus size={18} />Create plan</Button>}</div>
+      <div className="training-actions">{plan ? <><Button onClick={() => setBenchmark(true)}><IconPlus size={18} />Schedule race or test</Button><Button disabled={!connected} busy={command.busy} onClick={() => void command.run(() => tauri.pushPlan("coros"), "Plan sent to COROS.")}><IconDeviceWatch size={18} />{plan.pushedId ? "Update watch" : "Send to watch"}</Button></> : <Button tone="primary" onClick={() => setCreate(true)} disabled={current.loading || Boolean(current.error) || !connected || !synced}><IconPlus size={18} />Create plan</Button>}</div>
     </div>
     {command.busy && planProgress && <div className="native-progress" role="status"><span>{planProgress.stage}</span><progress max={100} value={planProgress.percent} aria-label="Watch publishing progress" /></div>}
     <ErrorNotice error={command.error} />
@@ -109,6 +110,7 @@ export function Training() {
     </Change>
     {horizon === "plan" && plan && <PlanAdjustments source="pacing" />}
     <Presence>
+    {benchmark && plan && <ScheduleBenchmark key="benchmark" plan={plan} initialDate={selectedDay} onClose={() => setBenchmark(false)} onScheduled={date => { setBenchmark(false); setCursor(date); setSelectedDay(date); setSelected(null); navigate("training", "week"); }} />}
     {create && <CreatePlan key="create" defaults={defaults.data} onClose={() => setCreate(false)} />}
     {reset && <ResetWeek key="reset" week={first} onClose={() => setReset(false)} />}
     {cancel && <Dialog key="cancel" title="End this plan?" onClose={() => setCancel(false)}><p>Future sessions will be removed. Completed activities stay in your journal. Runalytics will also cancel the plan on your watch.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setCancel(false)}>Keep plan</Button><Button tone="danger" busy={command.busy} onClick={() => void command.run(async () => {
@@ -122,7 +124,7 @@ export function Training() {
 function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active: boolean; onSelect: () => void }) {
   return <button className={`session-tile kind-${event.kind} ${active ? "selected" : ""}`} aria-pressed={active} onClick={onSelect} draggable={Boolean(event.workoutId && event.activityId == null && event.kind !== "race" && event.status !== "skipped")} onDragStart={drag => { drag.dataTransfer.setData("text/plain", event.workoutId ?? ""); drag.dataTransfer.effectAllowed = "move"; drag.currentTarget.classList.add("is-dragging"); }} onDragEnd={drag => drag.currentTarget.classList.remove("is-dragging")}>
     <span className="session-type">{kindName(event.kind)}{event.activityId != null && <IconCheck size={15} aria-label="Completed" />}{event.status === "skipped" && <IconX size={15} aria-label="Skipped" />}</span>
-    <strong>{cleanTitle(event.title)}</strong><span>{event.distanceM != null ? fmtKm(event.distanceM) : event.durationMin ? `${event.durationMin} min` : "Recovery"}</span>
+    <strong>{cleanTitle(event.title)}</strong><span>{event.distanceM != null ? fmtKm(event.distanceM) : fmtTimeRange(estimatedTimeRange(event)) ?? (event.durationMin != null ? `${Math.round(event.durationMin)} min` : "Recovery")}</span>
     {event.missed && <small>Missed</small>}{event.adjusted && <small>Adjusted for recovery</small>}{event.moved && <small>Rescheduled</small>}
   </button>;
 }
@@ -137,7 +139,7 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
   const editable = event.workoutId && event.activityId == null && event.kind !== "race";
   return <div className="session-detail"><span className="session-type">{kindName(event.kind)}</span><h2>{cleanTitle(event.title)}</h2><p className="muted">{fmtDateDMY(event.date)}{event.moved && event.plannedDate ? ` / Originally ${fmtDateDMY(event.plannedDate)}` : ""}</p>
     {event.adjusted && <p className="context-note">Adjusted for you: {event.adjusted}</p>}
-    <dl className="metrics-line"><Metric label="Distance" value={event.distanceM != null ? (event.distanceM / 1000).toFixed(1) : "Not specified"} unit={event.distanceM != null ? "km" : undefined} />{event.durationMin != null && <Metric label="Duration" value={event.durationMin} unit="min" />}</dl>
+    <dl className="metrics-line"><Metric label="Distance" value={event.distanceM != null ? (event.distanceM / 1000).toFixed(1) : "Not specified"} unit={event.distanceM != null ? "km" : undefined} />{event.activityId != null ? event.durationMin != null && <Metric label="Duration" value={Math.round(event.durationMin)} unit="min" /> : fmtTimeRange(estimatedTimeRange(event)) && <Metric label="Estimated time" value={fmtTimeRange(estimatedTimeRange(event))} />}</dl>
     <div className="prescription">{event.notes.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
     <Button onClick={() => void command.run(() => navigator.clipboard.writeText(event.notes), "Session copied.")}><IconCopy size={18} />Copy prescription</Button>
     {review.data && <section className="session-recording"><h3>Recorded run</h3><p>{fmtDuration(review.data.activity.durationS)} at {fmtPace(review.data.activity.avgPaceSKm)}/km</p><Button onClick={() => navigate("journal", String(event.activityId))}>Open activity review</Button></section>}
@@ -160,6 +162,33 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
       if (await command.run(() => tauri.matchCalendarActivity(event.workoutId!, Number(match)), "Recorded run matched to this session.")) onDone();
     }}><label>Recorded activity<select required value={match} onChange={change => setMatch(change.target.value)}><option value="">Choose a nearby run</option>{candidates.data?.filter(candidate => candidate.activityId != null && candidate.workoutId == null).map(candidate => <option key={candidate.id} value={candidate.activityId!}>{fmtDateDMY(candidate.date)} / {fmtKm(candidate.distanceM ?? 0)}</option>)}</select></label><Button type="submit" disabled={!match} busy={command.busy}>Match run</Button></form></section>}
   </div>;
+}
+
+function ScheduleBenchmark({ plan, initialDate, onClose, onScheduled }: { plan: TrainingPlan; initialDate: string; onClose: () => void; onScheduled: (date: string) => void }) {
+  const command = useCommand();
+  const earliest = [shiftDate(today(), 1), shiftDate(plan.createdAt.slice(0, 10), 1)].sort()[1];
+  const latest = shiftDate(plan.targetDate, -8);
+  const [preset, setPreset] = useState("parkrun");
+  const [name, setName] = useState("parkrun");
+  const [distance, setDistance] = useState(5);
+  const [date, setDate] = useState(initialDate >= earliest && initialDate <= latest ? initialDate : earliest);
+  return <Dialog title="Schedule race or test" onClose={onClose}><form className="form-grid" onSubmit={async submit => {
+    submit.preventDefault();
+    if (await command.run(() => tauri.scheduleBenchmark(date, name, distance * 1000), "Benchmark scheduled. Nearby hard sessions have been eased.")) onScheduled(date);
+  }}>
+    <label className="full">Event<select value={preset} onChange={change => {
+      const value = change.target.value; setPreset(value);
+      setName(value === "parkrun" ? "parkrun" : value === "race" ? "Tune-up race" : "Time trial");
+      if (value === "parkrun") setDistance(5);
+    }}><option value="parkrun">parkrun / 5 km</option><option value="race">Tune-up race</option><option value="trial">Time trial</option></select></label>
+    <label className="full">Event name<input required maxLength={80} value={name} onChange={change => setName(change.target.value)} /></label>
+    <label>Date<input type="date" required min={earliest} max={latest} value={date} onChange={change => setDate(change.target.value)} /></label>
+    <label>Distance (km)<input type="number" required min={1} max={10} step={0.1} disabled={preset === "parkrun"} value={distance} onChange={change => setDistance(Number(change.target.value))} /></label>
+    <p className="context-note full">Replaces that day's session and eases adjacent hard or long runs. Your target race stays unchanged. Run this as a hard effort; match the race-only recording afterwards for a pace review.</p>
+    {earliest > latest && <p className="context-note full">There is no room for a benchmark before the final week of this plan.</p>}
+    <div className="full"><ErrorNotice error={command.error} /></div>
+    <div className="form-actions full"><Button onClick={onClose}>Cancel</Button><Button type="submit" tone="primary" busy={command.busy} disabled={earliest > latest || !name.trim()}><IconCalendarEvent size={18} />Schedule benchmark</Button></div>
+  </form></Dialog>;
 }
 
 function Predictions({ defaults }: { defaults: PlanDefaults }) {

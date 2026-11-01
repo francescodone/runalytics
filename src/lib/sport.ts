@@ -26,6 +26,19 @@ export function isBikeSport(sport: string): boolean {
   return s.includes("cycl") || s.includes("ride") || s.includes("bike");
 }
 
+/// Gym-style sessions whose distance is sets, not kilometres.
+export function isStrengthSport(sport: string): boolean {
+  const s = sport.toLowerCase();
+  return s.includes("strength") || s.includes("gym") || s.includes("yoga");
+}
+
+/// COROS sometimes answers the record list with a bare numeric sport code
+/// ("1", "2", "10") where the label should be. A label without a single
+/// letter names no sport a runner can read, so those rows are noise.
+export function isReadableSport(sport: string): boolean {
+  return /[a-z]/i.test(sport);
+}
+
 export const isRun = (a: Activity): boolean => isRunSport(a.sport);
 
 /// Training that counts as effort but not as running mileage: cycling, swim,

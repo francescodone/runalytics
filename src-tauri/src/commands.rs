@@ -770,6 +770,22 @@ pub async fn move_workout(
     after_schedule_change(&app, &state).await
 }
 
+#[tauri::command]
+pub async fn schedule_benchmark(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    date: String,
+    name: String,
+    distance_m: f64,
+) -> Result<()> {
+    {
+        let _guard = state.calendar_lock.lock().await;
+        calendar::schedule_benchmark(&state.store, crate::store::parse_date_pub(&date)?,
+            chrono::Local::now().date_naive(), &name, distance_m)?;
+    }
+    after_schedule_change(&app, &state).await
+}
+
 /// What a "reset this week" preview shows for one drifted session: where it
 /// sits now and the day the plan generated it for. A reset that silently moved
 /// four runs is the same surprise as a bad drag, so the sheet names them first.
@@ -1135,7 +1151,12 @@ pub async fn apply_proposal(
         let evidence = pacing::adaptation_reviews(&state.store, &plan, &thresholds(&state))?;
         let (count, direction) = pacing::streak(&evidence);
         let expected_direction = if offset < plan.quality_offset_sec_km { Execution::Ahead } else { Execution::Behind };
-        if count < thresholds(&state).pace_streak as usize || direction != Some(expected_direction) {
+        let benchmark = evidence.last().filter(|review| review.kind == WorkoutKind::Race);
+        let benchmark_signature = benchmark.map(|review| format!("pacing:benchmark:{}:{}:{}", review.workout_id,
+            if expected_direction == Execution::Ahead { "ahead" } else { "behind" }, plan.id));
+        if (count < thresholds(&state).pace_streak as usize && benchmark.is_none())
+            || direction != Some(expected_direction)
+            || (p.signature.starts_with("pacing:benchmark:") && benchmark_signature.as_deref() != Some(p.signature.as_str())) {
             return Err(AppError::Other("recent reps no longer support this offer; dismiss it and review the latest evidence".into()));
         }
         let expected = pacing::adaptation_edits(&state.store, &plan, offset, from)?;

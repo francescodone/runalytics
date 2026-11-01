@@ -1,29 +1,32 @@
 import { createContext, useContext, useEffect, useRef, useState, type DependencyList, type ReactNode } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { tauri, ymdLocal, inTauri } from "../lib/ipc";
+import { tauri, ymdLocal, inTauri, fmtDateDMY } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
 import { motion, useReducedMotion } from "motion/react";
 import { IconX } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
 
 export type Workspace = "training" | "journal" | "health" | "settings" | "help";
-export type Route = { workspace: Workspace; section: string };
+/// `detail` is the third hash segment (`#journal/1/splits`): the open tab of a
+/// selected record. It is only ever read by the record itself, so every other
+/// route leaves it empty.
+export type Route = { workspace: Workspace; section: string; detail: string };
 export function readRoute(): Route {
-  const [workspace, section = ""] = location.hash.slice(1).split("/");
-  if (["training", "journal", "health", "settings", "help"].includes(workspace)) return { workspace: workspace as Workspace, section };
+  const [workspace, section = "", detail = ""] = location.hash.slice(1).split("/");
+  if (["training", "journal", "health", "settings", "help"].includes(workspace)) return { workspace: workspace as Workspace, section, detail };
   const file = location.pathname.split("/").pop();
-  if (file === "settings.html") return { workspace: "settings", section: workspace || "" };
-  if (file === "support.html") return { workspace: "help", section: "" };
-  if (file === "injury.html") return { workspace: "health", section: "journal" };
+  if (file === "settings.html") return { workspace: "settings", section: workspace || "", detail: "" };
+  if (file === "support.html") return { workspace: "help", section: "", detail: "" };
+  if (file === "injury.html") return { workspace: "health", section: "journal", detail: "" };
   if (file === "achievements.html") {
-    if (workspace === "milestones") return { workspace: "health", section: "milestones" };
-    if (["performance", "recovery", "risk"].includes(workspace)) return { workspace: "health", section: "" };
-    return { workspace: "journal", section: workspace === "routes" ? "map" : "" };
+    if (workspace === "milestones") return { workspace: "health", section: "milestones", detail: "" };
+    if (["performance", "recovery", "risk"].includes(workspace)) return { workspace: "health", section: "", detail: "" };
+    return { workspace: "journal", section: workspace === "routes" ? "map" : "", detail: "" };
   }
-  return { workspace: "training", section: file === "plan.html" ? "plan" : file === "calendar.html" ? "month" : "week" };
+  return { workspace: "training", section: file === "plan.html" ? "plan" : file === "calendar.html" ? "month" : "week", detail: "" };
 }
-export function navigate(workspace: Workspace, section = "") {
-  location.hash = `${workspace}${section ? `/${section}` : ""}`;
+export function navigate(workspace: Workspace, section = "", detail = "") {
+  location.hash = `${workspace}${section ? `/${section}` : ""}${detail ? `/${detail}` : ""}`;
 }
 export function useRoute() {
   const [route, setRoute] = useState(readRoute);
@@ -139,7 +142,7 @@ export function shiftDate(date: string, days: number) {
   return ymdLocal(value);
 }
 export function monday(date: string) { return shiftDate(date, -((dateValue(date).getDay() + 6) % 7)); }
-export const shortDate = (date: string) => dateValue(date).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+export const shortDate = (date: string) => fmtDateDMY(date);
 export const dayName = (date: string) => dateValue(date).toLocaleDateString("en-GB", { weekday: "short" });
 export const cleanTitle = (title: string) => title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
 export const kindName = (kind: string) => ({ longRun: "Long run", easy: "Easy", tempo: "Tempo", intervals: "Intervals", race: "Race", rest: "Rest", completed: "Recorded" }[kind] ?? kind);

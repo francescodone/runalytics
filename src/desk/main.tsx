@@ -51,7 +51,7 @@ function App() {
         <IconButton label={syncing ? "Syncing activities" : "Sync activities"} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");
           notify(`${report.activitiesNew} new activities, ${report.healthDays} health days synced. ${report.messages.join(" ")}`);
-        })}><IconRefresh size={20} className={syncing || command.busy ? "spinner" : ""} /></IconButton>
+        })}><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></IconButton>
         <IconButton label="Help" onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
         <IconButton label="Settings" onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
       </div>

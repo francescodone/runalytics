@@ -96,7 +96,7 @@ pub fn workout_notes(workout: &PlanWorkout, plan: &TrainingPlan) -> String {
 /// whole point of an easy day is that it feels easy.
 fn no_faster_than(low: i64) -> String {
     format!(
-        "no faster than {}/km, at conversational pace 🗣️ — a limit, not a target: \
+        "no faster than {}/km, at conversational pace; a limit, not a target: \
          slower is fine, and often better",
         fmt_pace(low)
     )
@@ -420,6 +420,65 @@ fn average_pace_s_km(activity: &Activity) -> Option<f64> {
         (activity.distance_m > 0.0 && activity.duration_s > 0.0)
             .then_some(activity.duration_s / (activity.distance_m / 1000.0))
     })
+}
+
+pub fn schedule_benchmark(
+    store: &Store,
+    date: NaiveDate,
+    today: NaiveDate,
+    name: &str,
+    distance_m: f64,
+) -> Result<PlanWorkout> {
+    let (plan, workouts) = store.current_plan()?
+        .ok_or_else(|| AppError::Other("Create a training plan first".into()))?;
+    if date <= today || date <= plan.created_at.date_naive() || date >= plan.target_date - Duration::days(7) {
+        return Err(AppError::Other("Choose a future date at least 8 days before your target date".into()));
+    }
+    if name.trim().is_empty() || name.trim().chars().count() > 80
+        || !distance_m.is_finite() || !(1000.0..=10000.0).contains(&distance_m) {
+        return Err(AppError::Other("Enter a name and a distance between 1 and 10 km".into()));
+    }
+    let completions = store.calendar_completions()?;
+    let nearby: Vec<_> = workouts.iter().filter(|workout| (workout.date - date).num_days().abs() <= 1).collect();
+    if nearby.iter().any(|workout| workout.kind == WorkoutKind::Race
+        || (workout.date == date && (workout.done || workout.status == WorkoutStatus::Skipped
+            || completions.iter().any(|entry| entry.0 == workout.id))))
+        || workouts.iter().filter(|workout| workout.date == date).count() > 1 {
+        return Err(AppError::Other("That date conflicts with a race, skipped session or completed run; choose another day".into()));
+    }
+    let existing = workouts.iter().find(|workout| workout.date == date);
+    let pace = crate::plan::engine::race_pace_s_km(plan.threshold_sec_km + plan.quality_offset_sec_km, distance_m);
+    let benchmark = PlanWorkout {
+        id: existing.map(|workout| workout.id.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        plan_id: plan.id,
+        date,
+        planned_date: existing.map(|workout| workout.planned_date).unwrap_or(date),
+        kind: WorkoutKind::Race,
+        title: format!("Benchmark: {}", name.trim()),
+        distance_m: Some(distance_m),
+        duration_min: Some(pace * distance_m / 60000.0),
+        pace_lo_s_km: Some((pace - 5.0).round() as i64),
+        pace_hi_s_km: Some((pace + 5.0).round() as i64),
+        done: false,
+        status: WorkoutStatus::Planned,
+        moved_at: existing.and_then(|workout| workout.moved_at),
+    };
+    let mut changes = vec![benchmark.clone()];
+    for workout in nearby.into_iter().filter(|workout| workout.date != date && !workout.done
+        && workout.status != WorkoutStatus::Skipped
+        && !completions.iter().any(|entry| entry.0 == workout.id)
+        && matches!(workout.kind, WorkoutKind::Tempo | WorkoutKind::Intervals | WorkoutKind::LongRun)) {
+        let mut recovery = workout.clone();
+        recovery.kind = WorkoutKind::Easy;
+        recovery.title = "Easy / benchmark recovery".into();
+        recovery.distance_m = recovery.distance_m.map(|distance| distance.min(5000.0));
+        recovery.duration_min = None;
+        recovery.pace_lo_s_km = Some((plan.threshold_sec_km + 45.0).round() as i64);
+        recovery.pace_hi_s_km = Some((plan.threshold_sec_km + 75.0).round() as i64);
+        changes.push(recovery);
+    }
+    store.save_benchmark_schedule(&changes)?;
+    Ok(benchmark)
 }
 
 /// Reschedule a planned, not-yet-run session to any day from today to the end
@@ -840,6 +899,47 @@ mod tests {
         store.insert_plan(&plan).unwrap();
         store.insert_workouts(&workouts).unwrap();
         (store, plan, workouts)
+    }
+
+    #[test]
+    fn benchmark_replaces_session_and_eases_adjacent_load() {
+        let (store, plan, workouts) = fixture();
+        let today = Utc::now().date_naive();
+        let date = today + Duration::days(14);
+        let mut adjacent = workouts.iter().find(|workout| workout.date != date).unwrap().clone();
+        adjacent.date = date + Duration::days(1);
+        adjacent.kind = WorkoutKind::LongRun;
+        adjacent.distance_m = Some(16000.0);
+        store.update_workout(&adjacent).unwrap();
+        let before = store.plan_workouts(&plan.id).unwrap();
+        let replaced = before.iter().any(|workout| workout.date == date);
+        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+        let after = store.plan_workouts(&plan.id).unwrap();
+        assert_eq!(after.len(), before.len() + usize::from(!replaced));
+        assert_eq!(after.iter().filter(|workout| workout.date == date).count(), 1);
+        assert_eq!(benchmark.kind, WorkoutKind::Race);
+        assert_eq!(benchmark.distance_m, Some(5000.0));
+        let recovery = after.iter().find(|workout| workout.id == adjacent.id).unwrap();
+        assert_eq!(recovery.kind, WorkoutKind::Easy);
+        assert_eq!(recovery.distance_m, Some(5000.0));
+        assert_eq!(store.current_plan().unwrap().unwrap().0.target_date, plan.target_date);
+        assert!(schedule_benchmark(&store, date, today, "Again", 5000.0).is_err());
+    }
+
+    #[test]
+    fn benchmark_rejects_invalid_dates_distances_and_completed_sessions() {
+        let (store, plan, workouts) = fixture();
+        let today = Utc::now().date_naive();
+        let date = today + Duration::days(14);
+        for distance in [f64::NAN, f64::INFINITY, 0.0, 999.0, 21097.5] {
+            assert!(schedule_benchmark(&store, date, today, "Test", distance).is_err());
+        }
+        assert!(schedule_benchmark(&store, today - Duration::days(1), today, "Test", 5000.0).is_err());
+        assert!(schedule_benchmark(&store, plan.target_date - Duration::days(7), today, "Test", 5000.0).is_err());
+        let mut completed = workouts[0].clone();
+        completed.done = true;
+        store.update_workout(&completed).unwrap();
+        assert!(schedule_benchmark(&store, completed.date, today, "Test", 5000.0).is_err());
     }
 
     fn insert_run(store: &Store, workout: &PlanWorkout, sport: &str, record: &str) -> i64 {

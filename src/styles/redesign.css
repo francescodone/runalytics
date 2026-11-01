@@ -665,7 +665,7 @@ body[data-page="support"] details p { font-size: 14px; line-height: 1.7; }
   body .agenda-row { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
   body .agenda-kind { grid-area: 1 / 1; }
   body .agenda-title { grid-area: 2 / 1; }
-  body .agenda-meta { grid-area: 1 / 2 / 3 / 3; text-align: right; max-width: 92px; }
+  body .agenda-meta { grid-area: 1 / 2 / 3 / 3; text-align: right; max-width: 92px; white-space: normal; overflow-wrap: anywhere; }
   body #dash .panel-head { align-items: flex-start; flex-direction: column; gap: 8px; }
   body .activity-metrics { gap: 16px; }
   body .activity-metrics span { font-size: 15px; }
