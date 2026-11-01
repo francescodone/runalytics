@@ -812,14 +812,15 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     })?;
     let code = sync_code(&sub);
     let client = github_client()?;
-    let gist_id = find_gist(&client, &token, &code)
-        .await?
-        .ok_or_else(|| {
+    let gist_id = match config.gist_id.clone() {
+        Some(id) => id,
+        None => find_gist(&client, &token, &code).await?.ok_or_else(|| {
             AppError::Other(
                 "No synced plan found for this COROS account. Publish one from your computer."
                     .into(),
             )
-        })?;
+        })?,
+    };
     config.gist_id = Some(gist_id.clone());
     save(&state.data_dir, &config)?;
 
