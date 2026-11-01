@@ -305,6 +305,14 @@ pub(super) fn threshold_at(
     threshold * (1.0 - (1.0 - gain) * fitness_progress(kind, d, weeks, w))
 }
 
+pub(super) fn threshold_for_plan(plan: &TrainingPlan, weeks: usize, week: usize) -> f64 {
+    match &plan.threshold_state {
+        Some(state) => state.lt2_estimate.pace_s_km.as_ref()
+            .map_or(plan.threshold_sec_km, |anchor| anchor.value.max(plan.threshold_sec_km)),
+        None => threshold_at(plan.kind, plan.distance, plan.threshold_sec_km, weeks, week),
+    }
+}
+
 /// Easy pace from threshold pace (s/km): ~threshold + 45-60 s.
 pub fn easy_pace_s_km(threshold: f64) -> (i64, i64) {
     (
@@ -369,7 +377,21 @@ fn week_start(d: NaiveDate) -> NaiveDate {
 /// volume (km); the first week starts there (or at 70 % of it when the plan
 /// has many weeks, to leave room to build).
 pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
+    generate_with_evidence(req, baseline_km, &super::threshold::Evidence::default())
+}
+
+pub fn generate_with_evidence(
+    req: &PlanRequest,
+    baseline_km: f64,
+    evidence: &super::threshold::Evidence,
+) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
     let today = Utc::now().date_naive();
+    if !req.threshold_sec_km.is_finite() || !(120.0..=1200.0).contains(&req.threshold_sec_km)
+        || !baseline_km.is_finite() || baseline_km < 0.0
+        || req.current_weekly_km.is_some_and(|km| !km.is_finite() || !(0.0..=300.0).contains(&km)) {
+        return Err(AppError::Other("invalid threshold pace or weekly mileage".into()));
+    }
+    let threshold_state = super::threshold::athlete_state(evidence, today, req.threshold_sec_km);
     if req.target_date <= today {
         return Err(AppError::Other(if req.kind.has_race() {
             "race date must be in the future".into()
@@ -467,6 +489,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         // that offer takes effect.
         quality_offset_sec_km: 0.0,
         quality_offset_from: None,
+        threshold_state: Some(threshold_state),
     };
 
     let first_monday = week_start(add_days(req.target_date, -7 * weeks as i64 + 1));
@@ -529,7 +552,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         } else {
             ceil_km((target * long_run_share(req.distance)).min(long_cap)).max(MIN_RUN_KM)
         };
-        let long_pattern = super::session::long_run_pattern(req.kind, req.distance, w, weeks);
+        let long_pattern = super::session::long_pattern_for_plan(&plan, w, weeks);
         // A tune-up is a race effort, not a long run: hold it near a half
         // marathon and drop the excess, making the week a lighter one.
         let mut target_km = target_km;
@@ -571,23 +594,23 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
 
         // Fitness ramps week by week: the threshold sharpens and the quality
         // load grows with it, so week 1's intervals are not week 10's.
-        let thr_w = threshold_at(req.kind, req.distance, req.threshold_sec_km, weeks, w);
+        let thr_w = threshold_for_plan(&plan, weeks, w);
         let load = quality_load_at(
             req.distance,
             baseline,
             fitness_progress(req.kind, req.distance, weeks, w),
-        );
+        ).min(plan.threshold_state.as_ref().unwrap().quality_minutes_cap);
 
         // Every quality session carries the plan's fixed load; a week too
         // small to hold it alongside the long run runs easy instead.
-        let week_quality = super::session::week_quality(req.kind, req.distance, w, weeks);
+        let week_quality = super::session::quality_for_plan(&plan, w, weeks);
         let session_km = |pattern| {
             ceil_km(super::session::quality_session_m(pattern, thr_w, load) / 1000.0)
                 .max(MIN_RUN_KM)
         };
         // The tune-up is that week's quality: a race effort fills its 80/20 budget.
         let tune_up = long_pattern == super::session::LongRunPattern::TuneUp && long_km > 0.0;
-        let quality_open = |off: usize| !is_race_week && !down && !tune_up && before_race(off);
+        let quality_open = |off: usize| !plan.threshold_state.as_ref().unwrap().hold_quality && !is_race_week && !down && !tune_up && before_race(off);
 
         // A second quality day (threshold + VO2max, as both reference builds
         // ran) only when the week has the frequency for it, the long run is
@@ -614,7 +637,8 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         let second_off = quality_off
             .filter(|&off| quality_open(off))
             .filter(|_| {
-                req.weekly_frequency >= 5
+                plan.threshold_state.as_ref().unwrap().allow_second_quality
+                    && req.weekly_frequency >= 5
                     && matches!(phase, Phase::Build | Phase::Peak)
                     && !tapering
                     && !(long_km > 0.0 && long_pattern.is_hard())
@@ -661,6 +685,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
         let quality_off = quality_off.filter(|&off| quality_open(off)).filter(|_| {
             quality_km = session_km(pattern);
             quality_km <= target_km - long_km
+                && load + long_fast_minutes <= MAX_HARD_SHARE * week_minutes
         });
         if quality_off.is_none() {
             quality_km = 0.0;
@@ -797,7 +822,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
     // Shakeout two days out: the easy run already there, or an extra minimum-length one.
     // Race-build only — with no start line to arrive at, the last two days are
     // ordinary training days and an unexplained short run just looks lost.
-    if req.kind.has_race() {
+    if req.kind.has_race() && !plan.threshold_state.as_ref().unwrap().hold_quality {
         let shake = add_days(req.target_date, -2);
         match workouts.iter_mut().find(|workout| workout.date == shake) {
             Some(workout) if workout.kind == WorkoutKind::Easy => {
@@ -847,7 +872,7 @@ pub fn generate(req: &PlanRequest, baseline_km: f64) -> Result<(TrainingPlan, Ve
     // the week's proof of what the block bought, and the session that decides
     // whether the next block starts higher. Maintenance ends on its last
     // ordinary week — there is nothing to test.
-    if req.kind == PlanKind::Improvement {
+    if req.kind == PlanKind::Improvement && !plan.threshold_state.as_ref().unwrap().hold_quality {
         let trial_pace = race_pace_s_km(req.threshold_sec_km, req.distance.distance_m());
         workouts.push(PlanWorkout {
             id: Uuid::new_v4().to_string(),
@@ -1156,7 +1181,7 @@ mod tests {
     /// The reference builds' 400 m repeats ran 3:35 in month 1 and 2:50-3:05
     /// by month 3 of the same build.
     #[test]
-    fn quality_sessions_progress_across_the_plan() {
+    fn quality_pace_does_not_improve_without_new_evidence() {
         let r = req_from_now(RaceDistance::K42, 16);
         let (_, workouts) = generate(&r, 50.0).unwrap();
         // Compare like with like: the pattern rotates, so take the first and
@@ -1169,8 +1194,8 @@ mod tests {
         assert!(tempos.len() >= 3, "expected several tempo sessions");
         let (first, last) = (tempos.first().unwrap(), tempos.last().unwrap());
         assert!(
-            last.pace_lo_s_km.unwrap() < first.pace_lo_s_km.unwrap(),
-            "last tempo {} ({} s/km) must be faster than first tempo {} ({} s/km)",
+            last.pace_lo_s_km.unwrap() == first.pace_lo_s_km.unwrap(),
+            "last tempo {} ({} s/km) must retain first tempo {} ({} s/km) without evidence",
             last.date,
             last.pace_lo_s_km.unwrap(),
             first.date,
@@ -1539,7 +1564,7 @@ mod tests {
                 .count()
         };
         assert!(
-            mp_segments(&long) > 0 && mp_segments(&short) == 0,
+            mp_segments(&long) == 0 && mp_segments(&short) == 0,
             "marathon pace appeared in the wrong block: 42K {}, 5K {}",
             mp_segments(&long),
             mp_segments(&short)
@@ -1603,7 +1628,7 @@ mod tests {
     /// one VO2max — as both reference builds did; the base never does, and a
     /// week whose long run carries race-pace work keeps to one.
     #[test]
-    fn frequent_runner_gets_threshold_and_speed_days() {
+    fn frequency_alone_does_not_authorize_second_quality_days() {
         let (plan, workouts) = generate_with(RaceDistance::K42, 16, 5, 55.0);
         let mut doubles = 0;
         for (monday, week) in by_week(&workouts) {
@@ -1636,8 +1661,8 @@ mod tests {
             }
         }
         assert!(
-            doubles >= 3,
-            "expected several two-quality weeks, got {doubles}"
+            doubles == 0,
+            "unknown capacity must not authorize two-quality weeks, got {doubles}"
         );
         // The first weeks are base: one quality day.
         let first = by_week(&workouts).into_values().next().unwrap();
@@ -1703,7 +1728,7 @@ mod tests {
     /// mid-week medium-long run, race-pace long runs only after the base,
     /// and a half-marathon tune-up two weeks out.
     #[test]
-    fn marathon_build_has_medium_long_race_pace_long_runs_and_tune_up() {
+    fn marathon_build_keeps_aerobic_volume_without_unproven_extra_intensity() {
         let (plan, workouts) = generate_with(RaceDistance::K42, 16, 5, 55.0);
         let weeks = by_week(&workouts);
         let mondays: Vec<NaiveDate> = weeks.keys().copied().collect();
@@ -1765,25 +1790,23 @@ mod tests {
             }
         }
         assert!(
-            long_runs.iter().filter(|w| race_pace_long(w)).count() >= 4,
-            "expected several race-pace long runs"
+            long_runs.iter().all(|w| !race_pace_long(w)),
+            "unknown capacity must retain easy long runs"
         );
-        let tune_up = long_runs
-            .iter()
-            .find(|w| w.title.starts_with("Tune-up"))
-            .expect("a marathon build closes its peak with a tune-up");
-        let days_out = (r_date(&workouts) - tune_up.date).num_days();
-        assert!(
-            (8..=20).contains(&days_out),
-            "tune-up {days_out} days before the race"
-        );
+        assert!(!long_runs.iter().any(|w| w.title.starts_with("Tune-up")));
     }
 
-    fn r_date(workouts: &[PlanWorkout]) -> NaiveDate {
-        workouts
-            .iter()
-            .find(|w| w.kind == WorkoutKind::Race)
-            .unwrap()
-            .date
+    #[test]
+    fn wearable_recovery_gates_actual_quality_prescriptions() {
+        let req = kind_req(PlanKind::Maintenance, RaceDistance::K21, 8);
+        let evidence = super::super::threshold::Evidence {
+            capacity: super::super::threshold::Capacity { injury_active: Some(true), ..Default::default() },
+            ..Default::default()
+        };
+        let (plan, workouts) = generate_with_evidence(&req, 35.0, &evidence).unwrap();
+        assert!(plan.threshold_state.unwrap().hold_quality);
+        assert!(workouts.iter().all(|workout| !is_quality(workout)));
+        let (_, normal) = generate(&req, 35.0).unwrap();
+        assert!(normal.iter().any(is_quality));
     }
 }

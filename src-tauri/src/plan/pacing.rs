@@ -342,6 +342,9 @@ pub fn streak(reviews: &[SessionReview]) -> (usize, Option<Execution>) {
 /// may be moved — at that point the honest message is "your threshold pace is
 /// wrong", not a fifth nudge.
 fn next_offset(plan: &TrainingPlan, direction: Execution) -> Option<f64> {
+    if plan.threshold_state.is_some() && direction == Execution::Ahead {
+        return None;
+    }
     let target = plan.quality_offset_sec_km
         + if direction == Execution::Ahead {
             -STEP_SEC_KM
@@ -813,7 +816,8 @@ mod tests {
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(40.0),
         };
-        let (plan, workouts) = engine::generate(&req, 40.0).unwrap();
+        let (mut plan, workouts) = engine::generate(&req, 40.0).unwrap();
+        plan.threshold_state = None;
         s.insert_plan(&plan).unwrap();
         s.insert_workouts(&workouts).unwrap();
         let quality: Vec<PlanWorkout> = workouts
@@ -1250,7 +1254,8 @@ mod tests {
     #[test]
     fn an_offset_moves_the_prescribed_range() {
         let s = store();
-        let (plan, quality) = plan_with_quality(&s, &[21]);
+        let (mut plan, quality) = plan_with_quality(&s, &[21]);
+        plan.threshold_state = None;
         let w = &quality[0];
         let base = session::quality_band(&plan, w).unwrap();
         let shifted = TrainingPlan {
@@ -1266,6 +1271,16 @@ mod tests {
             ..shifted
         };
         assert_eq!(session::quality_band(&later, w).unwrap(), base);
+    }
+
+    #[test]
+    fn controlled_plans_do_not_reward_fast_repetitions_with_faster_targets() {
+        let store = store();
+        let (mut plan, quality) = plan_with_quality(&store, &[21, 14, 7]);
+        for workout in &quality { complete(&store, &plan, workout, -15.0); }
+        plan.threshold_state = Some(crate::plan::threshold::athlete_state(&Default::default(), Utc::now().date_naive(), plan.threshold_sec_km));
+        assert_eq!(next_offset(&plan, Execution::Ahead), None);
+        assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_none());
     }
 
     /// Easy days and long runs must never move — a tempo session being too

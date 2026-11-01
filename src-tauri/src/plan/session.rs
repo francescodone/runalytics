@@ -6,6 +6,7 @@ use chrono::{Datelike, NaiveDate};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum QualityPattern {
+    Controlled(u32),
     Repeats(u32),
     Continuous,
     Cruise,
@@ -27,6 +28,7 @@ impl QualityPattern {
 
     pub(super) fn pace(self, threshold: f64) -> (i64, i64) {
         match self {
+            Self::Controlled(_) => (threshold.ceil() as i64, (threshold + 10.0).ceil() as i64),
             Self::Repeats(metres) if metres <= 600 => super::engine::interval_s_km(threshold),
             Self::Repeats(metres) => {
                 let race_m = if metres <= 1000 { 5000.0 } else { 10_000.0 };
@@ -168,6 +170,26 @@ pub(super) fn week_quality(
             threshold
         },
         emphasis: if speed_led { speed } else { threshold },
+    }
+}
+
+pub(super) fn quality_for_plan(plan: &TrainingPlan, week: usize, weeks: usize) -> WeekQuality {
+    let mut quality = week_quality(plan.kind, plan.distance, week, weeks);
+    if plan.threshold_state.is_some() {
+        let cap = plan.threshold_state.as_ref().unwrap().quality_minutes_cap;
+        let duration = if cap < 24.0 { 180 } else { [180, 360, 600][week % 3] };
+        quality.threshold = QualityPattern::Controlled(duration);
+        quality.single = quality.threshold;
+        quality.emphasis = quality.threshold;
+    }
+    quality
+}
+
+pub(super) fn long_pattern_for_plan(plan: &TrainingPlan, week: usize, weeks: usize) -> LongRunPattern {
+    if plan.threshold_state.as_ref().is_some_and(|state| !state.allow_second_quality) {
+        LongRunPattern::Easy
+    } else {
+        long_run_pattern(plan.kind, plan.distance, week, weeks)
     }
 }
 
@@ -399,7 +421,7 @@ pub fn title_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> Option<Stri
         return None;
     }
     let (weeks, week) = plan_week(plan, workout);
-    let pattern = week_quality(plan.kind, plan.distance, week, weeks).for_kind(workout.kind);
+    let pattern = quality_for_plan(plan, week, weeks).for_kind(workout.kind);
     Some(quality_title(pattern, &details, week))
 }
 
@@ -422,11 +444,12 @@ fn plan_week(plan: &TrainingPlan, workout: &PlanWorkout) -> (usize, usize) {
 pub(super) fn workout_load(plan: &TrainingPlan, workout: &PlanWorkout) -> Option<f64> {
     let (weeks, week) = plan_week(plan, workout);
     plan.baseline_weekly_km.map(|baseline| {
-        super::engine::quality_load_at(
+        let load = super::engine::quality_load_at(
             plan.distance,
             baseline,
             super::engine::fitness_progress(plan.kind, plan.distance, weeks, week),
-        )
+        );
+        plan.threshold_state.as_ref().map_or(load, |state| load.min(state.quality_minutes_cap))
     })
 }
 
@@ -438,7 +461,7 @@ pub(super) fn workout_load(plan: &TrainingPlan, workout: &PlanWorkout) -> Option
 /// plan only acquired afterwards.
 pub fn quality_offset_for(plan: &TrainingPlan, date: NaiveDate) -> f64 {
     match plan.quality_offset_from {
-        Some(from) if date >= from => plan.quality_offset_sec_km,
+        Some(from) if date >= from => if plan.threshold_state.is_some() { plan.quality_offset_sec_km.max(0.0) } else { plan.quality_offset_sec_km },
         _ => 0.0,
     }
 }
@@ -465,12 +488,11 @@ pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDe
     // created with, or the sized main set no longer fits the workout and every
     // session falls back to the distance-filling legacy path. A maintenance
     // block holds its threshold, which `threshold_at` reports as flat.
-    let thr =
-        super::engine::threshold_at(plan.kind, plan.distance, plan.threshold_sec_km, weeks, week);
+    let thr = super::engine::threshold_for_plan(plan, weeks, week);
     match workout.kind {
         WorkoutKind::Intervals | WorkoutKind::Tempo => {
             let pattern =
-                week_quality(plan.kind, plan.distance, week, weeks).for_kind(workout.kind);
+                quality_for_plan(plan, week, weeks).for_kind(workout.kind);
             build_details(
                 workout,
                 Some(thr),
@@ -480,7 +502,7 @@ pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDe
             )
         }
         WorkoutKind::LongRun => {
-            let pattern = long_run_pattern(plan.kind, plan.distance, week, weeks);
+            let pattern = long_pattern_for_plan(plan, week, weeks);
             let steps = long_run_steps(
                 workout.distance_m.unwrap_or(0.0).max(0.0),
                 pattern,
@@ -660,6 +682,19 @@ fn main_set(
 ) -> Vec<WorkoutStep> {
     let thr = threshold.unwrap_or(300.0);
     let load_of = |steps: &[WorkoutStep]| set_load(steps, thr);
+    if let QualityPattern::Controlled(duration) = pattern {
+        let band = shift_band(band, offset.max(0.0));
+        let pace = band.1.unwrap_or(310).max(1) as f64;
+        let recovery = 60.0 / easy.1.unwrap_or(370).max(1) as f64 * 1000.0;
+        let minutes = target.min(30.0).max(0.0);
+        let work_m = ((duration as f64 / pace * 1000.0) / 10.0).floor() * 10.0;
+        let by_load = (minutes * 60.0 / duration as f64).floor();
+        let by_room = ((available + recovery) / (work_m + recovery)).floor();
+        let repeats = by_load.min(by_room).clamp(0.0, 20.0) as u32;
+        return if repeats == 0 || work_m <= 0.0 { Vec::new() } else {
+            vec![with_recovery(step("Controlled threshold - even effort", work_m, band), repeats, recovery, easy)]
+        };
+    }
     if let QualityPattern::Repeats(requested) = pattern {
         let rep_band = |metres: u32| {
             threshold
@@ -858,6 +893,7 @@ const LONG_RUN_RACE_PURPOSE: &str = "Race-pace segments on pre-fatigued legs reh
 
 fn quality_purpose(pattern: QualityPattern) -> &'static str {
     match pattern {
+    QualityPattern::Controlled(_) => "Repeatable, controlled threshold work with easy recoveries. Pace is a provisional ceiling, not a target to beat; reduce effort for rising HR, lactate, breathing or fatigue.",
         QualityPattern::Repeats(metres) if metres <= 600 => "Short fast reps near VO2max pace recruit fast-twitch fibres and sharpen running economy and neuromuscular speed; brief jog recoveries let you repeat quality without lactate build-up. Keep the last rep as fast as the first.",
         QualityPattern::Repeats(_) => "Reps at roughly 5-10K pace accumulate time close to VO2max, the strongest stimulus for aerobic power, while jog recoveries clear lactate so each rep stays quality. Hold the last rep as controlled as the first.",
         QualityPattern::Cruise => "Cruise intervals (Daniels) accumulate more time at lactate-threshold pace than a single run could, with short jog recoveries to limit fatigue. This raises the pace you can sustain before blood lactate climbs steeply.",
@@ -987,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn marathon_rotates_reps_and_tempo_formats() {
+    fn new_plans_use_controlled_threshold_instead_of_faster_format_rotation() {
         let (plan, workouts) =
             super::super::engine::generate(&request(RaceDistance::K42, 24, 228.0, 50.0), 50.0)
                 .unwrap();
@@ -1002,17 +1038,9 @@ mod tests {
             }
         }
         // Rep lengths of 800 m and up are trimmed to hit the load, so check families, not exact metres.
-        assert!(
-            reps.len() >= 3,
-            "expected the rotation's rep lengths: {reps:?}"
-        );
-        assert_eq!(reps.first(), Some(&400));
-        assert!(reps.iter().any(|m| (700..=1200).contains(m)));
-        assert!(reps.iter().any(|m| *m >= 1300), "no long reps: {reps:?}");
-        assert!(
-            tempos.len() >= 4,
-            "expected continuous, cruise, progressive, ladder and over/under tempos: {tempos:?}"
-        );
+        assert!(reps.is_empty());
+        assert_eq!(tempos.len(), 1);
+        assert!(tempos.first().unwrap().starts_with("Controlled threshold"));
         let late: Vec<_> = (12..22)
             .filter(|week| (week + 1) % 4 != 0)
             .map(|week| {
@@ -1062,18 +1090,12 @@ mod tests {
                             // end-of-plan values. Measure and compare at the
                             // week's own threshold.
                             let (n_weeks, week) = plan_week(&plan, &workout);
-                            let thr_w = super::super::engine::threshold_at(
-                                PlanKind::Race,
-                                distance,
-                                threshold,
-                                n_weeks,
-                                week,
-                            );
+                            let thr_w = super::super::engine::threshold_for_plan(&plan, n_weeks, week);
                             let target = workout_load(&plan, &workout).unwrap();
                             let load =
                                 set_load(&breakdown.steps[1..breakdown.steps.len() - 1], thr_w);
                             assert!(
-                                (load - target).abs() <= 0.1 * target,
+                                load <= target,
                                 "{distance:?}, {weeks} weeks, threshold {threshold}, {baseline} km: {} load {load:.1} vs {target:.1}",
                                 workout.title
                             );
@@ -1084,6 +1106,8 @@ mod tests {
                                         * step.pace_hi_s_km.unwrap() as f64
                                 })
                                 .sum();
+                            assert!(work_seconds <= target * 60.0 + 0.01);
+                            assert!(work_seconds + 185.0 >= target * 60.0);
                             assert!(
                                 work_seconds
                                     <= if workout.kind == WorkoutKind::Intervals {

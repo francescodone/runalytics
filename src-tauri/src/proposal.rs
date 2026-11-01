@@ -347,6 +347,7 @@ mod tests {
             baseline_weekly_km: Some(30.0),
             quality_offset_sec_km: 0.0,
             quality_offset_from: None,
+            threshold_state: None,
         };
         s.insert_plan(&plan).unwrap();
         let ws = days

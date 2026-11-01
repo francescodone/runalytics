@@ -94,7 +94,14 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
     let pain = store.max_pain_intensity_since(today)?;
     let significant_pain = pain.as_ref().map(|(i, _)| *i >= 5).unwrap_or(false);
 
-    if !low_recovery && !high_load && !struggled && !significant_pain {
+    let threshold_warning = if plan.threshold_state.is_some() {
+        let evidence = super::threshold::wearable_evidence(store, today)?;
+        let state = super::threshold::athlete_state(&evidence, today, plan.threshold_sec_km);
+        state.repeated_overshoots >= 2 || state.hold_quality
+            || state.threshold_load_trend.is_some_and(|trend| trend > 0.2)
+    } else { false };
+
+    if !low_recovery && !high_load && !struggled && !significant_pain && !threshold_warning {
         return Ok(out);
     }
 
@@ -131,6 +138,12 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
                         "pain reported in the {} ({intensity}/10)",
                         crate::proposal::region_label(&part)
                     ),
+                )
+            } else if threshold_warning {
+                (
+                    WorkoutKind::Easy,
+                    format!("Easy run (was: {})", w.title),
+                    "threshold control, density or recovery requires an easier session".to_string(),
                 )
             } else if low_recovery || struggled {
                 (

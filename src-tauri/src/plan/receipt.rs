@@ -110,10 +110,12 @@ pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine
     // 3. Threshold pace — it sets every pace band in the plan.
     lines.push(ReceiptLine {
         input: format!("{} per km", fmt_pace(plan.threshold_sec_km as i64)),
-        sentence: format!(
+        sentence: if let Some(state) = &plan.threshold_state {
+            format!("Threshold pace is held between assessments (evidence confidence {:.0}%). Controlled work is capped at {:.0} minutes per session; faster repetitions alone do not raise the target.", state.threshold_confidence * 100.0, state.quality_minutes_cap)
+        } else { format!(
             "Every pace in the plan is cut from this one number: {} is your threshold, so tempo sits around it and easy days sit well back from it.",
             fmt_pace(plan.threshold_sec_km as i64)
-        ),
+        ) },
     });
 
     // 4. How many days a week.
@@ -133,7 +135,7 @@ pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine
             other => format!(
                 "Volume grows by at most {:.0}% a week{}.",
                 (plan.increase.weekly_factor() - 1.0) * 100.0,
-                if other == PlanKind::Race {
+                if other == PlanKind::Race && plan.threshold_state.is_none() {
                     " — the rest of the build comes from the sessions getting harder, not the weeks getting much longer"
                 } else {
                     ""

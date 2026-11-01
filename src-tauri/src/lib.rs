@@ -135,6 +135,7 @@ pub fn run() {
             commands::matched_sessions,
             commands::create_plan,
             commands::plan_defaults,
+            commands::threshold_report,
             commands::current_plan,
             commands::down_weeks,
             commands::push_plan_to_provider,

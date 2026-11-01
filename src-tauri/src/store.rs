@@ -724,6 +724,7 @@ impl Store {
             "REAL NOT NULL DEFAULT 0",
         )?;
         add_column_if_missing(&conn, "training_plans", "quality_offset_from", "TEXT")?;
+        add_column_if_missing(&conn, "training_plans", "threshold_state", "TEXT")?;
         // Why the plan softened a session on its own. Added as a repair rather
         // than a numbered migration for the usual reason, and nullable rather
         // than defaulted: a session nobody softened genuinely has no reason,
@@ -1491,8 +1492,8 @@ impl Store {
         conn.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                kind, quality_offset_sec_km, quality_offset_from, rev)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 p.id,
                 distance_name(p.distance),
@@ -1511,7 +1512,8 @@ impl Store {
                     .map(|d| d.format("%Y-%m-%d").to_string()),
                 // A brand-new plan's revision is its creation instant; every
                 // later edit moves it forward from there.
-                p.created_at.timestamp()
+                p.created_at.timestamp(),
+                p.threshold_state.as_ref().map(serde_json::to_string).transpose()?
             ],
         )?;
         Ok(())
@@ -1646,7 +1648,7 @@ impl Store {
             let row = conn.query_row(
                 "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
                         increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                        kind, quality_offset_sec_km, quality_offset_from
+                        kind, quality_offset_sec_km, quality_offset_from, threshold_state
                  FROM training_plans
                  WHERE status IN ('draft', 'active', 'pushed')
                  ORDER BY created_ts DESC LIMIT 1",
@@ -1667,6 +1669,7 @@ impl Store {
                         r.get::<_, String>(11)?,
                         r.get::<_, f64>(12)?,
                         r.get::<_, Option<String>>(13)?,
+                        r.get::<_, Option<String>>(14)?,
                     ))
                 },
             );
@@ -1687,6 +1690,7 @@ impl Store {
                     kind,
                     q_offset,
                     q_from,
+                    threshold_state,
                 )) => TrainingPlan {
                     id,
                     distance: distance_from(&dist),
@@ -1702,6 +1706,7 @@ impl Store {
                     baseline_weekly_km: base,
                     quality_offset_sec_km: q_offset,
                     quality_offset_from: q_from.as_deref().map(parse_date).transpose()?,
+                    threshold_state: threshold_state.as_deref().map(serde_json::from_str).transpose()?,
                 },
             }
         };
@@ -1770,8 +1775,8 @@ impl Store {
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                kind, quality_offset_sec_km, quality_offset_from, rev)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 plan.id,
                 distance_name(plan.distance),
@@ -1788,7 +1793,8 @@ impl Store {
                 plan.quality_offset_sec_km,
                 plan.quality_offset_from
                     .map(|d| d.format("%Y-%m-%d").to_string()),
-                rev
+                rev,
+                plan.threshold_state.as_ref().map(serde_json::to_string).transpose()?
             ],
         )?;
         for w in workouts {

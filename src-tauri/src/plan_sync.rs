@@ -146,6 +146,8 @@ struct PlanWire {
     quality_offset_sec_km: f64,
     #[serde(default)]
     quality_offset_from: Option<NaiveDate>,
+    #[serde(default)]
+    threshold_state: Option<crate::plan::threshold::AthleteState>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -216,6 +218,7 @@ impl PlanWire {
             baseline_weekly_km: p.baseline_weekly_km,
             quality_offset_sec_km: p.quality_offset_sec_km,
             quality_offset_from: p.quality_offset_from,
+            threshold_state: p.threshold_state.clone(),
         }
     }
 
@@ -235,6 +238,7 @@ impl PlanWire {
             baseline_weekly_km: self.baseline_weekly_km,
             quality_offset_sec_km: self.quality_offset_sec_km,
             quality_offset_from: self.quality_offset_from,
+            threshold_state: self.threshold_state.clone(),
         }
     }
 }
@@ -1238,6 +1242,7 @@ mod tests {
                 baseline_weekly_km: Some(32.5),
                 quality_offset_sec_km: 0.0,
                 quality_offset_from: None,
+                threshold_state: None,
             },
             workouts: vec![WorkoutWire {
                 id: "w-1".into(),
@@ -1277,6 +1282,7 @@ mod tests {
             baseline_weekly_km: None,
             quality_offset_sec_km: 0.0,
             quality_offset_from: None,
+            threshold_state: None,
         }
     }
 
@@ -1420,6 +1426,22 @@ mod tests {
         assert_eq!(back.plan.id, "plan-1");
         assert_eq!(back.workouts[0].title, "Tempo 6km");
         assert_eq!(back.plan.baseline_weekly_km, Some(32.5));
+    }
+
+    #[test]
+    fn threshold_policy_survives_wire_and_store_round_trips() {
+        let mut plan = shipped_plan();
+        plan.threshold_state = Some(crate::plan::threshold::athlete_state(&Default::default(), Utc::now().date_naive(), 250.0));
+        let json = serde_json::to_vec(&PlanWire::from_plan(&plan)).unwrap();
+        let decoded: PlanWire = serde_json::from_slice(&json).unwrap();
+        let restored = decoded.to_plan();
+        assert_eq!(restored.threshold_state.as_ref().unwrap().quality_minutes_cap, 15.0);
+        let store = crate::store::Store::open(&std::env::temp_dir().join(format!("threshold-policy-{}.sqlite", uuid::Uuid::new_v4()))).unwrap();
+        store.insert_plan(&restored).unwrap();
+        let read = store.current_plan().unwrap().unwrap().0;
+        assert_eq!(serde_json::to_value(&read.threshold_state).unwrap(), serde_json::to_value(&restored.threshold_state).unwrap());
+        store.replace_plan(&read, &[], 123).unwrap();
+        assert!(store.current_plan().unwrap().unwrap().0.threshold_state.is_some());
     }
 
     #[test]

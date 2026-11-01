@@ -510,6 +510,7 @@ pub async fn matched_sessions(state: State<'_, AppState>) -> Result<Vec<MatchedS
 pub async fn create_plan(
     state: State<'_, AppState>,
     request: PlanRequest,
+    threshold_evidence: Option<crate::plan::threshold::Evidence>,
 ) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
     // Only one plan may own the calendar at a time: the current plan must be
     // aborted before a new one can be created.
@@ -527,12 +528,50 @@ pub async fn create_plan(
         .map(|m| m / 1000.0)
         .unwrap_or(15.0)
         .max(10.0);
-    let (plan, workouts) = engine::generate(&request, baseline)?;
+    let evidence = combined_threshold_evidence(&state.store, threshold_evidence)?;
+    let (plan, workouts) = engine::generate_with_evidence(&request, baseline, &evidence)?;
     state.store.insert_plan(&plan)?;
     state.store.insert_workouts(&workouts)?;
     calendar_publish::refresh(&state).await?;
     plan_sync::push_if_enabled(&state).await;
     Ok((plan, workouts))
+}
+
+fn combined_threshold_evidence(
+    store: &crate::store::Store,
+    supplemental: Option<crate::plan::threshold::Evidence>,
+) -> Result<crate::plan::threshold::Evidence> {
+    let mut evidence = crate::plan::threshold::wearable_evidence(store, Utc::now().date_naive())?;
+    if let Some(mut supplemental) = supplemental {
+        evidence.observations.append(&mut supplemental.observations);
+        evidence.sessions.append(&mut supplemental.sessions);
+        evidence.performances.append(&mut supplemental.performances);
+        let recorded_injury = evidence.capacity.injury_active;
+        let recorded_sleep = evidence.capacity.sleep_hours;
+        let recorded_km = evidence.capacity.weekly_km;
+        let recorded_history = evidence.capacity.historical_weekly_km;
+        let recorded_frequency = evidence.capacity.weekly_sessions;
+        evidence.capacity = supplemental.capacity;
+        if recorded_injury == Some(true) { evidence.capacity.injury_active = Some(true); }
+        evidence.capacity.sleep_hours = match (recorded_sleep, evidence.capacity.sleep_hours) {
+            (Some(recorded), Some(reported)) => Some(recorded.min(reported)),
+            (recorded, reported) => recorded.or(reported),
+        };
+        evidence.capacity.weekly_km = recorded_km;
+        evidence.capacity.historical_weekly_km = recorded_history;
+        evidence.capacity.weekly_sessions = recorded_frequency;
+    }
+    Ok(evidence)
+}
+
+#[tauri::command]
+pub async fn threshold_report(
+    state: State<'_, AppState>,
+    threshold_evidence: Option<crate::plan::threshold::Evidence>,
+) -> Result<crate::plan::threshold::AthleteState> {
+    let evidence = combined_threshold_evidence(&state.store, threshold_evidence)?;
+    let pace = state.store.current_plan()?.map_or(0.0, |(plan, _)| plan.threshold_sec_km);
+    Ok(crate::plan::threshold::athlete_state(&evidence, Utc::now().date_naive(), pace))
 }
 
 /// Device-derived starting values for the create-plan form: current weekly

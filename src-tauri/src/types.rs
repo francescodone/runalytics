@@ -331,6 +331,7 @@ pub struct TrainingPlan {
     /// proposal accepted today cannot retroactively move last week's target.
     #[serde(default)]
     pub quality_offset_from: Option<NaiveDate>,
+    pub threshold_state: Option<crate::plan::threshold::AthleteState>,
 }
 
 /// Which side of a session's prescribed pace range the runner landed on.
