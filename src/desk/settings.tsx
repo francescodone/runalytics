@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { IconArrowLeft, IconChevronRight, IconDeviceWatch, IconPalette, IconAdjustments, IconMap, IconCalendarShare, IconMessage, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh } from "@tabler/icons-react";
+import { IconArrowLeft, IconChevronRight, IconDeviceWatch, IconPalette, IconAdjustments, IconMap, IconCalendarShare, IconCalendarEvent, IconMessage, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh } from "@tabler/icons-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { tauri, inTauri, fmtDateTime } from "../lib/ipc";
 import type { CalendarPublishing, PaletteId, Settings, Thresholds } from "../lib/types";
+import { displayPlanName } from "../lib/types";
 import { navigate, patchSettings, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, Dialog, Empty, ErrorNotice, Loading } from "./ui";
 import { Change, Presence } from "./interaction";
@@ -13,6 +14,7 @@ const tasks = [
   { id: "watch", title: "Watch connection", detail: "COROS, sign-in, history sync, API diagnostics", Icon: IconDeviceWatch },
   { id: "appearance", title: "Appearance", detail: "System theme, light, dark, colour palette", Icon: IconPalette },
   { id: "thresholds", title: "Training boundaries", detail: "Load, recovery, build cycle, pace tolerance", Icon: IconAdjustments },
+  { id: "training", title: "Training data", detail: "Clear local plans, sessions and plan offers", Icon: IconCalendarEvent },
   { id: "calendar", title: "Calendar and devices", detail: "Calendar subscription, publishing, plan sync", Icon: IconCalendarShare },
   { id: "assistant", title: "Injury assistant", detail: "Provider, model, secure API key, privacy", Icon: IconMessage },
   { id: "maps", title: "Offline maps", detail: "Local PMTiles archive and map source", Icon: IconMap },
@@ -26,7 +28,7 @@ export function SettingsWorkspace() {
   const section = aliases[route.section] ?? route.section;
   const selected = tasks.find(task => task.id === section);
   return <Change identity={section}>{selected ? <section className="settings-editor"><Button onClick={() => navigate("settings")}><IconArrowLeft size={18} />All settings</Button><header><selected.Icon size={24} aria-hidden="true" /><h2>{selected.title}</h2></header>
-    {section === "watch" ? <WatchSettings /> : section === "appearance" ? <Appearance /> : section === "thresholds" ? <TrainingBoundaries /> : section === "calendar" ? <CalendarSettings /> : section === "assistant" ? <AssistantSettings /> : section === "maps" ? <MapSettings /> : <About />}
+    {section === "watch" ? <WatchSettings /> : section === "appearance" ? <Appearance /> : section === "thresholds" ? <TrainingBoundaries /> : section === "training" ? <TrainingData /> : section === "calendar" ? <CalendarSettings /> : section === "assistant" ? <AssistantSettings /> : section === "maps" ? <MapSettings /> : <About />}
   </section> : <section className="settings-directory"><label className="search-field"><IconSearch size={20} /><input type="search" aria-label="Search settings" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a setting" /></label><div className="settings-task-list">{tasks.filter(task => `${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase())).map(task => <a key={task.id} href={`#settings/${task.id}`}><task.Icon size={25} aria-hidden="true" /><span><strong>{task.title}</strong><small>{task.detail}</small></span><IconChevronRight size={18} aria-hidden="true" /></a>)}</div>{!tasks.some(task => `${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase())) && <Empty title="No matching settings" action={<Button onClick={() => setQuery("")}>Clear search</Button>} />}</section>}</Change>;
 }
 
@@ -109,6 +111,24 @@ function BoundaryForm({ initial }: { initial: Thresholds }) {
   const command = useCommand();
   const save = (thresholds: Thresholds) => command.run(async () => { const saved = await patchSettings({ thresholds }); setValues(saved.thresholds); }, "Training boundaries saved.");
   return <form onSubmit={event => { event.preventDefault(); void save(values); }}><div className="form-grid">{thresholdFields.map(field => <label key={field.key}>{field.label}<input type="number" required min={field.min} max={field.max} step={field.step} value={field.key === "downWeekFactor" ? Math.round(values[field.key] * 100) : values[field.key]} onChange={event => setValues({...values,[field.key]:Number(event.target.value) / (field.key === "downWeekFactor" ? 100 : 1)})} /></label>)}</div><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setReset(true)}>Restore defaults</Button><Button type="submit" tone="primary" busy={command.busy}>Save boundaries</Button></div><Presence>{reset && <Dialog title="Restore training defaults?" onClose={() => setReset(false)}><p>Your custom load, recovery and pacing boundaries will be replaced with the standard values.</p><div className="form-actions"><Button onClick={() => setReset(false)}>Keep changes</Button><Button tone="primary" busy={command.busy} onClick={async () => { if (await save(defaultThresholds)) setReset(false); }}>Restore defaults</Button></div><ErrorNotice error={command.error} /></Dialog>}</Presence></form>;
+}
+
+/// The runner's "the plan keeps getting overridden, let me start clean"
+/// escape hatch. Everything here is a mirror of the plan; the watch history
+/// is not touched, so a clear never costs months of re-syncing.
+function TrainingData() {
+  const current = useRemote(tauri.currentPlan);
+  const command = useCommand();
+  const { refresh, notify } = useWorkspace();
+  const [confirm, setConfirm] = useState(false);
+  const plan = current.data?.[0];
+  return <><ErrorNotice error={current.error ?? command.error} retry={current.retry} />{current.loading ? <Loading /> : <>
+    <p className="muted">{plan ? `This device holds one plan: ${displayPlanName(plan)}.` : "This device holds no plan right now."}</p>
+    <p>Clearing removes every plan, its sessions and any open plan offers from this device, blanks the plan on COROS, and tells your other device and calendar so the cleared state spreads instead of the old plan coming back. Your recorded activities, health history and pain entries are kept.</p>
+    <div className="form-actions"><Button tone="danger" disabled={!plan} onClick={() => setConfirm(true)}>Clear training plans</Button></div>
+  </>}<Presence>{confirm && <Dialog title="Clear training plans?" onClose={() => setConfirm(false)}><p>{plan ? `${displayPlanName(plan)} and its sessions will be removed from this device and from COROS.` : "Everything plan-related will be removed from this device."} Run history, health data and pain entries stay.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirm(false)}>Keep my plan</Button><Button tone="danger" busy={command.busy} onClick={async () => {
+    if (await command.run(async () => { await tauri.clearLocalPlanData(); refresh(); }, "Training plans cleared.")) { setConfirm(false); notify("Plans cleared. Create a new one whenever you are ready."); }
+  }}>Clear plans</Button></div></Dialog>}</Presence></>;
 }
 
 function CalendarSettings() {

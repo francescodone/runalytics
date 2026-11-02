@@ -47,6 +47,18 @@ use crate::types::*;
 const COROS_MCP_URL: &str = "https://mcp.coros.com/mcp";
 const KEYRING_SERVICE: &str = "com.fradone.runalytics.coros";
 const KEYRING_USER: &str = "oauth";
+/// The one plan name Runalytics keeps on COROS, Runna-style. COROS has no
+/// delete tool, so a per-goal name would pile an undeletable entry into the
+/// library for every plan ever pushed; one fixed name means one slot that
+/// every new plan simply takes over.
+const PLAN_NAME: &str = "Runalytics Training Plan";
+/// Titles starting with this are ours — the marker that lets a push find
+/// its own slot in the library without ever touching another app's plan.
+const RUNALYTICS_NAME_PREFIX: &str = "Runalytics";
+/// What a superseded leftover is renamed to: unmistakable for the runner
+/// (who must delete it by hand in the COROS app — the API cannot), and
+/// outside the prefix so a later push never re-adopts it.
+const ENDED_PLAN_NAME: &str = "Ended plan (safe to delete)";
 /// Upper bound on waiting for the user to finish the browser authorization.
 const AUTH_TIMEOUT_SECS: u64 = 300;
 
@@ -1541,16 +1553,15 @@ impl Provider for CorosProvider {
         };
         report("Connecting to COROS", 5);
         let service = self.client().await?;
-        // A plan that was pushed before must be updated in place: COROS keeps
-        // every plan it is handed, so blindly calling createTrainingPlan
-        // again would leave the stale schedule on the watch beside the new
-        // one. updateTrainingPlan is day-granular, so the update path also
-        // rest-clears days that no longer hold a workout. The lookup runs
-        // even without a stored pushed id: a push whose report did not name
-        // the new plan id leaves status=pushed with pushed_id=NULL, and
-        // skipping the lookup then would duplicate the plan on the watch on
-        // every re-push. find_execution_plan takes any editable execution
-        // row when there is no id to prefer.
+        // One plan slot, Runna-style. COROS cannot delete a plan, so creating
+        // a fresh one per training plan would leave a permanent pile in the
+        // library — which is exactly the complaint this replaces. Every push
+        // reuses the single Runalytics execution row when one exists: it is
+        // renamed to the fixed name, resized to the new plan, and its whole
+        // schedule replaced. A create happens only when no Runalytics row
+        // exists at all. The row is matched by the stored id or our own name
+        // prefix — never by "any execution row" — so a third-party plan
+        // (Runna's) can never be adopted and overwritten.
         report("Looking up the plan on COROS", 15);
         if let Some(exec) = self
             .find_execution_plan(&service, plan.pushed_id.as_deref())
@@ -1561,7 +1572,10 @@ impl Provider for CorosProvider {
                 .update_plan(&service, &exec, plan, workouts, progress)
                 .await
             {
-                Ok(()) => return Ok(Some(exec)),
+                Ok(()) => {
+                    self.retire_extra_plans(&service, Some(&exec)).await;
+                    return Ok(Some(exec));
+                }
                 Err(e) => {
                     // The execution record may have been quit or finished
                     // in the COROS app since we pushed; a fresh create is
@@ -1576,7 +1590,10 @@ impl Provider for CorosProvider {
             }
         }
         report("Uploading the plan", 60);
-        self.create_plan(&service, plan, workouts).await
+        let created = self.create_plan(&service, plan, workouts).await?;
+        self.retire_extra_plans(&service, created.as_deref())
+            .await;
+        Ok(created)
     }
 
     async fn cancel_plan(
@@ -1592,10 +1609,18 @@ impl Provider for CorosProvider {
         report("Connecting to COROS", 5);
         let service = self.client().await?;
         report("Looking up the plan on COROS", 20);
+        // Cancelling means clearing whatever Runalytics plan is running on
+        // COROS, so matching by name prefix is exactly what is wanted here
+        // even when the stored id is missing or stale.
         let Some(exec) = self.find_execution_plan(&service, pushed_id).await? else {
             report("Already cleared", 100);
             return Ok(()); // nothing running on COROS — already gone
         };
+        // The row keeps its name on purpose. COROS cannot delete a plan, so
+        // an empty slot is cheaper than a new one: renaming here would make
+        // the next push create a fresh row, and every abort would leave
+        // another undeletable entry behind — the pile this whole design
+        // exists to prevent. Blank the schedule and leave the slot ready.
         self.cancel_existing(&service, &exec, progress).await
     }
 
@@ -1651,7 +1676,7 @@ impl CorosProvider {
                 json!({
                     "dayNo": day_no(w.date),
                     "sportType": 1, // running
-                    "courseName": w.title,
+                    "courseName": Self::course_title(w),
                     "courseDescription": details.purpose,
                     "sections": sections,
                 })
@@ -1674,52 +1699,11 @@ impl CorosProvider {
         let max_valid = total_weeks * 7 - offset - 1;
         courses.retain(|c| c["dayNo"].as_i64().unwrap_or(0) <= max_valid);
         let total_weeks = ((max_day(&courses) + offset) / 7 + 1).clamp(4, total_weeks);
-        let final_sunday = start + Duration::days(total_weeks * 7 - offset - 1);
-        // Periodization must sum exactly to totalWeeks: base phases then a
-        // one-week race phase (minimum 4-week plan => 3 + 1).
-        let base_weeks = total_weeks - 1;
-        // COROS has one phase vocabulary, and phaseType 5 is its race phase.
-        // Only a build that ends at an effort gets one: a maintenance block is
-        // all base phase, and claiming a race week the runner does not have
-        // would show them a start line on the watch that exists nowhere.
-        let has_race_phase = plan.kind.has_race();
-        let milestone = match plan.kind {
-            PlanKind::Race => format!(
-                " to {} on {}",
-                plan.distance.label(),
-                plan.target_date.format("%d %b %Y")
-            ),
-            PlanKind::Improvement => format!(
-                ", closing with a {} time trial on {}",
-                plan.distance.label(),
-                plan.target_date.format("%d %b %Y")
-            ),
-            PlanKind::Maintenance => String::new(),
-        };
-        let overview = format!(
-            "{} {} plan{} built by Runalytics from your watch data.",
-            plan.kind.label(),
-            plan.distance.label(),
-            milestone
-        );
-        let periodization = if has_race_phase {
-            json!([
-                { "phaseType": 2, "startDate": Self::yyyymmdd(start),
-                  "endDate": Self::yyyymmdd(final_sunday - Duration::days(7)),
-                  "durationWeeks": base_weeks },
-                { "phaseType": 5, "startDate": Self::yyyymmdd(final_sunday - Duration::days(6)),
-                  "endDate": Self::yyyymmdd(final_sunday), "durationWeeks": 1 },
-            ])
-        } else {
-            json!([
-                { "phaseType": 2, "startDate": Self::yyyymmdd(start),
-                  "endDate": Self::yyyymmdd(final_sunday),
-                  "durationWeeks": total_weeks },
-            ])
-        };
+        let overview = Self::plan_overview(plan);
+        let periodization = Self::periodization(start, total_weeks, plan.kind.has_race());
         let args = json!({
             "planInfo": {
-                "planName": format!("Runalytics {} {}", plan.kind.label(), plan.distance.label()),
+                "planName": PLAN_NAME,
                 "planOverview": overview,
                 "planStartDate": Self::yyyymmdd(start),
                 "totalWeeks": total_weeks,
@@ -1742,6 +1726,83 @@ impl CorosProvider {
         Ok(id)
     }
 
+    /// What the session is called on the watch. A softened session keeps its
+    /// old name in the stored title — `"Easy run (was: Hold My Tempo · 3.0 km
+    /// tempo)"` — because on the calendar that suffix is the only record of
+    /// what the plan gave up, and the reason chip has no column to say it
+    /// twice. On a watch it is noise: the runner is being told to run an easy
+    /// run, and the parenthetical names a session that is not happening. The
+    /// session's purpose line carries the substance instead.
+    fn course_title(workout: &PlanWorkout) -> String {
+        match workout.title.rfind(" (was: ") {
+            Some(i) if workout.title.ends_with(')') => workout.title[..i].to_string(),
+            _ => workout.title.clone(),
+        }
+    }
+
+    /// The phase table for a plan of `total_weeks` starting at `start`.
+    /// Periodization must sum exactly to totalWeeks: base phases then a
+    /// one-week race phase (minimum 4-week plan => 3 + 1). COROS has one
+    /// phase vocabulary, and phaseType 5 is its race phase. Only a build
+    /// that ends at an effort gets one: a maintenance block is all base
+    /// phase, and claiming a race week the runner does not have would show
+    /// them a start line on the watch that exists nowhere. The same table
+    /// is sent when a reused slot is resized, where it is required.
+    fn periodization(start: NaiveDate, total_weeks: i64, has_race: bool) -> Value {
+        let offset = start.weekday().num_days_from_monday() as i64;
+        let final_sunday = start + Duration::days(total_weeks * 7 - offset - 1);
+        let base_weeks = total_weeks - 1;
+        if has_race {
+            json!([
+                { "phaseType": 2, "startDate": Self::yyyymmdd(start),
+                  "endDate": Self::yyyymmdd(final_sunday - Duration::days(7)),
+                  "durationWeeks": base_weeks },
+                { "phaseType": 5, "startDate": Self::yyyymmdd(final_sunday - Duration::days(6)),
+                  "endDate": Self::yyyymmdd(final_sunday), "durationWeeks": 1 },
+            ])
+        } else {
+            json!([
+                { "phaseType": 2, "startDate": Self::yyyymmdd(start),
+                  "endDate": Self::yyyymmdd(final_sunday),
+                  "durationWeeks": total_weeks },
+            ])
+        }
+    }
+
+    /// The one-line description COROS shows under the plan. The plan's own
+    /// name is fixed (one slot in the library), so the runner's label and
+    /// the goal both live here: the runner still sees what the current
+    /// build is for.
+    fn plan_overview(plan: &TrainingPlan) -> String {
+        let milestone = match plan.kind {
+            PlanKind::Race => format!(
+                " to {} on {}",
+                plan.distance.label(),
+                plan.target_date.format("%d %b %Y")
+            ),
+            PlanKind::Improvement => format!(
+                ", closing with a {} time trial on {}",
+                plan.distance.label(),
+                plan.target_date.format("%d %b %Y")
+            ),
+            PlanKind::Maintenance => String::new(),
+        };
+        match plan.clean_name() {
+            Some(name) => format!(
+                "{name}: {} {} plan{} built by Runalytics from your watch data.",
+                plan.kind.label(),
+                plan.distance.label(),
+                milestone
+            ),
+            None => format!(
+                "{} {} plan{} built by Runalytics from your watch data.",
+                plan.kind.label(),
+                plan.distance.label(),
+                milestone
+            ),
+        }
+    }
+
     /// COROS reports API-side rejections (validation errors, plan-state
     /// conflicts) as ordinary text with isError=false — only the prose says
     /// the call failed. Every mutating call must run its report through this.
@@ -1755,11 +1816,13 @@ impl CorosProvider {
         Ok(())
     }
 
-    /// Locate the in-progress execution record for a pushed plan — the row
-    /// queryTrainingPlanLibrary marks recordRole=execution and editable.
-    /// Prefer the stored pushed id; otherwise take any editable execution
-    /// row, since the id we stored may be stale after the runner restarted
-    /// the plan in the COROS app. None means nothing is running on COROS.
+    /// Locate the single Runalytics execution record — the row
+    /// queryTrainingPlanLibrary marks recordRole=execution and editable and
+    /// whose title carries our name prefix. Prefer the stored pushed id;
+    /// otherwise take the first matching row, since the id we stored may be
+    /// stale after the runner restarted the plan in the COROS app, or may
+    /// not exist yet for a plan created after an abort. None means no
+    /// Runalytics plan is running on COROS.
     async fn find_execution_plan(
         &self,
         service: &RunningService<RoleClient, ()>,
@@ -1768,6 +1831,14 @@ impl CorosProvider {
         let text = self
             .call_tool_text(service, "queryTrainingPlanLibrary", json!({}))
             .await?;
+        Ok(Self::pick_execution_plan(&text, preferred))
+    }
+
+    /// Parse a queryTrainingPlanLibrary report and choose the execution row
+    /// to reuse: the stored id when still present and editable, otherwise
+    /// the first editable execution row whose TITLE starts with our prefix.
+    /// Rows we did not create (another app's plan) are never candidates.
+    fn pick_execution_plan(text: &str, preferred: Option<&str>) -> Option<String> {
         let mut fallback: Option<String> = None;
         for block in text.split("\n\n") {
             if !block.contains("Record role: execution") || !block.contains("Editable via MCP: yes")
@@ -1778,13 +1849,181 @@ impl CorosProvider {
                 continue;
             };
             if preferred == Some(id.as_str()) {
-                return Ok(Some(id));
+                return Some(id);
             }
-            if fallback.is_none() {
+            if fallback.is_none() && Self::block_is_ours(block) {
                 fallback = Some(id);
             }
         }
-        Ok(fallback)
+        fallback
+    }
+
+    /// Whether a library block is a plan we currently own, judged on its
+    /// title line alone — `1. Runalytics Training Plan [In progress] [mcp]`.
+    /// The whole block cannot be searched: every plan we push carries an
+    /// Overview ending "built by Runalytics from your watch data", so a
+    /// substring test would match a row we have already retired and send
+    /// the next push straight back to overwrite it.
+    fn block_is_ours(block: &str) -> bool {
+        let Some(line) = block.lines().find(|l| !l.trim().is_empty()) else {
+            return false;
+        };
+        let title = line.trim().split_once(". ").map_or_else(
+            || line.trim(),
+            |(_, rest)| rest,
+        );
+        title.starts_with(RUNALYTICS_NAME_PREFIX)
+    }
+
+    /// Every editable execution row whose TITLE carries our prefix — the
+    /// pile a fixed-name slot is meant to prevent. Used to retire the
+    /// duplicates a push leaves behind.
+    fn pick_prefix_plan_ids(text: &str) -> Vec<String> {
+        let mut ids = Vec::new();
+        for block in text.split("\n\n") {
+            if !block.contains("Record role: execution") || !block.contains("Editable via MCP: yes")
+            {
+                continue;
+            }
+            if !Self::block_is_ours(block) {
+                continue;
+            }
+            if let Some(id) = Self::token_after(block, "Plan ID:") {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+
+    /// COROS has no delete, so a library row outlives its plan. Once one
+    /// slot is the live Runalytics plan, every OTHER Runalytics row is
+    /// blanked and renamed to a label that says so. Both halves matter:
+    /// renaming alone would leave the old courses sitting on the training
+    /// calendar — the exact clutter the single slot exists to prevent —
+    /// and the label is what lets the runner delete the row by hand in the
+    /// COROS app (the API cannot) while keeping a later push from
+    /// re-adopting it, since the name no longer carries our prefix.
+    /// Best-effort: a failure is logged, never fatal to the push.
+    async fn retire_extra_plans(
+        &self,
+        service: &RunningService<RoleClient, ()>,
+        keep: Option<&str>,
+    ) {
+        // Without a live id there is nothing to protect: sweeping then would
+        // blank the plan that was just created, because a create whose id
+        // could not be parsed still leaves its row in the library.
+        let Some(keep) = keep else { return };
+        let text = match self
+            .call_tool_text(service, "queryTrainingPlanLibrary", json!({}))
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[coros] library sweep skipped, lookup failed: {e}");
+                return;
+            }
+        };
+        for id in Self::pick_prefix_plan_ids(&text) {
+            if id == keep {
+                continue;
+            }
+            // Read the plan's state BEFORE blanking: a superseded plan may
+            // already be empty (a previous push retired it), and an empty
+            // plan cannot supply the rest courses the rename needs below.
+            // The span is kept for the same call — a rename with no courses
+            // must restate the periodization instead.
+            let stale_state = match self.fetch_plan_state(service, &id).await {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    eprintln!("[coros] reading superseded plan {id} failed: {e}");
+                    None
+                }
+            };
+            let stale_days: Vec<i64> = stale_state
+                .as_ref()
+                .map(|s| s.course_days.clone())
+                .unwrap_or_default();
+            if !stale_days.is_empty() {
+                if let Err(e) = self.cancel_existing(service, &id, None).await {
+                    eprintln!("[coros] clearing superseded plan {id} failed: {e}");
+                }
+            }
+            // COROS requires at least one of courseList / periodization on
+            // every updateTrainingPlan call — a rename carrying neither is
+            // rejected, which is how a retired plan was observed to keep its
+            // old name. Re-sending the day list as rest courses satisfies
+            // the rule, except for the final week's "Plan cancelled" marker
+            // the blanking just left: clearing that too would empty the
+            // final week, which COROS refuses outright. On an already-blank
+            // plan the rest entries are a no-op; on a plan with no course
+            // days at all there is nothing to send, so the call restates
+            // the plan's own periodization instead — the other legal half
+            // of the rule, and it never touches any day.
+            let marker = stale_state.as_ref().and_then(|s| {
+                let final_week_start = s.max_day - 6;
+                s.course_days.iter().rev().find(|d| **d >= final_week_start).copied()
+            });
+            let courses: Vec<Value> = stale_days
+                .iter()
+                .filter(|d| Some(**d) != marker)
+                .map(|d| {
+                    json!({
+                        "dayNo": d,
+                        "sportType": 4,
+                        "courseName": "Rest",
+                        "courseDescription": "Recovery day",
+                        "sections": [],
+                    })
+                })
+                .collect();
+            let mut plan_info = json!({ "planId": id, "planName": ENDED_PLAN_NAME });
+            let body = if courses.is_empty() && marker.is_some() {
+                // Only the marker day exists: send it back as itself so the
+                // call carries a courseList without touching the final week.
+                json!({
+                    "planInfo": plan_info,
+                    "courseList": [{
+                        "dayNo": marker.unwrap(),
+                        "sportType": 1,
+                        "courseName": "Plan cancelled",
+                        "courseDescription": "This Runalytics plan was cancelled. Nothing is scheduled.",
+                        "sections": [{ "sectionType": 2, "targetType": 4 }],
+                    }],
+                })
+            } else if courses.is_empty() {
+                match stale_state {
+                    Some(state) => {
+                        let total_weeks =
+                            ((state.max_day + 1) as f64 / 7.0).ceil() as i64;
+                        plan_info["periodization"] = json!([
+                            { "phaseType": 2, "startDate": Self::yyyymmdd(state.start),
+                              "endDate": Self::yyyymmdd(state.start + Duration::days(state.max_day)),
+                              "durationWeeks": total_weeks.max(4).min(16) },
+                        ]);
+                        json!({ "planInfo": plan_info })
+                    }
+                    None => {
+                        eprintln!("[coros] retiring stale plan {id} skipped, span unreadable");
+                        continue;
+                    }
+                }
+            } else {
+                json!({ "planInfo": plan_info, "courseList": courses })
+            };
+            let text = match self
+                .call_tool_text(service, "updateTrainingPlan", body)
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[coros] retiring stale plan {id} failed: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = Self::ensure_ok("updateTrainingPlan", &text) {
+                eprintln!("[coros] retiring stale plan {id} rejected: {e}");
+            }
+        }
     }
 
     /// Read an existing plan's span and course days from
@@ -1831,11 +2070,16 @@ impl CorosProvider {
         })
     }
 
-    /// Day-granular update of a plan already on COROS: replace every day the
-    /// new workout set covers, rest-clear days that used to hold a course
-    /// but no longer do, and leave the final week's stale courses alone when
-    /// the new set has nothing there (COROS refuses to empty the final
-    /// week). dayNo stays anchored to the plan's own start date.
+    /// Day-granular update of a plan already on COROS: rename it to the
+    /// fixed Runalytics name, replace every day the new workout set covers,
+    /// rest-clear days that used to hold a course but no longer do, and
+    /// leave the final week's stale courses alone when the new set has
+    /// nothing there (COROS refuses to empty the final week). dayNo stays
+    /// anchored to the plan's own start date. When the new set runs past
+    /// the end of the stored plan the slot is grown — totalWeeks plus a
+    /// fresh periodization, both required together whenever the length
+    /// changes. The slot is never shrunk: a shorter build simply ends in
+    /// rest days, which avoids fighting the final-week rule on the way down.
     async fn update_plan(
         &self,
         service: &RunningService<RoleClient, ()>,
@@ -1851,21 +2095,22 @@ impl CorosProvider {
         };
         report("Reading the plan from COROS", 35);
         let state = self.fetch_plan_state(service, plan_id).await?;
+        let offset = state.start.weekday().num_days_from_monday() as i64;
+        let weeks_for = |day: i64| ((day + offset) / 7 + 1).clamp(4, 16);
+        let last_day_for = |weeks: i64| weeks * 7 - offset - 1;
+        let weeks_now = weeks_for(state.max_day);
         let day_no = |d: NaiveDate| (d - state.start).num_days();
-        let new_courses: Vec<Value> = workouts
+        let mut new_courses: Vec<Value> = workouts
             .iter()
             .filter(|w| w.kind != WorkoutKind::Rest && w.distance_m.unwrap_or(0.0) > 0.0)
-            .filter(|w| {
-                let n = day_no(w.date);
-                n >= 0 && n <= state.max_day
-            })
+            .filter(|w| day_no(w.date) >= 0)
             .map(|w| {
                 let details = crate::plan::session::details_for_plan(w, plan);
                 let sections: Vec<Value> = details.steps.iter().map(Self::course_section).collect();
                 json!({
                     "dayNo": day_no(w.date),
                     "sportType": 1, // running
-                    "courseName": w.title,
+                    "courseName": Self::course_title(w),
                     "courseDescription": details.purpose,
                     "sections": sections,
                 })
@@ -1876,17 +2121,46 @@ impl CorosProvider {
                 "nothing to push: the plan has no upcoming workouts".into(),
             ));
         }
+        // Grow the slot when the new build runs past the stored end. The
+        // API caps a plan at sixteen weeks, so anything beyond that window
+        // is dropped exactly as the create path drops it.
+        let needed = new_courses
+            .iter()
+            .filter_map(|c| c["dayNo"].as_i64())
+            .max()
+            .unwrap_or(0);
+        let mut max_day = state.max_day;
+        let mut phases: Option<Value> = None;
+        if needed > state.max_day {
+            let weeks = weeks_for(needed);
+            new_courses.retain(|c| c["dayNo"].as_i64().unwrap_or(0) <= last_day_for(weeks));
+            let weeks = weeks_for(
+                new_courses
+                    .iter()
+                    .filter_map(|c| c["dayNo"].as_i64())
+                    .max()
+                    .unwrap_or(0),
+            );
+            if weeks > weeks_now {
+                max_day = last_day_for(weeks);
+                phases = Some(Self::periodization(
+                    state.start,
+                    weeks,
+                    plan.kind.has_race(),
+                ));
+            }
+        }
         let new_days: Vec<i64> = new_courses
             .iter()
             .filter_map(|c| c["dayNo"].as_i64())
             .collect();
-        let keeps_final_week = new_days.iter().any(|d| *d > state.max_day - 7);
+        let keeps_final_week = new_days.iter().any(|d| *d > max_day - 7);
         let mut courses = new_courses;
         for d in &state.course_days {
             if new_days.contains(d) {
                 continue;
             }
-            if !keeps_final_week && *d > state.max_day - 7 {
+            if !keeps_final_week && *d > max_day - 7 {
                 continue;
             }
             courses.push(json!({
@@ -1897,11 +2171,20 @@ impl CorosProvider {
                 "sections": [],
             }));
         }
+        let mut plan_info = json!({
+            "planId": plan_id,
+            "planName": PLAN_NAME,
+            "planOverview": Self::plan_overview(plan),
+        });
+        if let Some(phases) = phases {
+            plan_info["totalWeeks"] = json!(weeks_for(max_day));
+            plan_info["phaseInfo"] = json!({ "periodization": phases });
+        }
         let text = self
             .call_tool_text(
                 service,
                 "updateTrainingPlan",
-                json!({ "planInfo": { "planId": plan_id }, "courseList": courses }),
+                json!({ "planInfo": plan_info, "courseList": courses }),
             )
             .await?;
         report("Sending updates to COROS", 85);
@@ -2114,6 +2397,8 @@ impl CorosProvider {
 #[cfg(test)]
 mod tests {
     use super::CorosProvider;
+    use crate::types::{PlanWorkout, WorkoutKind, WorkoutStatus};
+    use chrono::NaiveDate;
 
     /// Verbatim shapes from the live COROS report (2026-10-17).
     const RECORDS: &str = "Sport Records — 2026-09-17 to 2026-10-17 (3 records)\n\
@@ -2274,6 +2559,159 @@ Course JSON: {\"dayNo\":4}\n";
         )
         .expect_err("must fail");
         assert!(err.to_string().contains("final displayed week"));
+    }
+
+    /// Verbatim block format from the live library report (2026-11-02),
+    /// including the two leftovers that motivated the fixed-name slot: our
+    /// own rows, a foreign Runna row, and a completed non-editable row.
+    /// The Overview lines are kept because they say "built by Runalytics" —
+    /// the reason ownership is judged on the title and nothing else.
+    const LIBRARY: &str = "Training Plan Library\n\
+========================\n\n\
+1. Runalytics Race Half marathon [In progress] [mcp]\n\
+   Plan ID: 481467201906459758\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n\
+   Dates: 2026-11-02 to 2027-02-21\n\
+   Weeks: 16\n\
+   Overview: Race Half marathon plan to Half marathon on 18 Apr 2027 built by Runalytics from your watch data.\n\n\
+2. Runalytics Race Half marathon [In progress] [mcp]\n\
+   Plan ID: 481174602159146176\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n\
+   Dates: 2026-10-20 to 2027-02-07\n\
+   Weeks: 16\n\
+   Overview: Race Half marathon plan to Half marathon on 25 Apr 2027 built by Runalytics from your watch data.\n\n\
+3. Runna Training Plan [In progress] [mcp]\n\
+   Plan ID: 480000000000000001\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n\
+   Dates: 2026-09-01 to 2026-12-01\n\
+   Weeks: 13\n\
+   Overview: 13 week plan built by Runna.\n\n\
+4. Runalytics Maintenance Base [Completed] [mcp]\n\
+   Plan ID: 479000000000000002\n\
+   Record role: archive\n\
+   Editable via MCP: no\n\
+   Dates: 2026-05-04 to 2026-06-28\n\
+   Weeks: 8\n\
+   Overview: Maintenance Base plan built by Runalytics from your watch data.\n";
+
+    /// A brand-new plan (no stored id) must adopt our own earlier row — the
+    /// single-slot reuse that keeps the library clean — but never a
+    /// third-party execution row like Runna's.
+    #[test]
+    fn a_new_plan_adopts_our_row_and_never_a_foreign_one() {
+        assert_eq!(
+            CorosProvider::pick_execution_plan(LIBRARY, None).as_deref(),
+            Some("481467201906459758")
+        );
+        // With only the foreign row editable, there is nothing to adopt:
+        // the push must create rather than overwrite someone else's plan.
+        let foreign_only = "1. Runna Training Plan [In progress] [mcp]\n\
+   Plan ID: 480000000000000001\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n";
+        assert_eq!(CorosProvider::pick_execution_plan(foreign_only, None), None);
+    }
+
+    /// The stored id wins when still editable; when the runner quit that
+    /// row in the COROS app it is skipped for a prefix-matching one, and a
+    /// retired "Ended plan" row (no prefix) is not a candidate either.
+    #[test]
+    fn a_stored_id_wins_until_it_stops_being_editable() {
+        assert_eq!(
+            CorosProvider::pick_execution_plan(LIBRARY, Some("481174602159146176")).as_deref(),
+            Some("481174602159146176")
+        );
+        assert_eq!(
+            CorosProvider::pick_execution_plan(LIBRARY, Some("479000000000000002")).as_deref(),
+            Some("481467201906459758"),
+            "a stale id must fall back to our own editable row"
+        );
+        let retired_only = "1. Ended plan (safe to delete) [In progress] [mcp]\n\
+   Plan ID: 481467201906459758\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n";
+        assert_eq!(
+            CorosProvider::pick_execution_plan(retired_only, Some("999")),
+            None,
+            "a renamed leftover is no longer a slot to reuse"
+        );
+    }
+
+    /// The sweep must see exactly our editable rows so it can rename every
+    /// one the push did not keep. A row already retired under "Ended plan"
+    /// is excluded even though its Overview still credits Runalytics —
+    /// matching on the block would sweep it again forever and, worse, let a
+    /// later push adopt it back as the live slot.
+    #[test]
+    fn the_sweep_finds_only_our_editable_rows() {
+        assert_eq!(
+            CorosProvider::pick_prefix_plan_ids(LIBRARY),
+            vec!["481467201906459758", "481174602159146176"]
+        );
+        let with_retired = format!(
+            "{LIBRARY}\n\
+5. Ended plan (safe to delete) [In progress] [mcp]\n\
+   Plan ID: 480500000000000005\n\
+   Record role: execution\n\
+   Editable via MCP: yes\n\
+   Dates: 2026-08-03 to 2026-10-25\n\
+   Weeks: 12\n\
+   Overview: Race 10 km plan built by Runalytics from your watch data.\n"
+        );
+        assert_eq!(
+            CorosProvider::pick_prefix_plan_ids(&with_retired),
+            vec!["481467201906459758", "481174602159146176"],
+            "a retired row is never swept or adopted again"
+        );
+        assert_eq!(
+            CorosProvider::pick_execution_plan(&with_retired, Some("nope")).as_deref(),
+            Some("481467201906459758"),
+            "the live slot is chosen over a retired row"
+        );
+    }
+
+    /// A softened session is called "Easy run" on the watch, not by the
+    /// plan-machinery name the calendar stores. Titles that never went
+    /// through the softener must pass through untouched, including one that
+    /// merely mentions "was" in prose.
+    #[test]
+    fn a_softened_session_gets_a_clean_name_on_the_watch() {
+        let softened = |title: &str| PlanWorkout {
+            id: "w".into(),
+            plan_id: "p".into(),
+            date: NaiveDate::from_ymd_opt(2026, 11, 4).unwrap(),
+            planned_date: NaiveDate::from_ymd_opt(2026, 11, 4).unwrap(),
+            kind: WorkoutKind::Easy,
+            title: title.into(),
+            distance_m: Some(7000.0),
+            duration_min: None,
+            pace_lo_s_km: None,
+            pace_hi_s_km: None,
+            done: false,
+            status: WorkoutStatus::Planned,
+            moved_at: None,
+        };
+        assert_eq!(
+            CorosProvider::course_title(&softened("Easy run (was: Hold My Tempo · 3.0 km tempo)")),
+            "Easy run"
+        );
+        assert_eq!(
+            CorosProvider::course_title(&softened("Rest (was: Long run 18 km)")),
+            "Rest"
+        );
+        assert_eq!(
+            CorosProvider::course_title(&softened("Long run 18 km")),
+            "Long run 18 km",
+            "an untouched session keeps its title"
+        );
+        assert_eq!(
+            CorosProvider::course_title(&softened("Easy run (it was hilly)")),
+            "Easy run (it was hilly)",
+            "prose that only mentions 'was' is not a softener suffix"
+        );
     }
 }
 

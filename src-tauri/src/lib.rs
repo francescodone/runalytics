@@ -140,6 +140,7 @@ pub fn run() {
             commands::down_weeks,
             commands::push_plan_to_provider,
             commands::abort_plan,
+            commands::clear_local_plan_data,
             commands::workouts_between,
             commands::ics_path,
             commands::publish_calendar,

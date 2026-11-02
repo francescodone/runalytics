@@ -491,6 +491,11 @@ pub fn generate_with_evidence(
         quality_offset_sec_km: 0.0,
         quality_offset_from: None,
         threshold_state: Some(threshold_state),
+        name: req
+            .name
+            .clone()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty()),
     };
 
     let first_monday = week_start(add_days(req.target_date, -7 * weeks as i64 + 1));
@@ -918,6 +923,7 @@ mod tests {
             longrun_day: 6,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
+            name: None,
         }
     }
 
@@ -1370,6 +1376,7 @@ mod tests {
             longrun_day: 6,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
+            name: None,
         }
     }
 

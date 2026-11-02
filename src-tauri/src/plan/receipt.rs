@@ -307,6 +307,7 @@ mod tests {
             longrun_day: 6,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(40.0),
+            name: None,
         }
     }
 

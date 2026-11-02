@@ -89,7 +89,37 @@ pub struct PlanSync {
     /// Revision currently installed on this device, so a pull never downgrades.
     pub installed_rev: Option<i64>,
     pub last_error: Option<String>,
-    pub reset_plan_id: Option<String>,
+    /// Plans this device has explicitly ended ("End plan"). An automatic pull
+    /// must never reimport one of these — not even while the local store is
+    /// momentarily empty between ending a plan and creating the next, which is
+    /// exactly the window in which the abandoned plan still sitting in the
+    /// channel would otherwise slip back in and overwrite the new one.
+    ///
+    /// A set rather than a single id: a runner who recreates the same plan
+    /// several times ends several, and every one of them stays ended. The old
+    /// single-id field let a later abort overwrite the marker for an earlier
+    /// abandoned plan, which is how a plan the runner had already thrown away
+    /// kept returning on the next sync.
+    #[serde(default)]
+    pub reset_plan_ids: Vec<String>,
+    /// The single-slot marker written by apps before the set above existed.
+    /// Read once on load and folded into `reset_plan_ids` by
+    /// [`migrate_legacy_reset`]; never written again, so a config saved by a
+    /// current app no longer carries it.
+    #[serde(default, alias = "resetPlanId", skip_serializing)]
+    legacy_reset_plan_id: Option<String>,
+}
+
+impl PlanSync {
+    /// Fold the pre-set single `resetPlanId` into the set, so upgrading does
+    /// not forget the plan the previous version had already blocked.
+    fn migrate_legacy_reset(&mut self) {
+        if let Some(id) = self.legacy_reset_plan_id.take() {
+            if !self.reset_plan_ids.iter().any(|existing| *existing == id) {
+                self.reset_plan_ids.push(id);
+            }
+        }
+    }
 }
 
 // ---- wire format -----------------------------------------------------------
@@ -151,6 +181,11 @@ struct PlanWire {
     quality_offset_from: Option<NaiveDate>,
     #[serde(default)]
     threshold_state: Option<crate::plan::threshold::AthleteState>,
+    /// The runner's label for the plan. Optional on the wire: a blob
+    /// published before the field existed has no name, and the honest
+    /// reading of one is "nobody named it".
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -223,6 +258,7 @@ impl PlanWire {
             quality_offset_sec_km: p.quality_offset_sec_km,
             quality_offset_from: p.quality_offset_from,
             threshold_state: p.threshold_state.clone(),
+            name: p.name.clone(),
         }
     }
 
@@ -244,6 +280,7 @@ impl PlanWire {
             quality_offset_sec_km: self.quality_offset_sec_km,
             quality_offset_from: self.quality_offset_from,
             threshold_state: self.threshold_state.clone(),
+            name: self.name.clone(),
         }
     }
 }
@@ -308,7 +345,11 @@ pub struct PlanSyncPatch {
 
 pub fn load(directory: &std::path::Path) -> Result<PlanSync> {
     match std::fs::read(directory.join("plan-sync.json")) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Ok(bytes) => {
+            let mut config: PlanSync = serde_json::from_slice(&bytes)?;
+            config.migrate_legacy_reset();
+            Ok(config)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PlanSync::default()),
         Err(error) => Err(error.into()),
     }
@@ -323,12 +364,22 @@ fn save(directory: &std::path::Path, config: &PlanSync) -> Result<()> {
 
 pub fn remember_reset(directory: &std::path::Path, plan_id: &str) -> Result<()> {
     let mut config = load(directory)?;
-    config.reset_plan_id = Some(plan_id.to_owned());
+    if !config.reset_plan_ids.iter().any(|id| id == plan_id) {
+        config.reset_plan_ids.push(plan_id.to_owned());
+        // Bound the marker. The plans a runner ended longest ago are the least
+        // likely to be resurrected, so if someone cycles through very many
+        // plans the oldest ended ones drop off the front rather than growing
+        // the config file without limit.
+        const MAX_REMEMBERED: usize = 50;
+        if config.reset_plan_ids.len() > MAX_REMEMBERED {
+            config.reset_plan_ids.remove(0);
+        }
+    }
     save(directory, &config)
 }
 
 fn is_reset_plan(config: &PlanSync, plan_id: &str, force: bool) -> bool {
-    !force && config.reset_plan_id.as_deref() == Some(plan_id)
+    !force && config.reset_plan_ids.iter().any(|id| id == plan_id)
 }
 
 /// The shared GitHub credential — the same one calendar gist publishing uses.
@@ -657,19 +708,26 @@ async fn fetch_blob(client: &reqwest::Client, token: &str, gist_id: &str) -> Res
 /// on the hot path of creating a plan, and a runner who has never opened this
 /// setting must never see an error from it.
 pub async fn push_if_enabled(state: &AppState) {
+    let _ = try_push_if_enabled(state).await;
+}
+
+/// [`push_if_enabled`] with the outcome reported: `None` when the channel is
+/// not configured (nothing was attempted, so nothing to show), `Some` when a
+/// push actually ran. The staged toast in the commands layer uses this to
+/// decide whether to draw a gist line at all.
+pub async fn try_push_if_enabled(state: &AppState) -> Option<Result<PlanSync>> {
     let config = load(&state.data_dir).unwrap_or_default();
     if !config.enabled || !config.can_publish {
-        return;
+        return None;
     }
-    match push(state, false).await {
-        Ok(_) => {}
-        Err(error) => {
-            eprintln!("[plan-sync] automatic push failed: {error}");
-            let mut retry = config;
-            retry.last_error = Some(error.to_string());
-            let _ = save(&state.data_dir, &retry);
-        }
+    let result = push(state, false).await;
+    if let Err(error) = &result {
+        eprintln!("[plan-sync] automatic push failed: {error}");
+        let mut retry = config;
+        retry.last_error = Some(error.to_string());
+        let _ = save(&state.data_dir, &retry);
     }
+    Some(result)
 }
 
 /// Seal and upload the current plan, persisting the resulting config. `explicit`
@@ -950,8 +1008,12 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
         crate::calendar_publish::adopt_gist_target(state, calendar).await;
     }
 
-    if force && config.reset_plan_id.as_deref() == Some(incoming.id.as_str()) {
-        config.reset_plan_id = None;
+    // A forced import is the runner deliberately choosing this plan again, so
+    // it stops being an ended plan and resumes syncing normally from here.
+    if force {
+        config
+            .reset_plan_ids
+            .retain(|id| id != incoming.id.as_str());
     }
     config.installed_rev = Some(blob.rev);
     config.last_pulled = Some(Utc::now().to_rfc3339());
@@ -969,15 +1031,12 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     ))
 }
 
-/// How the UI refers to a plan: what it is for and when it ends. Enough to
-/// tell two plans apart in a confirmation, without assuming a name field that
-/// the plan does not have.
+/// How the UI refers to a plan: the runner's own name when they gave one,
+/// otherwise what it is for and when it ends. Enough to tell two plans apart
+/// in a confirmation, and it follows the same rule every other naming
+/// surface uses so the sync channel never contradicts the plan view.
 fn plan_summary(plan: &TrainingPlan) -> String {
-    format!(
-        "{} on {}",
-        plan.distance.label(),
-        plan.target_date.format("%d %b %Y")
-    )
+    plan.display_name()
 }
 
 /// What the sync channel holds, as seen from this device. The read-only
@@ -1257,6 +1316,53 @@ mod tests {
         assert!(!super::is_reset_plan(&config, "old-plan", true));
         std::fs::remove_dir_all(directory).unwrap();
     }
+
+    #[test]
+    fn every_ended_plan_stays_ended_not_just_the_last_one() {
+        // The bug this guards: a runner recreates the same plan several times,
+        // ending each. A single-slot marker let the newest abort overwrite the
+        // marker for an earlier abandoned plan, so that earlier plan — still in
+        // the channel — slipped back in on the next sync while the store was
+        // empty. Every ended plan must stay remembered.
+        let directory = std::env::temp_dir().join(format!("plan-reset-many-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        super::remember_reset(&directory, "first-plan").unwrap();
+        super::remember_reset(&directory, "second-plan").unwrap();
+        let config = super::load(&directory).unwrap();
+        assert!(super::is_reset_plan(&config, "first-plan", false));
+        assert!(super::is_reset_plan(&config, "second-plan", false));
+        // Remembering the same plan twice does not duplicate it.
+        super::remember_reset(&directory, "second-plan").unwrap();
+        let config = super::load(&directory).unwrap();
+        assert_eq!(config.reset_plan_ids.len(), 2);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_legacy_single_reset_marker_survives_the_upgrade() {
+        // A config written by the previous version carries the old
+        // single-slot "resetPlanId". Loading must fold it into the set —
+        // otherwise upgrading silently un-blocks the plan that version had
+        // already ended, and the first sync after the upgrade resurrects it.
+        let directory = std::env::temp_dir().join(format!("plan-reset-legacy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("plan-sync.json"),
+            br#"{"enabled":true,"resetPlanId":"aborted-before-upgrade"}"#,
+        )
+        .unwrap();
+        let config = super::load(&directory).unwrap();
+        assert!(super::is_reset_plan(&config, "aborted-before-upgrade", false));
+        // Saving again must not keep writing the legacy field back out.
+        // (Match the whole key, since the set's own "resetPlanIds" contains
+        // the legacy name as a prefix.)
+        super::save(&directory, &config).unwrap();
+        let on_disk = std::fs::read_to_string(directory.join("plan-sync.json")).unwrap();
+        assert!(!on_disk.contains("\"resetPlanId\":"));
+        let config = super::load(&directory).unwrap();
+        assert!(super::is_reset_plan(&config, "aborted-before-upgrade", false));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     use super::*;
     use chrono::TimeZone;
 
@@ -1282,6 +1388,7 @@ mod tests {
                 quality_offset_sec_km: 0.0,
                 quality_offset_from: None,
                 threshold_state: None,
+                name: None,
             },
             workouts: vec![WorkoutWire {
                 id: "w-1".into(),
@@ -1323,6 +1430,7 @@ mod tests {
             quality_offset_sec_km: 0.0,
             quality_offset_from: None,
             threshold_state: None,
+            name: None,
         }
     }
 

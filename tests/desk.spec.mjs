@@ -927,7 +927,7 @@ for (const theme of ['light','dark']) {
 
 test("native sync completion refreshes evidence and watch progress is visible", async ({page}) => {
   await page.goto('/desk.html');
-  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='plugin:event|listen').length)).toBe(3);
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='plugin:event|listen').length)).toBe(4);
   await page.evaluate(() => window.__deskEmit('sync://started', null));
   await expect(page.getByRole('button',{name:'Syncing activities'})).toBeDisabled();
   const before = await page.evaluate(() => window.__deskCalls.filter(call=>call.command==='current_plan').length);
@@ -1163,14 +1163,15 @@ test("plan creation submits the established contract", async ({ page }) => {
   selectedStart.setDate(selectedStart.getDate() + 7);
   const selectedDate = `${selectedStart.getFullYear()}-${String(selectedStart.getMonth() + 1).padStart(2, "0")}-${String(selectedStart.getDate()).padStart(2, "0")}`;
   await page.getByLabel("Start date", { exact: true }).fill(selectedDate);
+  await page.getByLabel("Plan name (optional)").fill("Spring half build");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByLabel("Threshold pace (min/km)")).toHaveValue("4:40");
-  await page.getByLabel("Weekly distance (km)").fill("40");
+  await page.getByLabel("Current weekly mileage").fill("40");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Build plan", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const request = await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request);
-  expect(request).toMatchObject({kind:"race",distance:"21K",startDate:selectedDate,thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40});
+  expect(request).toMatchObject({kind:"race",distance:"21K",startDate:selectedDate,thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40,name:"Spring half build"});
   await expect(page.locator(".plan-basis")).toContainText("40.0 km/week");
 });
 
@@ -1210,7 +1211,7 @@ test("failed plan creation keeps the reviewed draft", async ({ page }) => {
   await page.goto("/desk.html?noPlan=1");
   await page.getByRole("button", { name: "Create plan", exact: true }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByLabel("Weekly distance (km)").fill("37");
+  await page.getByLabel("Current weekly mileage").fill("37");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.evaluate(() => { window.__deskFail = "create_plan"; });
   await page.getByRole("button", { name: "Build plan", exact: true }).click();
@@ -1329,6 +1330,21 @@ test("calendar settings never publish on read and retain blank credentials and s
   await expect(page.getByRole("button", { name: "Import plan", exact:true })).toBeDisabled();
 });
 
+test("clearing training data needs confirmation and never touches recorded history", async ({ page }) => {
+  await page.goto("/desk.html#settings/training");
+  await expect(page.getByRole("button", { name: "Clear training plans", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Clear training plans", exact: true }).click();
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toEqual([]);
+  await page.getByRole("button", { name: "Keep my plan", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear training plans", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Clear plans", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toHaveLength(1);
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "delete_pain_entry" || call.command === "clear_pain_messages"))).toBe(false);
+  await expect(page.getByRole("button", { name: "Clear training plans", exact: true })).toBeDisabled();
+});
+
 test("plan import only overwrites after explicit confirmation", async ({ page }) => {
   await page.goto("/desk.html?syncConflict=1#settings/calendar");
   await page.getByRole("button", { name: "Import plan", exact: true }).click();
@@ -1366,7 +1382,7 @@ test("removing an assistant clears its key without deleting pain data", async ({
 for (const width of [320, 1440]) {
   test(`Settings and Help are accessible at ${width}px`, async ({ page }) => {
     await page.setViewportSize({width,height:900});
-    for (const section of ["", "/watch", "/appearance", "/thresholds", "/calendar", "/assistant", "/maps", "/about"]) {
+    for (const section of ["", "/watch", "/appearance", "/thresholds", "/training", "/calendar", "/assistant", "/maps", "/about"]) {
       await page.goto(`/desk.html#settings${section}`);
       await expect(page.locator(".desk-loading")).toHaveCount(0);
       await expect(page.getByRole("heading", {name:"Settings",exact:true})).toBeVisible();
@@ -1381,3 +1397,72 @@ for (const width of [320, 1440]) {
     await expect(page.getByRole("heading", {name:"Watch connection",exact:true})).toBeVisible();
   });
 }
+
+const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
+
+test("stage toast opens one line per mirror in order and self-dismisses once all settle", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await expect(toast).toHaveCount(0);
+  await emitStage(page, { op: "move", target: "db", state: "working", detail: null });
+  await expect(toast.getByText("Updating local DB…")).toBeVisible();
+  await emitStage(page, { op: "move", target: "calendar", state: "working", detail: null });
+  await emitStage(page, { op: "move", target: "db", state: "done", detail: null });
+  await emitStage(page, { op: "move", target: "gist", state: "working", detail: null });
+  // Lines keep their first-seen (chronological) order and each settles on its own.
+  await expect(toast.locator(".stage-line")).toHaveText([
+    "Updated local DB",
+    "Updating calendar…",
+    "Updating gist…",
+  ]);
+  // Still open while anything works, even after the command itself returned:
+  // the watch re-push runs in the background and its line stays until it lands.
+  await emitStage(page, { op: "move", target: "calendar", state: "done", detail: null });
+  await emitStage(page, { op: "move", target: "op", state: "done", detail: null });
+  await expect(toast).toBeVisible();
+  await emitStage(page, { op: "move", target: "gist", state: "done", detail: null });
+  // Every line has a verdict and the op settled: the toast counts down and
+  // removes itself without any click.
+  await expect(toast.locator(".stage-ring")).toBeVisible();
+  await expect(toast).toBeHidden({ timeout: 12000 });
+});
+
+test("a failed mirror stays visible as an error line until the toast dismisses", async ({ page }) => {
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "sync", target: "coros", state: "working", detail: null });
+  await emitStage(page, { op: "sync", target: "coros", state: "error", detail: "watch offline" });
+  await emitStage(page, { op: "sync", target: "op", state: "error", detail: null });
+  await expect(toast.getByText("Updating COROS calendar failed")).toBeVisible();
+  await expect(toast.locator(".stage-error")).toHaveCount(1);
+  await expect(toast.locator(".stage-error")).toHaveAttribute("title", "watch offline");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(toast).toHaveCount(0);
+});
+
+test("hovering the settled stage toast holds it open and pauses the countdown ring", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "reset", target: "db", state: "done", detail: null });
+  await emitStage(page, { op: "reset", target: "op", state: "done", detail: null });
+  const ring = toast.locator(".stage-ring circle");
+  await expect(ring).toHaveCSS("animation-play-state", "running");
+  await toast.hover();
+  await expect(ring).toHaveCSS("animation-play-state", "paused");
+  // Hold past the full auto-dismiss window, then let go: it dismisses shortly
+  // after the pointer leaves rather than restarting the whole countdown.
+  await page.waitForTimeout(7000);
+  await expect(toast).toBeVisible();
+  await page.mouse.move(5, 5);
+  await expect(toast).toBeHidden({ timeout: 4000 });
+});
+
+test("the plain notice carries the same countdown ring around its dismiss button", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#settings/thresholds");
+  await page.getByRole("button", { name: "Save boundaries" }).click();
+  await expect(page.getByRole("status")).toContainText("Training boundaries saved");
+  await expect(page.locator(".desk-notice .stage-ring")).toBeVisible();
+});

@@ -103,6 +103,11 @@ export const tauri = {
   pushPlan: (provider: ProviderKind) =>
     call<string>("push_plan_to_provider", { provider }),
   abortPlan: () => call<void>("abort_plan"),
+  /// Wipe every plan, session and plan offer from this device — the watch
+  /// slot is blanked and the sync channel told, but activity and health
+  /// history stay. The error it can return carries a COROS caveat the
+  /// caller must show, not swallow.
+  clearLocalPlanData: () => call<void>("clear_local_plan_data"),
   workoutsBetween: (from: string, to: string) =>
     call<PlanWorkout[]>("workouts_between", { from, to }),
   icsPath: () => call<string>("ics_path"),
@@ -242,6 +247,17 @@ export function estimatedTimeRange(session: {
 export function fmtTimeRange(range: [number, number] | null): string | null {
   if (!range) return null;
   return range[0] === range[1] ? `${range[0]} min` : `${range[0]}-${range[1]} min`;
+}
+
+/// A session name for display. The plan's softener stores the name it
+/// replaced — `"Easy run (was: Hold My Tempo · 3.0 km tempo)"` — because on
+/// the pain-proposal card that suffix is the only record of what was given
+/// up. On a calendar tile it reads as stale data: a tempo session under an
+/// easy-run label looks like an old plan resurrecting. The reason travels
+/// separately in `adjusted` and is shown beside the name, so the tile says
+/// only what is happening that day.
+export function displayTitle(title: string): string {
+  return title.replace(/\s*\(was: .*\)$/, "").trim();
 }
 
 /// A date as `dd/MM/yyyy` — the notation every printed date in the app uses.

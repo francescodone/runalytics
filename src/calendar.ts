@@ -1,4 +1,4 @@
-import { tauri, el, fail, inTauri, fmtDateDMY, estimatedTimeRange, fmtTimeRange } from "./lib/ipc";
+import { tauri, el, fail, inTauri, displayTitle, fmtDateDMY, estimatedTimeRange, fmtTimeRange } from "./lib/ipc";
 import { initSyncIndicator } from "./lib/sync";
 import { requirePlanOrRedirect } from "./lib/navgate";
 // Side-effect import: paints the saved colour scheme before first paint.
@@ -183,7 +183,7 @@ async function renderMonth(dir: "next" | "back" | "none" = "none"): Promise<void
               const tip = eventTitle(w) ?? (isMovable(w) ? "Drag to a new day" : null);
               return tip ? ` title="${escapeHtml(tip)}"` : "";
             })()
-          } aria-label="${escapeHtml(w.title)}">${KIND_LABEL[w.kind] ?? w.kind}${
+          } aria-label="${escapeHtml(displayTitle(w.title))}">${KIND_LABEL[w.kind] ?? w.kind}${
             w.distanceM ? ` ${(w.distanceM / 1000).toFixed(1)}k` : ""
           }</button>`,
       )
@@ -271,7 +271,7 @@ function renderAgenda(
           })()
         }>
           <span class="agenda-kind">${KIND_LABEL[w.kind] ?? w.kind}</span>
-          <span class="agenda-title">${escapeHtml(w.title)}</span>
+          <span class="agenda-title">${escapeHtml(displayTitle(w.title))}</span>
           <span class="agenda-meta">${agendaMeta(w)}</span>
         </button></li>`,
       )

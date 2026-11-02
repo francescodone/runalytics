@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useRef, useState, type DependencyList, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type DependencyList, type ReactNode } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { tauri, ymdLocal, inTauri, fmtDateDMY } from "../lib/ipc";
+import { tauri, ymdLocal, inTauri, displayTitle, fmtDateDMY } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
 import { motion, useReducedMotion } from "motion/react";
-import { IconX } from "@tabler/icons-react";
+import { IconX, IconLoader2, IconCheck, IconAlertCircle } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
 
 export type Workspace = "training" | "journal" | "health" | "settings" | "help";
@@ -46,6 +46,21 @@ type Notice = { text: string; action?: { label: string; run: () => Promise<unkno
 /// under a resting pointer never gets the leave event that would clear a flag.
 const NOTICE_MS = 6000;
 const NOTICE_HOLD_POLL_MS = 500;
+
+/// One mirror report from the backend's `plan://stage` channel. `target`
+/// "op" is the operation itself: its settle means no new line can arrive.
+type StageEvent = { op: string; target: string; state: "working" | "done" | "error"; detail?: string | null };
+type StageLine = { target: string; state: "working" | "done" | "error"; detail?: string | null };
+type StageOp = { lines: StageLine[]; settled: boolean };
+/// What the runner reads for each mirror. The order the backend opens the
+/// lines in (DB first, then calendar, gist, watch) is kept as-is: it is the
+/// chronological order the work actually happens in.
+const STAGE_LABELS: Record<string, string> = { db: "local DB", calendar: "calendar", gist: "gist", coros: "COROS calendar" };
+function stageText(line: StageLine): string {
+  const label = STAGE_LABELS[line.target] ?? line.target;
+  if (line.state === "working") return `Updating ${label}…`;
+  return line.state === "done" ? `Updated ${label}` : `Updating ${label} failed`;
+}
 type WorkspaceContext = { revision: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
 const Context = createContext<WorkspaceContext>({ revision: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
 export const useWorkspace = () => useContext(Context);
@@ -53,6 +68,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
+  const [stageOps, setStageOps] = useState<Record<string, StageOp>>({});
+  const stagesRef = useRef<HTMLDivElement>(null);
   const [acting, setActing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [planProgress, setPlanProgress] = useState<PlanSyncProgress | null>(null);
@@ -72,6 +89,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!result.ok) setNotice({text:"Background sync failed. Check your watch connection and try again."});
     });
     register<PlanSyncProgress>("plan://sync", progress => setPlanProgress(progress));
+    register<StageEvent>("plan://stage", event => setStageOps(previous => {
+      const current = previous[event.op] ?? { lines: [], settled: false };
+      if (event.target === "op") return { ...previous, [event.op]: { ...current, settled: event.state !== "working" } };
+      const lines = current.lines.slice();
+      const index = lines.findIndex(line => line.target === event.target);
+      const line: StageLine = { target: event.target, state: event.state, detail: event.detail ?? null };
+      if (index >= 0) lines[index] = line; else lines.push(line);
+      return { ...previous, [event.op]: { lines, settled: current.settled } };
+    }));
     void tauri.syncStatus().then(value => { if (!disposed && !receivedEvent) setSyncing(value); }).catch(() => undefined);
     return () => { disposed = true; stops.forEach(stop => stop()); };
   }, []);
@@ -98,6 +124,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timer = window.setTimeout(expire, NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [notice]);
+  // The stage toast keeps itself open while any line is still working, and
+  // while the operation itself has not returned (a mirror that was never
+  // attempted emits nothing, so only the op settle proves the list is
+  // final). Once every line has a verdict it self-dismisses on the same
+  // hover-hold clock as the plain notice.
+  const stageEntries = useMemo(() => Object.entries(stageOps).filter(([, op]) => op.lines.length > 0), [stageOps]);
+  const stagesQuiet = stageEntries.length > 0 && stageEntries.every(([, op]) => op.settled && op.lines.every(line => line.state !== "working"));
+  useEffect(() => {
+    if (!stagesQuiet) return;
+    let timer = 0;
+    const expire = () => {
+      const node = stagesRef.current;
+      if (node && (node.matches(":hover") || node.contains(document.activeElement))) {
+        timer = window.setTimeout(expire, NOTICE_HOLD_POLL_MS);
+        return;
+      }
+      setStageOps({});
+    };
+    timer = window.setTimeout(expire, NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [stagesQuiet, stageOps]);
   return <Context.Provider value={{ revision, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }) }}>
     {children}
     <Presence>{notice && <motion.div key="notice" ref={noticeRef} className="desk-notice" role="status" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}><Change identity={notice.text}><span>{notice.text}</span></Change>
@@ -107,7 +154,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         catch (error) { setNotice({ text: String(error) }); }
         finally { setActing(false); }
       }}>{notice.action.label}</button>}
-      <button className="notice-close" aria-label="Dismiss notification" onClick={() => setNotice(null)}><IconX size={18} aria-hidden="true" /></button>
+      <button className="notice-close" aria-label="Dismiss notification" onClick={() => setNotice(null)}><IconX size={18} aria-hidden="true" /><svg key={notice.text} className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg></button>
+    </motion.div>}</Presence>
+    <Presence>{stageEntries.length > 0 && <motion.div key="stages" ref={stagesRef} className="desk-notice desk-stages" role="status" aria-label="Plan sync progress" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}>
+      <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
+        {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconAlertCircle size={16} aria-hidden="true" />}
+        <span>{stageText(line)}</span>
+      </li>))}</ul>
+      <button className="notice-close" aria-label="Dismiss notification" onClick={() => setStageOps({})}><IconX size={18} aria-hidden="true" />{stagesQuiet && <svg className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg>}</button>
     </motion.div>}</Presence>
   </Context.Provider>;
 }
@@ -167,6 +221,10 @@ export function monday(date: string) { return shiftDate(date, -((dateValue(date)
 export const shortDate = (date: string) => fmtDateDMY(date);
 export const dayName = (date: string) => dateValue(date).toLocaleDateString("en-GB", { weekday: "short" });
 export const cleanTitle = (title: string) => title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+/// A session name for display: emoji stripped, and the softener's stored
+/// `"(was: …)"` suffix dropped. See `displayTitle` in lib/ipc for why the
+/// suffix stays in the database but never reaches the runner.
+export const sessionTitle = (title: string) => cleanTitle(displayTitle(title));
 /// Upper-cases only the first letter, leaving an already-capitalised or
 /// deliberately-styled label alone; provider codes arrive in any case.
 export const capitalizeFirst = (value: string) =>

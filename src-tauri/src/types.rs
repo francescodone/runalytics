@@ -293,6 +293,11 @@ pub struct PlanRequest {
     /// derives it from the last weeks of synced activities.
     #[serde(default)]
     pub current_weekly_km: Option<f64>,
+    /// What the runner calls this plan. A local label only: the COROS
+    /// library slot keeps its fixed name, and this name rides in the plan's
+    /// description there. Absent means Runalytics describes the plan itself.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -335,6 +340,36 @@ pub struct TrainingPlan {
     #[serde(default)]
     pub quality_offset_from: Option<NaiveDate>,
     pub threshold_state: Option<crate::plan::threshold::AthleteState>,
+    /// The runner's own name for this plan, shown wherever Runalytics names
+    /// it. `None` (every plan before the field existed, and any build left
+    /// unnamed) means the surfaces describe the plan instead — see
+    /// [`TrainingPlan::display_name`].
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl TrainingPlan {
+    /// How this plan should be named: the runner's label when there is one,
+    /// otherwise what the plan is for and when it ends. Every surface that
+    /// names a plan goes through here so they cannot drift apart.
+    pub fn display_name(&self) -> String {
+        match self.name.as_deref().map(str::trim) {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => format!(
+                "{} {} plan ending {}",
+                self.kind.label(),
+                self.distance.label(),
+                self.target_date.format("%d %b %Y")
+            ),
+        }
+    }
+
+    /// The runner's label, but only when it is a real one — `None` stays
+    /// `None` so callers can tell "named" from "described" without
+    /// re-implementing the trim rule.
+    pub fn clean_name(&self) -> Option<&str> {
+        self.name.as_deref().map(str::trim).filter(|n| !n.is_empty())
+    }
 }
 
 /// Which side of a session's prescribed pace range the runner landed on.

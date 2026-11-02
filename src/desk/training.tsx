@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { IconArrowLeft, IconArrowRight, IconPlus, IconCopy, IconCalendarEvent, IconCheck, IconX } from "@tabler/icons-react";
 import { tauri, fmtDateDMY, fmtDuration, fmtKm, fmtPace, parsePace, estimatedTimeRange, fmtTimeRange } from "../lib/ipc";
 import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, WeekDeviation } from "../lib/types";
-import { capitalizeFirst, cleanTitle, dateValue, dayName, kindName, monday, navigate, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
+import { displayPlanName } from "../lib/types";
+import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessionTitle, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
 import { PlanAdjustments } from "./proposals";
 import { RaceEstimates } from "./race-estimates";
@@ -192,7 +193,7 @@ export function Training() {
   };
   return <>
     <div className="training-context">
-      <div><span className="muted">{plan ? `${plan.kind === "maintenance" ? "Maintenance" : plan.kind === "improvement" ? "Improvement" : "Race preparation"} / ${plan.distance}` : "Your training"}</span>
+      <div><span className="muted">{plan ? displayPlanName(plan) : "Your training"}</span>
         <h2>{horizon === "plan" ? plan ? `Building toward ${shortDate(plan.targetDate)}` : "A plan that fits your life" : horizon === "month" ? dateValue(cursor).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : `${shortDate(first)} - ${shortDate(shiftDate(first, 6))}`}</h2></div>
       <div className="training-actions">{plan ? <Button onClick={() => setBenchmark(true)}><IconPlus size={18} />Schedule race or test</Button> : <Button tone="primary" onClick={() => setCreate(true)} disabled={current.loading || Boolean(current.error) || !connected || !synced}><IconPlus size={18} />Create plan</Button>}</div>
     </div>
@@ -296,8 +297,8 @@ function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active
     onSelect();
   }} data-workout-id={movable ? event.workoutId : undefined} data-session-date={event.date}>
     <span className="session-type"><span className="session-kind">{kindName(event.kind)}</span>{event.activityId != null && <IconCheck size={15} aria-label="Completed" />}{event.status === "skipped" && <IconX size={15} aria-label="Skipped" />}</span>
-    <strong>{cleanTitle(event.title)}</strong><span>{event.distanceM != null ? fmtKm(event.distanceM) : fmtTimeRange(estimatedTimeRange(event)) ?? (event.durationMin != null ? `${Math.round(event.durationMin)} min` : "Recovery")}</span>
-    {event.missed && <small>Missed</small>}{event.adjusted && <small>Adjusted for recovery</small>}{event.moved && <small>Rescheduled</small>}
+    <strong>{sessionTitle(event.title)}</strong><span>{event.distanceM != null ? fmtKm(event.distanceM) : fmtTimeRange(estimatedTimeRange(event)) ?? (event.durationMin != null ? `${Math.round(event.durationMin)} min` : "Recovery")}</span>
+    {event.missed && <small>Missed</small>}{event.adjusted && <small>Adjusted</small>}{event.moved && <small>Rescheduled</small>}
   </button>;
 }
 
@@ -309,7 +310,7 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
   const candidates = useRemote(() => event.workoutId && event.activityId == null ? tauri.calendarEvents(shiftDate(event.date, -7), shiftDate(event.date, 7)) : Promise.resolve([]), [event.id]);
   const review = useRemote(() => event.activityId != null ? tauri.activityReview(event.activityId) : Promise.resolve(null), [event.activityId]);
   const editable = event.workoutId && event.activityId == null && event.kind !== "race";
-  return <div className="session-detail"><span className="session-type">{kindName(event.kind)}</span><h2>{cleanTitle(event.title)}</h2><p className="muted">{fmtDateDMY(event.date)}{event.moved && event.plannedDate ? ` / Originally ${fmtDateDMY(event.plannedDate)}` : ""}</p>
+  return <div className="session-detail"><span className="session-type">{kindName(event.kind)}</span><h2>{sessionTitle(event.title)}</h2><p className="muted">{fmtDateDMY(event.date)}{event.moved && event.plannedDate ? ` / Originally ${fmtDateDMY(event.plannedDate)}` : ""}</p>
     {event.adjusted && <p className="context-note">Adjusted for you: {event.adjusted}</p>}
     <dl className="metrics-line"><Metric label="Distance" value={event.distanceM != null ? (event.distanceM / 1000).toFixed(1) : "Not specified"} unit={event.distanceM != null ? "km" : undefined} />{event.activityId != null ? event.durationMin != null && <Metric label="Duration" value={Math.round(event.durationMin)} unit="min" /> : fmtTimeRange(estimatedTimeRange(event)) && <Metric label="Estimated time" value={fmtTimeRange(estimatedTimeRange(event))} />}</dl>
     <div className="prescription">{event.notes.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
@@ -384,7 +385,7 @@ function ResetWeek({ weekStart, onClose }: { weekStart: string; onClose: () => v
     {deviations.loading ? <Loading label="Checking this week" /> : deviations.error ? <ErrorNotice error={deviations.error} retry={deviations.retry} /> : (deviations.data ?? []).length === 0
       ? <p className="muted">Nothing here has moved off the plan.</p>
       : <ul className="reset-list">{deviations.data!.map(deviation => <li key={deviation.workoutId} className={deviation.restorable ? "" : "not-restorable"}>
-        <span className="reset-title">{cleanTitle(deviation.title)}</span>
+        <span className="reset-title">{sessionTitle(deviation.title)}</span>
         <span className="reset-days">{deviation.restorable ? label(deviation) : `${dayName(deviation.to)} · stays`}</span>
       </li>)}</ul>}
     <p className="context-note">Race day written by your plan, runs you have already done and sessions you skipped stay where they are.</p>
@@ -412,10 +413,11 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
   const [target, setTarget] = useState(shiftDate(today(), 70));
   const [weeks, setWeeks] = useState(10);
   const [threshold, setThreshold] = useState(defaults?.thresholdSecKm ? fmtPace(defaults.thresholdSecKm) : "");
-  const [mileage, setMileage] = useState(defaults?.currentWeeklyKm?.toString() ?? "");
+  const [mileage, setMileage] = useState("");
   const [frequency, setFrequency] = useState(4);
   const [longDay, setLongDay] = useState(7);
   const [increase, setIncrease] = useState<PlanRequest["increase"]>("moderate");
+  const [name, setName] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
   const effectiveDate = kind === "maintenance" ? shiftDate(startDate || today(), weeks * 7) : target;
   const earliestEndDate = [shiftDate(startDate || today(), 15), shiftDate(today(), 1)].sort()[1];
@@ -427,7 +429,7 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
     if (step < 2) { setStep(step + 1); return; }
     const parsed = parsePace(threshold);
     if (parsed == null || parsed <= 0) { setValidation("Enter a threshold pace such as 4:45."); return; }
-    if (await command.run(() => tauri.createPlan({ kind, distance, startDate, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, increase, currentWeeklyKm: mileage ? Number(mileage) : null }), "Your plan is ready.")) { navigate("training", "plan"); onClose(); }
+    if (await command.run(() => tauri.createPlan({ kind, distance, startDate, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, increase, currentWeeklyKm: mileage ? Number(mileage) : null, name: name.trim() || null }), "Your plan is ready.")) { navigate("training", "plan"); onClose(); }
   }
   return <Dialog title="Create training plan" wide onClose={onClose}><div className="plan-composer"><form ref={form} onSubmit={submit}><div className="composer-progress" aria-label={`Step ${step + 1} of 3`}>{["Direction", "Your baseline", "Review"].map((label, index) => <span key={label} aria-current={index === step ? "step" : undefined}>{index + 1}. {label}</span>)}</div>
     <ErrorNotice error={validation ?? command.error} />
@@ -436,8 +438,9 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
       <label>Distance<select value={distance} onChange={event => setDistance(event.target.value as PlanRequest["distance"])}><option value="5K">5 km</option><option value="10K">10 km</option><option value="21K">Half marathon</option><option value="42K">Marathon</option></select></label>
       <label>Start date<input type="date" required value={startDate} onChange={event => setStartDate(event.target.value)} /></label>
       {kind === "maintenance" ? <label>Block length<select value={weeks} onChange={event => setWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map(value => <option key={value} value={value}>{value} weeks</option>)}</select></label> : <label>{kind === "race" ? "Race date" : "Time trial date"}<input type="date" required min={earliestEndDate} value={target} onChange={event => setTarget(event.target.value)} /></label>}
+      <label className="full">Plan name (optional)<input value={name} maxLength={60} placeholder="Spring half build" onChange={event => setName(event.target.value)} /><span className="muted">How Runalytics calls this plan. Your watch keeps one Runalytics plan slot and shows the name inside its description.</span></label>
     </div>}
-    {step === 1 && <div className="form-grid"><label>Threshold pace (min/km)<input required value={threshold} placeholder="4:45" pattern="[0-9]{1,2}:[0-5][0-9]" onChange={event => setThreshold(event.target.value)} /></label><label>Weekly distance (km)<input type="number" min="5" max="250" step="0.1" value={mileage} onChange={event => setMileage(event.target.value)} /></label><label>Runs per week<input type="number" min="3" max="7" required value={frequency} onChange={event => setFrequency(Number(event.target.value))} /></label><label>Long run day<select value={longDay} onChange={event => setLongDay(Number(event.target.value))}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day, index) => <option key={day} value={index + 1}>{day}</option>)}</select></label>{kind !== "maintenance" && <label className="full">Mileage progression<select value={increase} onChange={event => setIncrease(event.target.value as PlanRequest["increase"])}><option value="conservative">Conservative / 5%</option><option value="moderate">Moderate / 8%</option><option value="ambitious">Ambitious / 12%</option></select></label>}</div>}
+    {step === 1 && <div className="form-grid"><label>Threshold pace (min/km)<input required value={threshold} placeholder="4:45" pattern="[0-9]{1,2}:[0-5][0-9]" onChange={event => setThreshold(event.target.value)} /></label><label>Current weekly mileage (km)<input type="number" min="5" max="250" step="0.1" value={mileage} placeholder={defaults?.currentWeeklyKm ? `Leave empty for your synced average: ${defaults.currentWeeklyKm.toFixed(1)}` : "Leave empty to use your synced history"} onChange={event => setMileage(event.target.value)} /><span className="muted">Only fill this in if your recent runs do not reflect a normal week.</span></label><label>Runs per week<input type="number" min="3" max="7" required value={frequency} onChange={event => setFrequency(Number(event.target.value))} /></label><label>Long run day<select value={longDay} onChange={event => setLongDay(Number(event.target.value))}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day, index) => <option key={day} value={index + 1}>{day}</option>)}</select></label>{kind !== "maintenance" && <label className="full">Mileage progression<select value={increase} onChange={event => setIncrease(event.target.value as PlanRequest["increase"])}><option value="conservative">Conservative / 5%</option><option value="moderate">Moderate / 8%</option><option value="ambitious">Ambitious / 12%</option></select></label>}</div>}
     {step === 2 && <><h3 tabIndex={-1}>Ready to build your plan</h3><p>Your schedule is generated locally from these inputs. Sending it to your watch is a separate action.</p>{defaults?.activePain && <p className="context-note">Unresolved pain: {defaults.activePain.bodyPart}, {defaults.activePain.intensity}/10. Consider reviewing it in Health before starting a new plan.</p>}</>}
     </Change>
     <div className="form-actions">{step > 0 && <Button onClick={() => setStep(step - 1)}>Back</Button>}<Button tone="primary" type="submit" busy={command.busy}>{step === 2 ? "Build plan" : "Continue"}</Button></div>

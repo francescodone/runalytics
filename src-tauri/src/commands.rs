@@ -30,6 +30,125 @@ fn get_provider(state: &AppState, kind: ProviderKind) -> Result<Arc<dyn Provider
         .ok_or_else(|| AppError::Other(format!("provider {} not built", provider_name(kind))))
 }
 
+// ---- plan-mirror stage events ----------------------------------------------
+//
+// A plan lives in four places: this device's database, the published
+// calendar, the encrypted gist the phone pulls, and the COROS watch. Any
+// interaction that can move one of them (create, sync, erase, abort, move a
+// session) reports each mirror as `working` then `done`/`error` on the
+// `plan://stage` event, so the toast can show every line and only start its
+// self-dismiss countdown once all of them have settled. The frontend owns
+// the labels; `target` is the stable contract.
+
+#[derive(Clone, Copy)]
+enum Stage {
+    Db,
+    Calendar,
+    Gist,
+    Coros,
+    /// The operation itself: its `done`/`error` tells the toast the command
+    /// has returned, so no new line can arrive any more — the only case the
+    /// toast cannot infer from the lines is a mirror that was never
+    /// attempted (an unconfigured gist emits nothing at all).
+    Op,
+}
+
+impl Stage {
+    fn target(self) -> &'static str {
+        match self {
+            Stage::Db => "db",
+            Stage::Calendar => "calendar",
+            Stage::Gist => "gist",
+            Stage::Coros => "coros",
+            Stage::Op => "op",
+        }
+    }
+}
+
+/// Marks the operation open on the toast for the lifetime of the command.
+/// `commit` before returning `Ok`; the `Drop` covers every early `?` so the
+/// toast always learns the operation has finished, even on failure paths
+/// that never touched a mirror.
+struct OpGuard {
+    app: tauri::AppHandle,
+    op: &'static str,
+    ok: bool,
+}
+
+impl OpGuard {
+    fn new(app: &tauri::AppHandle, op: &'static str) -> Self {
+        stage(app, op, Stage::Op, "working", None);
+        Self {
+            app: app.clone(),
+            op,
+            ok: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.ok = true;
+    }
+}
+
+impl Drop for OpGuard {
+    fn drop(&mut self) {
+        stage(
+            &self.app,
+            self.op,
+            Stage::Op,
+            if self.ok { "done" } else { "error" },
+            None,
+        );
+    }
+}
+
+fn stage(app: &tauri::AppHandle, op: &str, target: Stage, state: &str, detail: Option<String>) {
+    let _ = app.emit(
+        "plan://stage",
+        serde_json::json!({ "op": op, "target": target.target(), "state": state, "detail": detail }),
+    );
+}
+
+/// The calendar mirror: refresh reports upload failures through the stored
+/// config rather than the return value, so the stage reads that back before
+/// calling it done. When publishing is off the refresh only regenerates the
+/// local file, which is still the calendar the runner subscribes to.
+async fn stage_calendar(
+    app: &tauri::AppHandle,
+    op: &str,
+    target: Stage,
+    state: &AppState,
+) -> Result<()> {
+    stage(app, op, target, "working", None);
+    match calendar_publish::refresh(state).await {
+        Err(error) => {
+            stage(app, op, target, "error", Some(error.to_string()));
+            Err(error)
+        }
+        Ok(_) => {
+            let failure = calendar_publish::load(&state.data_dir)
+                .ok()
+                .filter(|config| config.enabled)
+                .and_then(|config| config.last_error.clone());
+            match failure {
+                Some(detail) => stage(app, op, target, "error", Some(detail)),
+                None => stage(app, op, target, "done", None),
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The gist mirror, staged. Silent (no line at all) when plan sync is not
+/// configured — a runner who never opened that setting sees no cloud row.
+async fn stage_gist(app: &tauri::AppHandle, op: &str, target: Stage, state: &AppState) {
+    match plan_sync::try_push_if_enabled(state).await {
+        None => {}
+        Some(Ok(_)) => stage(app, op, target, "done", None),
+        Some(Err(error)) => stage(app, op, target, "error", Some(error.to_string())),
+    }
+}
+
 /// The runner's configured decision boundaries, normalised. Read once per
 /// command and passed down, so a scoring function never reaches into app state
 /// and stays testable with any thresholds.
@@ -117,24 +236,51 @@ pub async fn run_full_sync(
     // Only one sync at a time; a second caller gets the first one's result
     // by simply waiting on the same lock below.
     let _guard = state.sync_lock.lock().await;
+    let mut op = OpGuard::new(app, "sync");
     state.syncing.store(true, Ordering::SeqCst);
     let _ = app.emit("sync://started", ());
+    // The download streams straight into the database, so both the provider
+    // read and the local write are in flight for the whole inner sync; they
+    // settle together when it returns.
+    stage(app, "sync", Stage::Coros, "working", None);
+    stage(app, "sync", Stage::Db, "working", None);
     let mut out = run_full_sync_inner(app, state, provider).await;
+    match &out {
+        Ok(_) => {
+            stage(app, "sync", Stage::Coros, "done", None);
+            stage(app, "sync", Stage::Db, "done", None);
+        }
+        Err(error) => {
+            stage(app, "sync", Stage::Coros, "error", Some(error.to_string()));
+            stage(app, "sync", Stage::Db, "error", Some(error.to_string()));
+        }
+    }
     // Every sync ends by republishing the calendar: regenerate the .ics
     // (after reconciling planned vs completed runs) and upload it when
     // publishing is configured. Report the outcome in the sync summary so
     // the user can see the calendar actually moved, not just that nothing
     // crashed.
+    stage(app, "sync", Stage::Calendar, "working", None);
     let calendar_message = match calendar_publish::refresh(state).await {
-        Err(error) => Some(format!("calendar refresh failed: {error}")),
+        Err(error) => {
+            stage(app, "sync", Stage::Calendar, "error", Some(error.to_string()));
+            Some(format!("calendar refresh failed: {error}"))
+        }
         Ok(_) => {
             let config = calendar_publish::load(&state.data_dir).ok();
             match config.as_ref().and_then(|config| config.last_error.clone()) {
-                Some(error) => Some(format!("calendar publish failed: {error}")),
+                Some(error) => {
+                    stage(app, "sync", Stage::Calendar, "error", Some(error.clone()));
+                    Some(format!("calendar publish failed: {error}"))
+                }
                 None if config.as_ref().is_some_and(|config| config.enabled) => {
+                    stage(app, "sync", Stage::Calendar, "done", None);
                     Some("calendar published".into())
                 }
-                None => None,
+                None => {
+                    stage(app, "sync", Stage::Calendar, "done", None);
+                    None
+                }
             }
         }
     };
@@ -150,8 +296,15 @@ pub async fn run_full_sync(
     // so the other device's next pull sees it. Silent when sync is off, and
     // idempotent: pushing an unchanged revision is what keeps the channel
     // honest about who is current.
-    plan_sync::push_if_enabled(state).await;
+    match plan_sync::try_push_if_enabled(state).await {
+        None => {}
+        Some(Ok(_)) => stage(app, "sync", Stage::Gist, "done", None),
+        Some(Err(error)) => stage(app, "sync", Stage::Gist, "error", Some(error.to_string())),
+    }
     state.syncing.store(false, Ordering::SeqCst);
+    if out.is_ok() {
+        op.commit();
+    }
     let _ = app.emit("sync://completed", serde_json::json!({ "ok": out.is_ok() }));
     out
 }
@@ -508,11 +661,13 @@ pub async fn matched_sessions(state: State<'_, AppState>) -> Result<Vec<MatchedS
 
 #[tauri::command]
 pub async fn create_plan(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     request: PlanRequest,
     threshold_evidence: Option<crate::plan::threshold::Evidence>,
 ) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
     let _sync_guard = state.sync_lock.lock().await;
+    let mut op = OpGuard::new(&app, "create");
     // Only one plan may own the calendar at a time: the current plan must be
     // aborted before a new one can be created.
     if state.store.current_plan()?.is_some() {
@@ -531,10 +686,19 @@ pub async fn create_plan(
         .max(10.0);
     let evidence = combined_threshold_evidence(&state.store, threshold_evidence)?;
     let (plan, workouts) = engine::generate_with_evidence(&request, baseline, &evidence)?;
-    state.store.insert_plan(&plan)?;
-    state.store.insert_workouts(&workouts)?;
-    calendar_publish::refresh(&state).await?;
-    plan_sync::push_if_enabled(&state).await;
+    stage(&app, "create", Stage::Db, "working", None);
+    let stored = state
+        .store
+        .insert_plan(&plan)
+        .and_then(|()| state.store.insert_workouts(&workouts));
+    match &stored {
+        Ok(()) => stage(&app, "create", Stage::Db, "done", None),
+        Err(error) => stage(&app, "create", Stage::Db, "error", Some(error.to_string())),
+    }
+    stored?;
+    stage_calendar(&app, "create", Stage::Calendar, &state).await?;
+    stage_gist(&app, "create", Stage::Gist, &state).await;
+    op.commit();
     Ok((plan, workouts))
 }
 
@@ -664,17 +828,26 @@ pub async fn push_plan_to_provider(
             },
         );
     };
-    let id = p.push_plan(&plan, &workouts, Some(&emit)).await?;
+    let mut op = OpGuard::new(&app, "push");
+    stage(&app, "push", Stage::Coros, "working", None);
+    let pushed = p.push_plan(&plan, &workouts, Some(&emit)).await;
+    match &pushed {
+        Ok(_) => stage(&app, "push", Stage::Coros, "done", None),
+        Err(error) => stage(&app, "push", Stage::Coros, "error", Some(error.to_string())),
+    }
+    let id = pushed?;
     if let Some(id) = &id {
         state.store.set_plan_pushed_id(&plan.id, id)?;
     }
     state.store.set_plan_status(&plan.id, PlanStatus::Pushed)?;
+    op.commit();
     Ok(id.unwrap_or_else(|| "scheduled".into()))
 }
 
 #[tauri::command]
 pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()> {
     let _sync_guard = state.sync_lock.lock().await;
+    let mut op = OpGuard::new(&app, "abort");
     if let Some((plan, _)) = state.store.current_plan()? {
         // A plan that was pushed to a watch must be cancelled there first:
         // COROS keeps every plan it is handed, so dropping only the local
@@ -696,12 +869,16 @@ pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                             },
                         );
                     };
+                    stage(&app, "abort", Stage::Coros, "working", None);
                     if let Err(e) = p.cancel_plan(plan.pushed_id.as_deref(), Some(&emit)).await {
                         eprintln!("[coros] plan cancel failed: {e}");
+                        stage(&app, "abort", Stage::Coros, "error", Some(e.to_string()));
                         provider_note = Some(format!(
                             "the plan was removed locally, but COROS could not be updated ({e}) — \
                              quit it in the COROS app if it still shows there"
                         ));
+                    } else {
+                        stage(&app, "abort", Stage::Coros, "done", None);
                     }
                 }
                 Err(e) => eprintln!("[coros] provider unavailable for cancel: {e}"),
@@ -710,12 +887,95 @@ pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         // Delete the plan outright: cascading removes its workouts, which is
         // what actually clears them from the calendar view and the .ics file.
         plan_sync::remember_reset(&state.data_dir, &plan.id)?;
-        state.store.delete_plan(&plan.id)?;
-        calendar_publish::refresh(&state).await?;
-        plan_sync::push_if_enabled(&state).await;
+        stage(&app, "abort", Stage::Db, "working", None);
+        match state.store.delete_plan(&plan.id) {
+            Ok(()) => stage(&app, "abort", Stage::Db, "done", None),
+            Err(error) => {
+                stage(&app, "abort", Stage::Db, "error", Some(error.to_string()));
+                return Err(error);
+            }
+        }
+        stage_calendar(&app, "abort", Stage::Calendar, &state).await?;
+        stage_gist(&app, "abort", Stage::Gist, &state).await;
+        op.commit();
         if let Some(note) = provider_note {
             return Err(AppError::Other(note));
         }
+    }
+    Ok(())
+}
+
+/// Clear every plan the local database holds — the runner's "start over"
+/// button. The plan mirrors go first: the COROS slot is blanked (the closest
+/// the API has to quitting, and it stops the watch showing sessions that no
+/// longer exist here), each deleted plan id is recorded as reset so the sync
+/// channel can never resurrect it on the next pull, and the published plan
+/// gist and calendar are refreshed to show the clear.
+///
+/// Deliberately does NOT touch activity, health, pain or track history: that
+/// data is the raw watch record, rebuilding it means re-syncing months of
+/// runs, and none of it is what "the plan keeps getting overridden" is about.
+#[tauri::command]
+pub async fn clear_local_plan_data(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let _sync_guard = state.sync_lock.lock().await;
+    let mut op = OpGuard::new(&app, "clear");
+    // Every non-finished plan, not just the current one: a device can hold a
+    // draft beside a pushed plan, and clearing must not leave the older one
+    // behind to become "current" the moment this command finishes.
+    let plans = state.store.all_plans()?;
+    let mut provider_note = None;
+    let mut coros_attempted = false;
+    for plan in &plans {
+        // Blank it on the watch before forgetting it, same ordering as
+        // abort_plan: once the local row is gone there is no pushed id left
+        // to cancel with.
+        if plan.status == PlanStatus::Pushed {
+            if let Ok(p) = get_provider(&state, ProviderKind::Coros) {
+                let emit = |stage: &str, percent: u8| {
+                    let _ = app.emit(
+                        "plan://sync",
+                        PlanSyncProgress {
+                            op: "cancel".into(),
+                            percent,
+                            stage: stage.into(),
+                        },
+                    );
+                };
+                if !coros_attempted {
+                    coros_attempted = true;
+                    stage(&app, "clear", Stage::Coros, "working", None);
+                }
+                if let Err(e) = p.cancel_plan(plan.pushed_id.as_deref(), Some(&emit)).await {
+                    eprintln!("[coros] clear: plan cancel failed: {e}");
+                    provider_note = Some(
+                        "the plans were removed locally, but COROS could not be updated — \
+                         quit them in the COROS app if they still show there"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        plan_sync::remember_reset(&state.data_dir, &plan.id)?;
+    }
+    if coros_attempted {
+        match &provider_note {
+            Some(note) => stage(&app, "clear", Stage::Coros, "error", Some(note.clone())),
+            None => stage(&app, "clear", Stage::Coros, "done", None),
+        }
+    }
+    stage(&app, "clear", Stage::Db, "working", None);
+    match state.store.clear_plan_data() {
+        Ok(()) => stage(&app, "clear", Stage::Db, "done", None),
+        Err(error) => {
+            stage(&app, "clear", Stage::Db, "error", Some(error.to_string()));
+            return Err(error);
+        }
+    }
+    stage_calendar(&app, "clear", Stage::Calendar, &state).await?;
+    stage_gist(&app, "clear", Stage::Gist, &state).await;
+    op.commit();
+    if let Some(note) = provider_note {
+        return Err(AppError::Other(note));
     }
     Ok(())
 }
@@ -818,23 +1078,31 @@ pub async fn plan_sync_check(
 
 #[tauri::command]
 pub async fn match_calendar_activity(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     workout_id: String,
     activity_id: i64,
 ) -> Result<()> {
+    let mut op = OpGuard::new(&app, "match");
+    stage(&app, "match", Stage::Db, "working", None);
     {
         let _guard = state.calendar_lock.lock().await;
-        calendar::match_activity(&state.store, &workout_id, activity_id)?;
+        if let Err(error) = calendar::match_activity(&state.store, &workout_id, activity_id) {
+            stage(&app, "match", Stage::Db, "error", Some(error.to_string()));
+            return Err(error);
+        }
     }
+    stage(&app, "match", Stage::Db, "done", None);
     if let Some((plan, _)) = state.store.current_plan()? {
         if let Some(offer) = pacing::build(&state.store, &plan, &thresholds(&state))? {
             state.store.insert_proposal(&offer)?;
         }
     }
-    calendar_publish::refresh(&state).await?;
+    stage_calendar(&app, "match", Stage::Calendar, &state).await?;
     // The pairing is a plan edit like any other: the other device has to see
     // that this session is done, and against which run.
-    plan_sync::push_if_enabled(&state).await;
+    stage_gist(&app, "match", Stage::Gist, &state).await;
+    op.commit();
     Ok(())
 }
 
@@ -849,16 +1117,27 @@ pub async fn move_workout(
     date: String,
 ) -> Result<()> {
     let to = crate::store::parse_date_pub(&date)?;
-    {
+    let mut op = OpGuard::new(&app, "move");
+    stage(&app, "move", Stage::Db, "working", None);
+    let moved = {
         let _guard = state.calendar_lock.lock().await;
         calendar::move_workout(
             &state.store,
             &workout_id,
             to,
             chrono::Local::now().date_naive(),
-        )?;
+        )
+    };
+    match &moved {
+        Ok(_) => stage(&app, "move", Stage::Db, "done", None),
+        Err(error) => stage(&app, "move", Stage::Db, "error", Some(error.to_string())),
     }
-    after_schedule_change(&app, &state).await
+    moved?;
+    let moved = after_schedule_change(&app, &state, "move").await;
+    if moved.is_ok() {
+        op.commit();
+    }
+    moved
 }
 
 #[tauri::command]
@@ -869,12 +1148,23 @@ pub async fn schedule_benchmark(
     name: String,
     distance_m: f64,
 ) -> Result<()> {
-    {
+    let mut op = OpGuard::new(&app, "benchmark");
+    stage(&app, "benchmark", Stage::Db, "working", None);
+    let scheduled = {
         let _guard = state.calendar_lock.lock().await;
         calendar::schedule_benchmark(&state.store, crate::store::parse_date_pub(&date)?,
-            chrono::Local::now().date_naive(), &name, distance_m)?;
+            chrono::Local::now().date_naive(), &name, distance_m)
+    };
+    match &scheduled {
+        Ok(_) => stage(&app, "benchmark", Stage::Db, "done", None),
+        Err(error) => stage(&app, "benchmark", Stage::Db, "error", Some(error.to_string())),
     }
-    after_schedule_change(&app, &state).await
+    scheduled?;
+    let done = after_schedule_change(&app, &state, "benchmark").await;
+    if done.is_ok() {
+        op.commit();
+    }
+    done
 }
 
 /// What a "reset this week" preview shows for one drifted session: where it
@@ -971,11 +1261,19 @@ pub async fn reset_week(
     week_start: String,
 ) -> Result<usize> {
     let monday = crate::store::parse_date_pub(&week_start)?;
+    let mut op = OpGuard::new(&app, "reset");
+    stage(&app, "reset", Stage::Db, "working", None);
     let restored = {
         let _guard = state.calendar_lock.lock().await;
-        calendar::reset_week(&state.store, monday, chrono::Local::now().date_naive())?
+        calendar::reset_week(&state.store, monday, chrono::Local::now().date_naive())
     };
-    after_schedule_change(&app, &state).await?;
+    match &restored {
+        Ok(_) => stage(&app, "reset", Stage::Db, "done", None),
+        Err(error) => stage(&app, "reset", Stage::Db, "error", Some(error.to_string())),
+    };
+    let restored = restored?;
+    after_schedule_change(&app, &state, "reset").await?;
+    op.commit();
     Ok(restored)
 }
 
@@ -989,11 +1287,22 @@ pub async fn set_workout_skipped(
     workout_id: String,
     skipped: bool,
 ) -> Result<()> {
-    {
+    let mut op = OpGuard::new(&app, "skip");
+    stage(&app, "skip", Stage::Db, "working", None);
+    let set = {
         let _guard = state.calendar_lock.lock().await;
-        calendar::set_skipped(&state.store, &workout_id, skipped)?;
+        calendar::set_skipped(&state.store, &workout_id, skipped)
+    };
+    match &set {
+        Ok(_) => stage(&app, "skip", Stage::Db, "done", None),
+        Err(error) => stage(&app, "skip", Stage::Db, "error", Some(error.to_string())),
     }
-    after_schedule_change(&app, &state).await
+    set?;
+    let done = after_schedule_change(&app, &state, "skip").await;
+    if done.is_ok() {
+        op.commit();
+    }
+    done
 }
 
 /// Everything that has to happen after the plan's *days* change, in one place:
@@ -1002,16 +1311,21 @@ pub async fn set_workout_skipped(
 ///
 /// The re-push is spawned rather than awaited because a COROS round-trip takes
 /// tens of seconds and the UI has nothing to show while it waits — the calendar
-/// above is already correct, and the watch catches up.
+/// above is already correct, and the watch catches up. The stage toast is the
+/// exception: its COROS line stays open until the re-push settles, which is
+/// exactly what the runner wants to see while the watch lags behind.
 async fn after_schedule_change(
     app: &tauri::AppHandle,
     state: &State<'_, AppState>,
+    op: &str,
 ) -> Result<()> {
-    calendar_publish::refresh(state).await?;
-    plan_sync::push_if_enabled(state).await;
+    stage_calendar(app, op, Stage::Calendar, state).await?;
+    stage_gist(app, op, Stage::Gist, state).await;
     if let Some((plan, workouts)) = state.store.current_plan()? {
         if plan.status == PlanStatus::Pushed {
             let app = app.clone();
+            let op = op.to_string();
+            stage(&app, &op, Stage::Coros, "working", None);
             tauri::async_runtime::spawn(async move {
                 use tauri::Manager;
                 let state = app.state::<AppState>();
@@ -1019,12 +1333,15 @@ async fn after_schedule_change(
                     Ok(p) => p.push_plan(&plan, &workouts, None).await,
                     Err(e) => Err(e),
                 };
-                match result {
-                    Ok(Some(id)) => {
-                        let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+                match &result {
+                    Ok(_) => stage(&app, &op, Stage::Coros, "done", None),
+                    Err(e) => {
+                        eprintln!("[coros] re-push after schedule change failed: {e}");
+                        stage(&app, &op, Stage::Coros, "error", Some(e.to_string()));
                     }
-                    Ok(None) => {}
-                    Err(e) => eprintln!("[coros] re-push after schedule change failed: {e}"),
+                }
+                if let Ok(Some(id)) = &result {
+                    let _ = state.store.set_plan_pushed_id(&plan.id, id);
                 }
             });
         }
@@ -1103,6 +1420,8 @@ fn now() -> DateTime<Utc> {
 /// Shared by the adaptive engine (auto-applied) and accepted proposals, so the
 /// two paths can never drift apart.
 async fn apply_workout_edits(
+    app: &tauri::AppHandle,
+    op: &str,
     state: &AppState,
     provider: Option<Arc<dyn Provider>>,
     edits: &[WorkoutEdit],
@@ -1133,12 +1452,19 @@ async fn apply_workout_edits(
         })?;
     }
     let fresh = state.store.plan_workouts(&plan.id)?;
-    calendar_publish::refresh(state).await?;
-    plan_sync::push_if_enabled(state).await;
+    stage_calendar(app, op, Stage::Calendar, state).await?;
+    stage_gist(app, op, Stage::Gist, state).await;
     // Keep the watch schedule mirroring the local plan, as the adaptive path does.
     if let (Some(p), true) = (provider, plan.status == PlanStatus::Pushed) {
-        if let Ok(Some(id)) = p.push_plan(&plan, &fresh, None).await {
-            let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+        stage(app, op, Stage::Coros, "working", None);
+        match p.push_plan(&plan, &fresh, None).await {
+            Ok(id) => {
+                stage(app, op, Stage::Coros, "done", None);
+                if let Some(id) = id {
+                    let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+                }
+            }
+            Err(error) => stage(app, op, Stage::Coros, "error", Some(error.to_string())),
         }
     }
     Ok(fresh)
@@ -1247,10 +1573,12 @@ pub async fn proposals(state: State<'_, AppState>, limit: i64) -> Result<Vec<Pla
 /// distance edits and decision status. Both then refresh external mirrors.
 #[tauri::command]
 pub async fn apply_proposal(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     provider: ProviderKind,
     proposal_id: String,
 ) -> Result<Vec<PlanWorkout>> {
+    let mut op = OpGuard::new(&app, "proposal");
     let p = state
         .store
         .proposal_by_id(&proposal_id)?
@@ -1310,21 +1638,29 @@ pub async fn apply_proposal(
             quality_offset_from: Some(from),
             ..plan
         };
-        calendar_publish::refresh(&state).await?;
-        plan_sync::push_if_enabled(&state).await;
+        stage_calendar(&app, "proposal", Stage::Calendar, &state).await?;
+        stage_gist(&app, "proposal", Stage::Gist, &state).await;
         let fresh = state.store.plan_workouts(&plan.id)?;
         if let (Some(p), true) = (prov, plan.status == PlanStatus::Pushed) {
-            if let Ok(Some(id)) = p.push_plan(&plan, &fresh, None).await {
-                let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+            stage(&app, "proposal", Stage::Coros, "working", None);
+            match p.push_plan(&plan, &fresh, None).await {
+                Ok(id) => {
+                    stage(&app, "proposal", Stage::Coros, "done", None);
+                    if let Some(id) = id {
+                        let _ = state.store.set_plan_pushed_id(&plan.id, &id);
+                    }
+                }
+                Err(error) => stage(&app, "proposal", Stage::Coros, "error", Some(error.to_string())),
             }
         }
         fresh
     } else {
-        apply_workout_edits(&state, prov, &p.edits).await?
+        apply_workout_edits(&app, "proposal", &state, prov, &p.edits).await?
     };
     if p.source != ProposalSource::Pacing {
         state.store.set_proposal_status(&p.id, ProposalStatus::Applied, Some(Utc::now()), None)?;
     }
+    op.commit();
     Ok(fresh)
 }
 

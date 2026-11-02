@@ -1,4 +1,4 @@
-import { tauri, fmtKm, fmtDateDMY, ymdLocal, estimatedTimeRange, fmtTimeRange } from "./ipc";
+import { tauri, fmtKm, displayTitle, fmtDateDMY, ymdLocal, estimatedTimeRange, fmtTimeRange } from "./ipc";
 import { icons } from "./icons";
 import { createModal, type Modal } from "./overlay";
 import { withBusy } from "./feedback";
@@ -65,7 +65,7 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
       <select id="workout-match-activity" required></select>
       <button type="submit">Replace planned session</button></form>
     <p class="workout-detail-status" role="status"></p></div>`;
-  card.querySelector("h2")!.textContent = event.title;
+  card.querySelector("h2")!.textContent = displayTitle(event.title);
   // The weekday stays — it is the orientation this line exists to give — but
   // the date itself carries the app's notation.
   card.querySelector(".workout-detail-date")!.textContent = `${new Date(`${event.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long" })} · ${fmtDateDMY(event.date)}`;
@@ -107,7 +107,7 @@ export async function openCalendarEvent(event: CalendarEvent): Promise<void> {
   // from there instead of hand-rolled listeners on this element.
   const modal = createModal({
     card,
-    label: event.title,
+    label: displayTitle(event.title),
     className: "workout-modal",
     onClosed: () => {
       if (currentWorkoutModal === modal) currentWorkoutModal = null;

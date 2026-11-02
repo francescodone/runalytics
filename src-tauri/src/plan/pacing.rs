@@ -816,6 +816,7 @@ mod tests {
             longrun_day: 7,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(40.0),
+            name: None,
         };
         let (mut plan, workouts) = engine::generate(&req, 40.0).unwrap();
         plan.threshold_state = None;

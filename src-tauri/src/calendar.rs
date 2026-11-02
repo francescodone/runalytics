@@ -979,6 +979,7 @@ mod tests {
             longrun_day: 7,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(30.0),
+            name: None,
         };
         let (plan, workouts) = crate::plan::engine::generate(&request, 30.0).unwrap();
         store.insert_plan(&plan).unwrap();

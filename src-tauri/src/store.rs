@@ -726,11 +726,33 @@ impl Store {
         add_column_if_missing(&conn, "training_plans", "quality_offset_from", "TEXT")?;
         add_column_if_missing(&conn, "training_plans", "threshold_state", "TEXT")?;
         add_column_if_missing(&conn, "training_plans", "start_date", "TEXT")?;
+        // What the runner calls the plan. Nullable rather than defaulted:
+        // a plan nobody named genuinely has no name, and every naming
+        // surface falls back to describing the plan instead — an empty
+        // string would render as a blank title.
+        add_column_if_missing(&conn, "training_plans", "name", "TEXT")?;
         // Why the plan softened a session on its own. Added as a repair rather
         // than a numbered migration for the usual reason, and nullable rather
         // than defaulted: a session nobody softened genuinely has no reason,
         // and "no reason" must not be renderable as an empty explanation.
         add_column_if_missing(&conn, "plan_workouts", "adjusted_reason", "TEXT")?;
+        // When the plan softened a session — the softener's own rate limit.
+        // The threshold evidence that triggers softening can stay in warning
+        // state for weeks, and without a timestamp of its own the softener
+        // would give up one more hard session on every sync (see
+        // `last_softened_at`). Nullable: a session nobody softened has no
+        // softening instant, and the repair cannot know when older shipped
+        // databases softened theirs, so NULL honestly means "unknown".
+        add_column_if_missing(&conn, "plan_workouts", "adjusted_ts", "INTEGER")?;
+        // The softener's cooldown clock, kept outside the plan so clearing
+        // or recreating a plan cannot reset it (see `last_softened_at`).
+        // Idempotent repair rather than a numbered migration, as usual.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL
+            );",
+        )?;
         // What generated an offer. Pain offers and pacing offers apply through
         // the same path but belong on different pages, so the distinction has
         // to survive a restart; a pacing offer also carries the offset to store
@@ -1493,8 +1515,8 @@ impl Store {
         conn.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![
                 p.id,
                 distance_name(p.distance),
@@ -1515,7 +1537,8 @@ impl Store {
                 // later edit moves it forward from there.
                 p.created_at.timestamp(),
                 p.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
-                p.start_date.map(|date| date.format("%Y-%m-%d").to_string())
+                p.start_date.map(|date| date.format("%Y-%m-%d").to_string()),
+                p.name.as_deref().map(str::trim).filter(|n| !n.is_empty())
             ],
         )?;
         Ok(())
@@ -1650,7 +1673,7 @@ impl Store {
             let row = conn.query_row(
                 "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
                         increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                        kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date
+                        kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name
                  FROM training_plans
                  WHERE status IN ('draft', 'active', 'pushed')
                  ORDER BY created_ts DESC LIMIT 1",
@@ -1673,6 +1696,7 @@ impl Store {
                         r.get::<_, Option<String>>(13)?,
                         r.get::<_, Option<String>>(14)?,
                         r.get::<_, Option<String>>(15)?,
+                        r.get::<_, Option<String>>(16)?,
                     ))
                 },
             );
@@ -1695,6 +1719,7 @@ impl Store {
                     q_from,
                     threshold_state,
                     start_date,
+                    name,
                 )) => TrainingPlan {
                     id,
                     distance: distance_from(&dist),
@@ -1712,6 +1737,7 @@ impl Store {
                     quality_offset_sec_km: q_offset,
                     quality_offset_from: q_from.as_deref().map(parse_date).transpose()?,
                     threshold_state: threshold_state.as_deref().map(serde_json::from_str).transpose()?,
+                    name,
                 },
             }
         };
@@ -1756,6 +1782,98 @@ impl Store {
         Ok(())
     }
 
+    /// Wipe every plan, its sessions (cascade), and every open or answered
+    /// plan offer, while leaving the runner's history — activities, health,
+    /// pain, tracks — untouched. This is what "clear the local plan data"
+    /// means: the plan mirrors are rebuilt from whatever the runner creates
+    /// next, and a stale offer pointing at a deleted session would only
+    /// fail on apply. One transaction so a half-clear cannot strand an offer
+    /// beside a missing plan or vice versa.
+    pub fn clear_plan_data(&self) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM plan_proposals", [])?;
+        tx.execute("DELETE FROM training_plans", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every plan the database holds, newest first, whatever its status.
+    /// `current_plan` deliberately sees only the live one; a clear-all needs
+    /// the whole list so no abandoned row survives to become current again.
+    pub fn all_plans(&self) -> Result<Vec<TrainingPlan>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
+                    increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
+                    kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name
+             FROM training_plans ORDER BY created_ts DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, u32>(4)?,
+                r.get::<_, u32>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, f64>(7)?,
+                r.get::<_, i64>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<f64>>(10)?,
+                r.get::<_, String>(11)?,
+                r.get::<_, f64>(12)?,
+                r.get::<_, Option<String>>(13)?,
+                r.get::<_, Option<String>>(14)?,
+                r.get::<_, Option<String>>(15)?,
+                r.get::<_, Option<String>>(16)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (
+                id,
+                dist,
+                target,
+                status,
+                freq,
+                lrday,
+                inc,
+                thr,
+                created,
+                pushed,
+                base,
+                kind,
+                q_offset,
+                q_from,
+                threshold_state,
+                start_date,
+                name,
+            ) = row?;
+            out.push(TrainingPlan {
+                id,
+                distance: distance_from(&dist),
+                kind: plan_kind_from(&kind),
+                start_date: start_date.as_deref().map(parse_date).transpose()?,
+                target_date: parse_date(&target)?,
+                status: status_from(&status),
+                weekly_frequency: freq,
+                longrun_day: lrday,
+                increase: increase_from(&inc),
+                threshold_sec_km: thr,
+                created_at: ts_to_dt(created),
+                pushed_id: pushed,
+                baseline_weekly_km: base,
+                quality_offset_sec_km: q_offset,
+                quality_offset_from: q_from.as_deref().map(parse_date).transpose()?,
+                threshold_state: threshold_state.as_deref().map(serde_json::from_str).transpose()?,
+                name,
+            });
+        }
+        Ok(out)
+    }
+
     /// Install a plan as the only plan on this device, replacing whatever was
     /// there. Used by plan sync: an imported plan must not sit beside a stale
     /// one, because `current_plan` picks by `created_ts` and two in-flight
@@ -1780,8 +1898,8 @@ impl Store {
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![
                 plan.id,
                 distance_name(plan.distance),
@@ -1800,7 +1918,8 @@ impl Store {
                     .map(|d| d.format("%Y-%m-%d").to_string()),
                 rev,
                 plan.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
-                plan.start_date.map(|date| date.format("%Y-%m-%d").to_string())
+                plan.start_date.map(|date| date.format("%Y-%m-%d").to_string()),
+                plan.name.as_deref().map(str::trim).filter(|n| !n.is_empty())
             ],
         )?;
         for w in workouts {
@@ -1823,12 +1942,59 @@ impl Store {
         reason: &str,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
         conn.execute(
-            "UPDATE plan_workouts SET kind=?2, title=?3, adjusted_reason=?4 WHERE id=?1",
-            params![id, kind_name(kind), title, reason],
+            "UPDATE plan_workouts SET kind=?2, title=?3, adjusted_reason=?4, adjusted_ts=?5 WHERE id=?1",
+            params![id, kind_name(kind), title, reason, now],
+        )?;
+        // The cooldown instant also goes to `app_state`, outside the plan:
+        // clearing or replacing the plan deletes the session row, and a
+        // softener whose memory dies with the plan softens the replacement
+        // on its very first sync — the "erase, recreate, overridden again"
+        // report. The per-session `adjusted_ts` stays the display record;
+        // this row is the rate limit's clock.
+        conn.execute(
+            "INSERT INTO app_state (key, value) VALUES ('last_softened_ts', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![now],
         )?;
         conn.execute(Self::REV_BUMP, params![id])?;
         Ok(())
+    }
+
+    /// When the softener last gave up a session, in wall-clock time, across
+    /// every plan that ever existed on this device. The adaptive softener's
+    /// rate limit reads this: the evidence that triggers softening (a
+    /// threshold state in warning, a load ratio still high) persists for
+    /// weeks, and without a cooldown every sync would give up one more hard
+    /// session. The `app_state` row is the authoritative clock because it
+    /// survives the plan it was written for — a recreated plan must not
+    /// inherit a reset cooldown — with the per-session column as the
+    /// fallback for databases that softened a session before the clock
+    /// existed.
+    pub fn last_softened_at(&self) -> Result<Option<DateTime<Utc>>> {
+        let conn = self.conn.lock().unwrap();
+        let clock: Option<i64> = conn
+            .query_row(
+                "SELECT value FROM app_state WHERE key='last_softened_ts'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let on_sessions: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(adjusted_ts) FROM plan_workouts WHERE adjusted_reason IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(clock
+            .into_iter()
+            .chain(on_sessions)
+            .max()
+            .and_then(|s| DateTime::<Utc>::from_timestamp(s, 0)))
     }
 
     /// Every session the plan softened, with the reason it gave. Read by the
@@ -3604,6 +3770,7 @@ mod tests {
             longrun_day: 6,
             increase: crate::types::IncreaseMethod::Moderate,
             current_weekly_km: None,
+            name: None,
         };
         let (plan, workouts) = crate::plan::engine::generate(&req, avg_km).unwrap();
         s.insert_plan(&plan).unwrap();

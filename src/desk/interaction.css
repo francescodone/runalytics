@@ -133,8 +133,18 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-dialog::backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }
 .desk-dialog[data-state="closing"]::backdrop { animation: scrim-leave var(--motion-exit) var(--motion-leave) both; }
 .desk-notice { translate: -50% 0; transform: none; }
-.notice-close { flex: none; }
+.notice-close { flex: none; position: relative; }
 .desk-notice .notice-close { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 6px; margin: -6px -8px -6px 0; }
+.desk-stages { flex-direction: column; align-items: stretch; gap: 6px; padding: 14px 16px 10px; }
+.stage-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.stage-line { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 22px; }
+.stage-line > svg { flex: none; }
+.stage-done > svg { color: var(--desk-canvas); opacity: .75; }
+.stage-error > span { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--desk-danger) 80%, var(--desk-canvas)); text-underline-offset: 3px; }
+.stage-ring { position: absolute; inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); rotate: -90deg; pointer-events: none; }
+.stage-ring circle { fill: none; stroke: currentColor; stroke-width: 2; opacity: .6; stroke-dasharray: 119.4; stroke-dashoffset: 0; animation: stage-ring-drain var(--stage-notice-ms, 6000ms) linear forwards; }
+.desk-notice:hover .stage-ring circle, .desk-notice:focus-within .stage-ring circle { animation-play-state: paused; }
+@keyframes stage-ring-drain { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 119.4; } }
 .notice-close:active { background: color-mix(in srgb, currentColor 15%, transparent); }
 .desk-notice:focus-within { outline: 2px solid var(--desk-action); outline-offset: 4px; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--desk-action); }
@@ -205,6 +215,7 @@ details[open] > summary { color: var(--desk-action); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
+  .stage-ring { display: none; }
   :is(button, a, summary):active, .session-tile:hover { scale: 1 !important; translate: none !important; }
   .desk-button.primary .button-content { transform: none !important; }
   .desk-button:active:not(:disabled), .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }

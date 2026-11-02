@@ -179,6 +179,10 @@ export interface PlanRequest {
   increase: IncreaseMethod;
   /// Current weekly mileage (km); null lets the backend derive it from syncs.
   currentWeeklyKm: number | null;
+  /// What the runner calls this plan. A local label only — the COROS slot
+  /// keeps its fixed name and carries this in the plan description. Null or
+  /// blank means Runalytics describes the plan instead of naming it.
+  name?: string | null;
 }
 
 /// Device-derived starting values for the create-plan form.
@@ -225,6 +229,30 @@ export interface TrainingPlan {
   /// The first date the offset applies to. Sessions before it keep the range
   /// they were run against, which is also what resets the evidence streak.
   qualityOffsetFrom: string | null;
+  /// The runner's own name for the plan; null for plans left unnamed.
+  /// Use displayPlanName() rather than reading this to name a plan.
+  name?: string | null;
+}
+
+/// How Runalytics names a plan: the runner's label when there is one,
+/// otherwise what the plan is for and when it ends. Mirrors the backend's
+/// display_name ("Race Half marathon plan ending 21 Feb 2027") so no
+/// surface invents its own wording.
+export function displayPlanName(plan: TrainingPlan): string {
+  const name = plan.name?.trim();
+  if (name) return name;
+  const kindLabel =
+    plan.kind === "improvement" ? "Improvement" : plan.kind === "maintenance" ? "Maintenance" : "Race";
+  const distanceLabels: Record<string, string> = {
+    "5K": "5K", "10K": "10K", "21K": "Half marathon", "42K": "Marathon",
+  };
+  const distance = distanceLabels[plan.distance] ?? plan.distance;
+  const end = new Date(`${plan.targetDate}T12:00:00`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${kindLabel} ${distance} plan ending ${end}`;
 }
 
 export interface PlanWorkout {

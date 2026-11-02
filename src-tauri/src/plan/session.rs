@@ -1018,6 +1018,7 @@ mod tests {
             longrun_day: 7,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(baseline),
+            name: None,
         }
     }
 
@@ -1214,6 +1215,7 @@ mod tests {
             longrun_day: 7,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(30.0),
+            name: None,
         };
         let (plan, workouts) = super::super::engine::generate(&request, 30.0).unwrap();
         for workout in &workouts {
