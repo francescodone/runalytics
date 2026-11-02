@@ -223,6 +223,10 @@ progress { accent-color: var(--desk-action); }
 }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { box-shadow: var(--shadow-button-pressed); }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { transform: var(--button-press-transform); translate: var(--button-press-offset); }
+.pace-mode { border-radius: var(--radius-pill); }
+.pace-mode button:is(:not(:disabled), [aria-pressed="true"]) { background: transparent; border-color: transparent; border-radius: var(--radius-pill); box-shadow: none; color: var(--desk-muted); }
+.pace-mode button[aria-pressed="true"] { color: var(--desk-action); }
+.pace-mode button .selection-marker { background: var(--state-selected); box-shadow: var(--shadow-control); }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { box-shadow: none; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 @media (min-width: 801px) {

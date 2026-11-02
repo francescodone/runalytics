@@ -2032,6 +2032,26 @@ test("design system appearance updates cached and native control themes together
   await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
 });
 
+test("new palettes apply and persist across appearance modes", async ({ page }) => {
+  await page.goto("/desk.html#settings/appearance");
+  const root = page.locator("html");
+  await expect(page.getByText("Training Desk", { exact: true }).locator(".palette-swatch")).toHaveCSS("background-image", /conic-gradient/);
+  for (const [name, id, light, dark] of [
+    ["Midnight Ink", "midnight", "#525866", "#c3cad6"],
+    ["Deep Tide", "tide", "#176b6a", "#91d9d2"],
+    ["Aurora Run", "aurora", "#166b68", "#91d9d2"],
+    ["Summit Sunrise", "summit", "#a84a2e", "#f3b49f"],
+  ]) {
+    await page.getByRole("radio", { name: "Light", exact: true }).check();
+    await page.getByRole("radio", { name, exact: true }).check();
+    await expect(root).toHaveAttribute("data-desk-palette", id);
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-action").trim())).toBe(light);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.palette"))).toBe(id);
+    await page.getByRole("radio", { name: "Dark", exact: true }).check();
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-action").trim())).toBe(dark);
+  }
+});
+
 test("unified notifications preserve an earlier Undo behind newer action feedback", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/desk.html");

@@ -51,6 +51,10 @@ export const PALETTES: {
   { id: "evergreen", name: "Evergreen Trail", blurb: "Deep forest and fresh moss", swatch: ["#0b1911", "#008557", "#6fcc9e"], bar: "#007d31" },
   { id: "sakura", name: "Sakura Bloom", blurb: "Cherry blossom at first light", swatch: ["#1f1016", "#c12c77", "#f195b9"], bar: "#b40087" },
   { id: "ember", name: "Desert Ember", blurb: "Warm copper of a sunset run", swatch: ["#1f110b", "#b84b00", "#f49d74"], bar: "#bb2600" },
+  { id: "midnight", name: "Midnight Ink", blurb: "A quiet graphite palette", swatch: ["#20232a", "#525866", "#a9b0bd"], bar: "#525866" },
+  { id: "tide", name: "Deep Tide", blurb: "Layers of ocean teal", swatch: ["#123737", "#176b6a", "#91d9d2"], bar: "#176b6a" },
+  { id: "aurora", name: "Aurora Run", blurb: "Teal, violet and coral", swatch: ["#166b68", "#6d4aa4", "#c55b52"], bar: "#166b68" },
+  { id: "summit", name: "Summit Sunrise", blurb: "Copper, blue and alpine green", swatch: ["#a84a2e", "#285fa5", "#317756"], bar: "#a84a2e" },
 ];
 
 const PALETTE_KEY = "runalytics.palette";

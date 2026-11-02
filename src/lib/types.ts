@@ -514,7 +514,7 @@ export interface SyncReport {
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember";
+export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember" | "midnight" | "tide" | "aurora" | "summit";
 
 export interface Settings {
   pmtilesPath: string | null;
