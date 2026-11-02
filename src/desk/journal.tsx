@@ -1,11 +1,11 @@
-import { lazy, Suspense, useDeferredValue, useState, type KeyboardEvent, type ReactNode } from "react";
-import { IconArrowUpRight, IconBarbell, IconBike, IconFilter, IconRun, IconSearch } from "@tabler/icons-react";
+import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { IconArrowUpRight, IconBarbell, IconBike, IconChevronDown, IconFilter, IconRun, IconSearch } from "@tabler/icons-react";
 import { tauri, fmtDateTime, fmtDuration, fmtKm, fmtPace, ymdLocal } from "../lib/ipc";
 import type { Activity, LapSlice, MatchedSession, RunScore, TimeRange } from "../lib/types";
 import { isBikeSport, isReadableSport, isStrengthSport } from "../lib/sport";
 import { capitalizeFirst, cleanTitle, navigate, useRemote, useRoute } from "./data";
 import { Button, Empty, ErrorNotice, Inspector, Loading, Metric } from "./ui";
-import { Change, Presence, SelectionGroup, SelectionMarker } from "./interaction";
+import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker } from "./interaction";
 
 const RouteMap = lazy(() => import("./map"));
 
@@ -75,20 +75,22 @@ export function Journal() {
     return (!sport || activity.sport === sport) && (!provider || activity.provider === provider) && (!from || date >= from) && (!until || date <= until) && (!search || `${nameOf(activity)} ${activity.sport} ${activity.provider} ${fmtDateTime(activity.startTime)} ${fmtKm(activity.distanceM)}`.toLowerCase().includes(search));
   }).sort((first, second) => second.startTime.localeCompare(first.startTime));
   const activeFilters = [sport, provider, from, until].filter(Boolean).length + (query.trim() ? 1 : 0);
-  return <>
-    <div className="desk-toolbar"><div className="journal-toolbar"><Button className="filters-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(open => !open)}><IconFilter size={18} aria-hidden="true" />{filtersOpen ? "Hide filters" : "Filters"}{activeFilters > 0 && <span className="filter-count">{activeFilters}</span>}</Button><span className="muted journal-count">{filtered.length} {filtered.length === 1 ? "activity" : "activities"}</span></div></div>
-    <Presence>{filtersOpen && <div className="journal-tools" key="filters"><label className="search-field"><IconSearch size={18} aria-hidden="true" /><input type="search" aria-label="Search activities" value={query} placeholder="Search your training" onChange={event => setQuery(event.target.value)} /></label><label>Sport<select value={sport} onChange={event => setSport(event.target.value)}><option value="">All sports</option>{[...new Set((activities.data ?? []).filter(activity => isReadableSport(activity.sport)).map(activity => activity.sport))].map(value => <option key={value}>{value}</option>)}</select></label><label>Source<select value={provider} onChange={event => setProvider(event.target.value)}><option value="">All sources</option><option value="coros">COROS</option><option value="garmin">Garmin</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>Until<input type="date" value={until} onChange={event => setUntil(event.target.value)} /></label><Button onClick={() => { setQuery(""); setSport(""); setProvider(""); setFrom(""); setUntil(""); }}>Reset filters</Button></div>}</Presence>
+  return <div className={`journal-workspace ${selected ? "has-inspector" : ""}`}>
+    <div className="journal-sidebar">
+    <div className="desk-toolbar"><div className="journal-toolbar"><Button className="filters-toggle" aria-expanded={filtersOpen} aria-controls="activity-filters" onClick={() => setFiltersOpen(open => !open)}><IconFilter size={18} aria-hidden="true" />{filtersOpen ? "Hide filters" : "Filters"}{activeFilters > 0 && <span className="filter-count">{activeFilters}</span>}<IconChevronDown className="disclosure-indicator" size={18} aria-hidden="true" /></Button><span className="muted journal-count">{filtered.length} {filtered.length === 1 ? "activity" : "activities"}</span></div></div>
+    <Disclosure id="activity-filters" className="journal-tools" open={filtersOpen}><label className="search-field"><IconSearch size={18} aria-hidden="true" /><input type="search" aria-label="Search activities" value={query} placeholder="Search your training" onChange={event => setQuery(event.target.value)} /></label><label>Sport<select value={sport} onChange={event => setSport(event.target.value)}><option value="">All sports</option>{[...new Set((activities.data ?? []).filter(activity => isReadableSport(activity.sport)).map(activity => activity.sport))].map(value => <option key={value}>{value}</option>)}</select></label><label>Source<select value={provider} onChange={event => setProvider(event.target.value)}><option value="">All sources</option><option value="coros">COROS</option><option value="garmin">Garmin</option></select></label><label>From<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>Until<input type="date" value={until} onChange={event => setUntil(event.target.value)} /></label><Button onClick={() => { setQuery(""); setSport(""); setProvider(""); setFrom(""); setUntil(""); }}>Reset filters</Button></Disclosure>
     <ErrorNotice error={activities.error} retry={activities.retry} />
-    {activities.loading ? <Loading label="Loading training history" /> : <div className={`journal-workspace ${selected ? "has-inspector" : ""}`}>
-      <section className="activity-library" aria-label="Activity history" aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>Most recent first</span></div>
+    {activities.loading ? <Loading label="Loading training history" /> :
+      <section className="activity-library" tabIndex={0} aria-label="Activity history" aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>Most recent first</span></div>
         <Change identity={`${search}:${sport}:${provider}:${from}:${until}`}>
         {!filtered.length && <Empty title={activities.data?.length ? "No matching activities" : "Your training story starts here"}>{activities.data?.length ? "Try another date or clear the filters." : "Sync your watch to bring your completed activities here."}</Empty>}
         {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={() => navigate("journal", String(activity.id))}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong>{matchOf(activity) && <small className="activity-purpose">{matchOf(activity)?.purpose}</small>}<small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
         </Change>
-      </section>
-      <Presence>{selected && <Inspector key="review" title="Activity review" onClose={() => navigate("journal")}><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Inspector>}</Presence>
-    </div>}
-  </>;
+      </section>}
+    </div>
+    <Presence>{selected && <Inspector key="review" title="Activity review" onClose={() => navigate("journal")}><Change identity={selected.id} className="activity-transition" stagger><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Change></Inspector>}</Presence>
+    {!selected && <div className="journal-placeholder"><IconRun size={32} aria-hidden="true" /><h2>Activity review</h2><p className="muted">No activity selected</p></div>}
+  </div>;
 }
 
 /// Below this width a lap column is too thin to aim at, so the chart is widened
@@ -177,11 +179,13 @@ function LapExecution({ laps, prescribed }: { laps: LapSlice[]; prescribed: bool
 }
 
 function ActivityReview({ activity, score, match, tab, onTab }: { activity: Activity; score?: RunScore; match?: MatchedSession; tab: ReviewTab; onTab: (tab: ReviewTab) => void }) {
+  const host = useRef<HTMLElement>(null);
   const [range, setRange] = useState<TimeRange>("7d");
+  useEffect(() => { host.current?.closest(".desk-inspector")?.scrollTo({ top: 0, behavior: "instant" }); }, [activity.id]);
   const review = useRemote(() => tauri.activityReview(activity.id), [activity.id]);
   const detail = useRemote(() => tauri.activityDetail(activity.id, range), [activity.id, range]);
   const settings = useRemote(tauri.getSettings);
-  return <article className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{match ? cleanTitle(match.title) : capitalizeFirst(activity.sport)}</h2></div>
+  return <article ref={host} className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{match ? cleanTitle(match.title) : capitalizeFirst(activity.sport)}</h2></div>
     <ReviewTabs activityId={activity.id} tab={tab} onSelect={onTab} />
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label="Loading recorded route and splits" /> : review.data && <Change identity={tab}>

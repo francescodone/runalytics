@@ -1,11 +1,7 @@
-:root {
-  overflow-x: clip;
+button, a, input, select, textarea, summary, .choice-row label, .palette-options label, .toggle-setting {
+  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle), transform var(--motion-feedback) var(--motion-settle), translate var(--motion-feedback) var(--motion-settle);
 }
-
-button, a, input, select, textarea, summary {
-  transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
-}
-:is(button, a, summary):active:not(:disabled):not([aria-disabled="true"]) { scale: var(--state-press-scale); transition-duration: var(--motion-press); }
+:is(button, a, summary, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { scale: var(--state-press-scale); transition-duration: var(--motion-press); }
 button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { transform: none; }
 :where(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, summary):active:not(:disabled):not([aria-disabled="true"]) { background-color: var(--state-pressed); }
 .session-tile:active, .activity-row:active, .settings-task-list a:active, .roadmap-row:active { translate: 0; }
@@ -16,7 +12,8 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 /* The tile travels as a fixed clone: the pointer sits over the lane under it,
    so the copy must never intercept the hit-test that picks the drop target. */
 .tile-ghost { position: fixed; top: 0; left: 0; z-index: var(--layer-drag); pointer-events: none; opacity: .92; box-shadow: var(--shadow-overlay); }
-.day-sessions, .day-lane, .month-day, .mobile-date-ribbon button { border-radius: var(--radius-control); transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
+.day-sessions, .day-lane, .mobile-date-ribbon button { border-radius: var(--radius-control); }
+.day-sessions, .day-lane, .month-day, .mobile-date-ribbon button { transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
 .day-lane[data-drop-target], .month-day[data-drop-target], .mobile-date-ribbon button[data-drop-target] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
 .button-content { transition: opacity var(--motion-feedback) var(--motion-settle); }
 .button-result { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
@@ -24,14 +21,13 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 .desk-button:disabled:not([aria-busy="true"]) { scale: 1; }
 .desk-button[aria-busy="true"] { border-color: color-mix(in srgb, currentColor 45%, transparent); }
-.desk-button.primary { box-shadow: var(--shadow-control); }
-.desk-button.danger { --state-hover: color-mix(in srgb, var(--desk-danger) 8%, var(--glass-control)); --state-pressed: color-mix(in srgb, var(--desk-danger) 15%, var(--glass-control)); }
+.desk-button.danger { --button-accent: var(--desk-danger); }
 .desk-button.danger:focus-visible { outline-color: var(--desk-danger); }
-.desk-button::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(125deg, #ffffff30, #ffffff00 55%); box-shadow: var(--shadow-control); opacity: 0; transition: opacity var(--motion-change) var(--motion-settle); }
+.desk-button::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: var(--button-sheen); opacity: 0; transition: opacity var(--motion-change) var(--motion-settle); }
 .desk-button:focus-visible::before { opacity: 1; }
 .desk-button:active:not(:disabled)::before { opacity: .25; }
 .desk-button.primary:active:not(:disabled)::before { opacity: 0; }
-.desk-button.primary:active:not(:disabled) { background-color: var(--state-primary-pressed); box-shadow: var(--shadow-control); }
+.desk-button.primary:active:not(:disabled) { background-color: var(--state-primary-pressed); }
 .desk-button .button-content { min-width: 0; }
 .button-content:has(.control-tooltip) { width: 100%; }
 .control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: var(--space-2) var(--space-3); background: var(--desk-ink); color: var(--desk-surface); border-radius: var(--radius-control); font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-control); pointer-events: none; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: var(--layer-tooltip); transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
@@ -39,20 +35,19 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button:active .control-tooltip { opacity: 0; visibility: hidden; }
 .control-tooltip[data-dismissed="true"] { opacity: 0 !important; visibility: hidden !important; }
 .desk-navigation a, .horizon-switch a, .pace-mode button, .mobile-date-ribbon button, .pace-session-picker button { position: relative; isolation: isolate; }
-.selection-marker { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: var(--state-selected); box-shadow: var(--shadow-control); }
+.selection-marker { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: var(--material-liquid); box-shadow: var(--shadow-control); }
 .mobile-date-ribbon button[aria-pressed="true"]:has(.selection-marker) { background: transparent; }
-.mobile-date-ribbon .selection-marker { background: var(--desk-action); }
+.mobile-date-ribbon .selection-marker { background: var(--state-selected); }
 .pace-session-picker .selection-marker { inset: auto 0 -2px; height: 2px; background: var(--desk-action); }
 .pace-session-picker button[aria-pressed="true"]:has(.selection-marker) { border-color: transparent; }
-.pace-session-picker button, .lap-pace-column { transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle); }
 .pace-session-picker button:active, .lap-pace-column:active { background: var(--desk-soft); }
 /* Scroll-edge cues: the shadow must stay pinned to the visible edge while
    content scrolls beneath it, whatever the surface underneath is — these
    panels are glass, solid, or transparent depending on theme. The attribute
    only appears while there is slack left in that direction. */
 .data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .plan-roadmap, .activity-library {
-  --scroll-edge: color-mix(in srgb, var(--desk-ink) 26%, transparent);
-  border-radius: var(--desk-radius);
+  --scroll-edge: color-mix(in srgb, var(--desk-ink) 12%, transparent);
+  border-radius: var(--radius-card);
 }
 /* Vertical lists pin the cue to the scrollport with sticky strips: a sticky
    ::before rides the visible top edge and a sticky ::after the visible
@@ -67,14 +62,13 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
   content: "";
   display: block;
   position: sticky;
-  height: 14px;
+  height: 24px;
   z-index: var(--layer-raised);
   pointer-events: none;
+  transition: opacity var(--motion-feedback) var(--motion-settle);
 }
-.plan-roadmap::before, .activity-library::before { top: 0; margin-bottom: -14px; }
-.plan-roadmap::after, .activity-library::after { bottom: 0; margin-top: -14px; }
-.plan-roadmap[data-scroll-top="1"]::before, .activity-library[data-scroll-top="1"]::before { background: linear-gradient(to bottom, var(--scroll-edge), transparent); }
-.plan-roadmap[data-scroll-bottom="1"]::after, .activity-library[data-scroll-bottom="1"]::after { background: linear-gradient(to top, var(--scroll-edge), transparent); }
+.plan-roadmap::before, .activity-library::before { top: 0; margin-bottom: -24px; border-radius: var(--radius-card) var(--radius-card) 0 0; background: linear-gradient(to bottom, var(--scroll-edge), transparent); opacity: var(--scroll-top-opacity, 0); }
+.plan-roadmap::after, .activity-library::after { bottom: 0; margin-top: -24px; border-radius: 0 0 var(--radius-card) var(--radius-card); background: linear-gradient(to top, var(--scroll-edge), transparent); opacity: var(--scroll-bottom-opacity, 0); }
 /* Horizontal scrollers pin the cue with background layers instead: a
    background with attachment `scroll` is fixed to the element's own box and
    does not ride the scrolled content, unlike `local`. The layers are absent
@@ -113,25 +107,45 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 }
 .pace-point-session circle, .pace-point-range { transition: opacity var(--motion-feedback) var(--motion-settle), stroke var(--motion-feedback) var(--motion-settle); }
 .pace-point-session:not(.selected) .pace-point-range { opacity: .35; }
-.desk-navigation a[aria-current]:has(.selection-marker), .horizon-switch a[aria-current]:has(.selection-marker), .pace-mode button[aria-pressed="true"]:has(.selection-marker) { background: transparent; box-shadow: none; }
-.pace-mode .selection-marker { background: var(--desk-surface); box-shadow: var(--shadow-control); }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .lap-row-button, .choice-row label) { border-radius: var(--radius-button); }
+:is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label) {
+  --state-hover: color-mix(in srgb, var(--button-accent, var(--desk-action)) 8%, var(--control-surface));
+  --state-pressed: color-mix(in srgb, var(--button-accent, var(--desk-action)) 14%, var(--control-surface));
+  --state-selected: color-mix(in srgb, var(--button-accent, var(--desk-action)) 12%, var(--control-surface));
+  --state-primary-hover: color-mix(in srgb, var(--desk-action) 22%, var(--control-surface));
+  --state-primary-pressed: color-mix(in srgb, var(--desk-action) 28%, var(--control-surface));
+}
+:is(.desk-button:not(.primary), .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { background: var(--control-surface); background-image: var(--button-sheen); border: var(--control-border) solid var(--control-edge); color: var(--desk-ink); }
+.desk-button.danger { color: var(--desk-danger); }
+.desk-button.primary { background: var(--button-primary-surface); background-image: var(--button-sheen); color: var(--button-primary-ink); border-color: color-mix(in srgb, var(--desk-action) 65%, var(--control-edge)); }
+:is(.session-tile, .activity-row, .roadmap-row, .text-button) { background-color: color-mix(in srgb, var(--session-color, var(--desk-action)) 4%, var(--control-surface)); }
+:is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current, .mobile-date-ribbon button[aria-pressed="true"], .lap-row-button[aria-pressed="true"], .choice-row label:has(:checked), .palette-options label:has(:checked)) { background-color: var(--state-selected); }
+.mobile-date-ribbon button[aria-pressed="true"] { color: var(--button-primary-ink); border-color: var(--desk-action); }
+.horizon-switch, .review-tabs { padding: var(--space-2); scroll-padding-inline: var(--space-2); }
+.pace-session-picker { grid-auto-flow: initial; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); padding: var(--space-2); }
+.pace-session-picker button { padding: var(--space-2); }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --control-surface: var(--glass-control); }
+}
+:is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is([aria-current], [aria-selected="true"], [aria-pressed="true"]) { color: var(--desk-action); border-color: var(--desk-action); background: var(--state-selected); }
+:is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker) .selection-marker { inset: 0; height: auto; background: var(--state-selected); transition: background-color var(--motion-feedback) var(--motion-settle); box-shadow: none; }
 .horizon-switch a, .pace-mode button { font-weight: var(--weight-semibold); }
 .desk-navigation a { font-weight: var(--weight-semibold); }
 .desk-inspector { overflow-x: clip; }
-.desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"] { pointer-events: none; }
+.desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"], .inspector-backdrop[data-state="closing"] { pointer-events: none; }
 .dialog-grip { display: none; }
-.desk-dialog::backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }
-.desk-dialog[data-state="closing"]::backdrop { animation: scrim-leave var(--motion-exit) var(--motion-leave) both; }
+.desk-dialog::backdrop, .inspector-backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }
+.desk-dialog[data-state="closing"]::backdrop, .inspector-backdrop[data-state="closing"] { animation: scrim-leave var(--motion-exit) var(--motion-leave) both; }
 .notification-viewport { position: fixed; inset: auto 0 var(--space-6); margin: 0 auto; width: min(520px, calc(100% - 2 * var(--page-gutter))); max-height: calc(100dvh - 120px); padding: 0; border: 0; background: transparent; overflow: auto; pointer-events: none; z-index: var(--layer-notification); }
 .notification-viewport:not([popover]) { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport:popover-open { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport::backdrop { display: none; }
 .notification-viewport:empty { visibility: hidden; }
 .notification-viewport .desk-notice { position: relative; inset: auto; width: 100%; max-width: none; margin: 0; translate: none; transform: none; pointer-events: auto; flex-wrap: nowrap; }
-.desk-notice { --state-hover: color-mix(in srgb, currentColor 10%, transparent); --state-pressed: color-mix(in srgb, currentColor 18%, transparent); }
+.desk-notice button { --state-hover: color-mix(in srgb, currentColor 10%, transparent); --state-pressed: color-mix(in srgb, currentColor 18%, transparent); }
 .notice-content { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .notice-close { flex: none; position: relative; }
-.desk-notice .notice-close { display: grid; place-items: center; width: var(--control-size); height: var(--control-size); border: 0; border-radius: var(--radius-control); margin: -6px -8px -6px 0; }
+.desk-notice .notice-close { display: grid; place-items: center; width: var(--control-size); height: var(--control-size); border: 0; border-radius: var(--radius-button); margin: -6px -8px -6px 0; }
 .desk-stages { align-items: flex-start; gap: var(--space-3); }
 .stage-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .stage-line { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-detail); min-height: 22px; }
@@ -151,50 +165,69 @@ input:user-invalid, select:user-invalid, textarea:user-invalid, [aria-invalid="t
 input[type="range"] { accent-color: var(--desk-action); }
 progress { accent-color: var(--desk-action); }
 .native-progress { animation: status-arrive var(--motion-feedback) var(--motion-settle); }
-.desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) 120ms both; }
+.desk-loading { animation: status-arrive var(--motion-feedback) var(--motion-settle) var(--motion-loading-delay) both; }
 .motion-change { min-width: 0; }
+.motion-disclosure { display: grid; grid-template-rows: 0fr; min-width: 0; flex: none; visibility: hidden; transition: grid-template-rows var(--motion-exit) var(--motion-leave), visibility 0s linear var(--motion-exit); }
+.motion-disclosure[data-state="open"] { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows var(--motion-change) var(--motion-settle), visibility 0s; }
+.motion-disclosure-clip { min-height: 0; overflow: clip; }
+.motion-disclosure-content { display: flow-root; min-width: 0; }
+.motion-disclosure-content > * { opacity: 0; transition: opacity var(--motion-exit) var(--motion-leave); }
+.motion-disclosure[data-state="open"] > .motion-disclosure-clip > .motion-disclosure-content > * { opacity: 1; transition: opacity var(--motion-change) var(--motion-settle) var(--disclosure-delay, 0ms); }
+.motion-disclosure-content > :nth-child(2) { --disclosure-delay: var(--motion-stagger); }
+.motion-disclosure-content > :nth-child(3) { --disclosure-delay: calc(2 * var(--motion-stagger)); }
+.motion-disclosure-content > :nth-child(n + 4) { --disclosure-delay: calc(3 * var(--motion-stagger)); }
+.motion-disclosure[data-state="open"] > .motion-disclosure-clip > .motion-disclosure-content > :focus-within { opacity: 1; transition: none; }
+.disclosure-indicator { flex: none; rotate: 0deg; transition: rotate var(--motion-change) var(--motion-settle); }
+[aria-expanded="true"] .disclosure-indicator { rotate: 180deg; }
+[data-reveal="waiting"] { opacity: 0; }
 [data-reveal="visible"] { animation: content-arrive var(--motion-surface) var(--motion-settle) var(--reveal-delay, 0ms) backwards; }
-[data-reveal="visible"]:is(:hover, :focus-within, :active) { animation: none; }
-.choice-row label, .toggle-setting { transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
-.pace-mode button, .pace-session-picker button, .lap-row-button, .notice-close {
-  transition: color var(--motion-feedback) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle);
-}
-.pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: var(--state-press-scale); transition-duration: var(--motion-press); }
-.chat-message { animation: content-arrive var(--motion-surface) var(--motion-settle); }
+[data-reveal="visible"]:is(:focus-within, :active) { animation: none; }
+:is(.motion-change[data-transition-state="exiting"], .desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"]) [data-reveal]:is([data-reveal="visible"], [data-reveal="settled"]) { animation: content-depart var(--motion-exit) var(--motion-leave) both; }
+.motion-change.activity-transition[data-transition-state="exiting"] [data-reveal] { animation-delay: var(--reveal-delay, 0ms); }
 .button-result > svg { animation: result-arrive var(--motion-change) var(--motion-settle); }
-.conversation-expansion { overflow: clip; }
 .desk-workspace:focus { outline: none; }
-summary { transition: color var(--motion-feedback) var(--motion-settle); }
-summary::marker { color: var(--desk-muted); }
-details[open] > summary { color: var(--desk-action); }
-@supports (interpolate-size: allow-keywords) {
-  details { interpolate-size: allow-keywords; }
-  details::details-content { block-size: 0; overflow: clip; transition: block-size var(--motion-change) var(--motion-settle), content-visibility var(--motion-change) allow-discrete; }
-  details[open]::details-content { block-size: auto; }
-}
 @keyframes scrim-arrive { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scrim-leave { from { opacity: 1; } to { opacity: 0; } }
 @keyframes status-arrive { from { opacity: 0; } to { opacity: 1; } }
-@keyframes content-arrive { from { opacity: 0; translate: 0 var(--motion-reveal-distance); } to { opacity: 1; translate: 0; } }
+@keyframes content-arrive { from { opacity: 0; filter: blur(var(--motion-reveal-blur)); translate: calc(var(--scatter-direction, 0) * var(--motion-scatter-distance)) var(--motion-reveal-distance); } to { opacity: 1; filter: blur(0); translate: 0; } }
+@keyframes content-depart { to { opacity: 0; filter: blur(var(--motion-reveal-blur)); translate: calc(var(--scatter-direction, 0) * var(--motion-scatter-distance) * -1) calc(var(--motion-reveal-distance) * -1); } }
+@keyframes status-depart { to { opacity: 0; } }
 @keyframes result-arrive { from { opacity: 0; scale: .96; } to { opacity: 1; scale: 1; } }
 
 @media (hover: hover) and (pointer: fine) {
   :where(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, summary):not(:disabled):not([aria-disabled="true"]):not(:active):hover { background-color: var(--state-hover); }
+  :is(.desk-button:not(.primary), .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button):not(:disabled):not([aria-disabled="true"]):not(:active):hover { background-color: var(--state-hover); border-color: var(--desk-action); }
+  :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):hover > .selection-marker { background-color: var(--state-hover); }
   .desk-button:not(:disabled):not(:active):hover::before { opacity: 1; }
-  .desk-button:not(:disabled):not(:active):hover { border-color: color-mix(in srgb, var(--desk-action) 45%, var(--desk-line)); box-shadow: var(--shadow-control); }
+  .desk-button:not(:disabled):not(:active):hover { border-color: color-mix(in srgb, var(--button-accent, var(--desk-action)) 65%, var(--control-edge)); }
   .desk-button.primary:not(:disabled):not(:active):hover { background-color: var(--state-primary-hover); }
-  .choice-row label:not(:has(:disabled)):hover, .palette-options label:not(:has(:disabled)):hover { box-shadow: var(--shadow-control); border-color: var(--desk-action); }
-  .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: 450ms; }
+  .choice-row label:not(:has(:disabled)):hover, .palette-options label:not(:has(:disabled)):hover { background-color: var(--state-hover); border-color: var(--desk-action); }
+  .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: var(--motion-tooltip-delay); }
   summary:hover { color: var(--desk-action); }
+}
+ :is(.desk-button:not(.primary), .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { background-color: var(--state-pressed); border-color: var(--button-accent, var(--desk-action)); }
+ :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):active > .selection-marker { background-color: var(--state-pressed); }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(:active):hover { scale: var(--state-hover-scale); }
 }
 @media (hover: none) {
   .control-tooltip { display: none; }
   .session-tile:hover, .activity-row:hover, .settings-task-list a:hover, .roadmap-row:hover { transform: none; box-shadow: none; }
 }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { box-shadow: var(--shadow-button); }
+@media (hover: hover) and (pointer: fine) {
+  :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { box-shadow: var(--shadow-button-hover); }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { transform: var(--button-hover-transform); translate: var(--button-hover-offset); }
+}
+:is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { box-shadow: var(--shadow-button-pressed); }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { transform: var(--button-press-transform); translate: var(--button-press-offset); }
+:is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { box-shadow: none; }
+.desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 @media (min-width: 801px) {
-  .journal-workspace:has(.desk-inspector) { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.5fr); gap: var(--space-8); align-items: start; }
-  .journal-workspace:has(.desk-inspector) .activity-row { grid-template-columns: 26px minmax(100px, 1fr) 85px 16px; gap: var(--space-3); }
-  .journal-workspace:has(.desk-inspector) .activity-pace { display: none; }
+  .notification-viewport { left: auto; right: var(--shell-inset); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap))); }
+  .desk-dialog .notification-viewport { inset-inline: 0; margin-inline: auto; width: min(520px, calc(100% - 2 * var(--page-gutter))); }
 }
 @media (max-width: 800px) {
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
@@ -209,15 +242,20 @@ details[open] > summary { color: var(--desk-action); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
+  [data-reveal="waiting"] { opacity: 1; }
   .stage-ring { display: none; }
-  :is(button, a, summary):active, .session-tile:hover { scale: 1 !important; translate: none !important; }
+  :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label) { transform: none !important; translate: none !important; }
+  :is(button, a, summary, .choice-row label, .palette-options label):active, .session-tile:hover { scale: 1 !important; translate: none !important; }
   .desk-button.primary .button-content { transform: none !important; }
   .desk-button:active:not(:disabled), .mobile-date-ribbon button:active, .pace-mode button:active:not(:disabled), .pace-session-picker button:active:not(:disabled), .lap-row-button:active:not(:disabled), .notice-close:active:not(:disabled) { scale: 1; }
   .desk-button:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-  .desk-dialog::backdrop { animation: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  [data-reveal="visible"], .chat-message, .button-result > svg { animation-name: status-arrive; }
+  :root { --control-surface: var(--desk-surface); }
+  :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label) { background-image: none; }
+  .desk-dialog::backdrop, .inspector-backdrop { animation: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  [data-reveal="visible"], .button-result > svg { animation-name: status-arrive; }
+  :is(.motion-change[data-transition-state="exiting"], .desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"]) [data-reveal]:is([data-reveal="visible"], [data-reveal="settled"]) { animation-name: status-depart; }
   .desk-button::before { display: none; }
 }

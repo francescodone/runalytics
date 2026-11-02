@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { IconArrowLeft, IconArrowRight, IconPlus, IconCopy, IconCalendarEvent, IconCheck, IconX } from "@tabler/icons-react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { IconArrowLeft, IconArrowRight, IconPlus, IconCopy, IconCalendarEvent, IconCheck, IconX, IconRestore } from "@tabler/icons-react";
 import { tauri, fmtDateDMY, fmtDuration, fmtKm, fmtPace, parsePace, estimatedTimeRange, fmtTimeRange } from "../lib/ipc";
 import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, WeekDeviation } from "../lib/types";
 import { displayPlanName } from "../lib/types";
@@ -7,7 +7,7 @@ import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessio
 import { Button, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
 import { PlanAdjustments } from "./proposals";
 import { RaceEstimates } from "./race-estimates";
-import { Change, Presence, SelectionGroup, SelectionMarker } from "./interaction";
+import { Change, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
 
 type Horizon = "week" | "month" | "plan";
 
@@ -19,6 +19,7 @@ let dragEndedAt = 0;
 
 export function Training() {
   const route = useRoute();
+  const compact = useCompactLayout();
   const [cursor, setCursor] = useState(today);
   const [selectedDay, setSelectedDay] = useState(today);
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
@@ -27,7 +28,6 @@ export function Training() {
   const [cancel, setCancel] = useState(false);
   const [reset, setReset] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const roadmapRef = useRef<HTMLDivElement>(null);
   const horizon: Horizon = ["week", "month", "plan"].includes(route.section) ? route.section as Horizon : "week";
   const current = useRemote(tauri.currentPlan);
   const providers = useRemote(tauri.providerStatus);
@@ -76,16 +76,6 @@ export function Training() {
       error => console.warn("auto plan push failed", error),
     ).finally(() => setSyncingPlan(false));
   }, [plan?.id, plan?.status, connected]);
-  // The roadmap shows five weeks at a time and opens on the current one, so
-  // history is above and the plan ahead is below — the same reading order as
-  // a training calendar. Re-centred when the week progress arrives because
-  // the rows only carry their state once that data lands.
-  useEffect(() => {
-    const list = roadmapRef.current;
-    const currentRow = list?.querySelector<HTMLElement>(".roadmap-row.is-current");
-    if (!list || !currentRow) return;
-    list.scrollTop = Math.max(0, currentRow.offsetTop - (list.clientHeight - currentRow.offsetHeight) / 2);
-  }, [weekKeys.join("|"), weekProgress.data]);
   // Drag-to-reschedule, pointer-driven rather than HTML5 drag-and-drop: the
   // app renders in WKWebView, where `draggable="true"` on a button never
   // starts a drag session — the gesture died silently and the click that
@@ -222,13 +212,13 @@ export function Training() {
         .filter(entry => visibleWeeks.includes(entry.weekStart))
         .reduce((total, entry) => total + entry.plannedM, 0);
       const ranM = done.reduce((total, event) => total + (event.distanceM ?? 0), 0);
-      return <div className="schedule-summary"><span>{done.length}/{shown.length} sessions done</span><span>{fmtKm(ranM)} / {fmtKm(plannedM)} done</span>{horizon === "week" && plan && <button type="button" className="reset-week-link" onClick={() => setReset(true)}>Reset week</button>}</div>;
+      return <div className="schedule-summary"><span>{done.length}/{shown.length} sessions done</span><span>{fmtKm(ranM)} / {fmtKm(plannedM)} done</span>{horizon === "week" && plan && <Button onClick={() => setReset(true)}><IconRestore size={18} aria-hidden="true" />Reset week</Button>}</div>;
     })()}
     <Change identity={horizon}>
     {horizon === "plan" ? <div className="plan-studio">
       <section><h3>Training horizon</h3>{current.loading ? <Loading /> : !plan ? <Empty title="Give your training a direction" action={<Button tone="primary" disabled={!connected || !synced || Boolean(current.error)} onClick={() => setCreate(true)}>Create plan</Button>}>Prepare for a race, build fitness or maintain your routine.</Empty> : <>
         <dl className="metrics-line"><Metric label="Sessions complete" value={`${completed}/${workouts.length}`} /><Metric label="Runs per week" value={plan.weeklyFrequency} /><Metric label="Threshold pace" value={fmtPace(plan.thresholdSecKm)} unit="/km" /></dl>
-        <div className="plan-roadmap" ref={roadmapRef}>{weekKeys.map((week, index) => {
+        <PlanRoadmap identity={weekKeys.join("|")}>{weekKeys.map((week, index) => {
           const sessions = workouts.filter(workout => monday(workout.date) === week);
           const distance = sessions.reduce((sum, workout) => sum + (workout.distanceM ?? 0), 0);
           // Done/current/upcoming comes from the calendar, not from how many
@@ -241,7 +231,7 @@ export function Training() {
           const ran = progress?.ranM ?? 0;
           const planned = progress?.plannedM ?? distance;
           return <button key={week} className={`roadmap-row is-${state}`} onClick={() => { setCursor(week); setSelectedDay(week); navigate("training", "week"); }}><span>Week {index + 1}<small>{shortDate(week)} – {shortDate(shiftDate(week, 6))}{downWeeks.data?.includes(week) ? " / Recovery" : ""}</small><em>{state === "past" ? "Done" : state === "current" ? "This week" : "Upcoming"}</em></span><span className="roadmap-track" role="img" aria-label={`${fmtKm(ran)} run of ${fmtKm(planned)} planned`}><i style={{ width: `${planned > 0 ? Math.min(100, ran / planned * 100) : 0}%` }} /></span><strong>{fmtKm(planned)}<small>planned</small></strong><strong>{fmtKm(ran)}<small>done</small></strong><IconArrowRight size={18} /></button>;
-        })}</div>
+        })}</PlanRoadmap>
       </>}</section>
       {plan && <PlanAdjustments source="pacing" />}
       <aside className="plan-basis"><h3>Plan basis</h3>{plan ? <>
@@ -249,8 +239,8 @@ export function Training() {
         {receipt.data?.length ? <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Plan receipt"><table><caption className="sr-only">How your answers shaped the plan</caption><thead><tr><th>Your input</th><th>What it did</th></tr></thead><tbody>{receipt.data.map((line, index) => <tr key={index}><th scope="row">{line.input}</th><td>{line.sentence}</td></tr>)}</tbody></table></div> : null}
         {defaults.data && <Predictions defaults={defaults.data} />}
         <RaceEstimates plan={plan} />
-        {remotePlan.data && <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])} <a href="#settings/calendar">Manage device sync</a></td></tr></tbody></table></div>}
-        <Button tone="danger" onClick={() => setCancel(true)}>End plan</Button>
+        {remotePlan.data && <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])} <a className="desk-button normal context-link" href="#settings/calendar">Manage device sync</a></td></tr></tbody></table></div>}
+        <Button tone="danger" onClick={() => setCancel(true)}>End current plan</Button>
       </> : <p className="muted">Your recent mileage and threshold pace establish the starting load. Plan generation remains local.</p>}</aside>
     </div> : <>
       <ErrorNotice error={events.error} retry={events.retry} />
@@ -258,20 +248,20 @@ export function Training() {
         <div className="schedule-canvas" ref={canvasRef}>
           <Change identity={first}>
           {horizon === "week" ? <>
-            <SelectionGroup><div className="mobile-date-ribbon" aria-label="Days this week">{days.map(date => <button key={date} data-drop-day={date} onClick={() => selectDate(date)} aria-pressed={date === selectedDay} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>{date === selectedDay && <SelectionMarker />}<span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong><i className={(events.data ?? []).some(event => event.date === date) ? "has-session" : ""} /></button>)}</div></SelectionGroup>
+            <SelectionGroup><div className="mobile-date-ribbon" role="region" tabIndex={0} aria-label="Days this week">{days.map(date => <button key={date} data-drop-day={date} onClick={() => selectDate(date)} aria-pressed={date === selectedDay} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>{date === selectedDay && <SelectionMarker />}<span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong><i className={(events.data ?? []).some(event => event.date === date) ? "has-session" : ""} /></button>)}</div></SelectionGroup>
             <div className="week-board">{days.map(date => <section className={`day-lane ${date === today() ? "is-today" : ""}`} data-drop-day={date} key={date} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>
               <header><span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong>{date === today() && <small>Today</small>}</header>
               <div className="day-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={event.id === selected?.id} onSelect={() => { setSelected(event); setSelectedDay(event.date); }} />)}
               {!(events.data ?? []).some(event => event.date === date) && <p className="rest-label">Rest day</p>}</div>
             </section>)}</div>
-          </> : <div className="month-board"><div className="month-labels">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div><div className="month-dates">{days.map(date => <div className={`month-day ${date.slice(0, 7) !== cursor.slice(0, 7) ? "outside-month" : ""}`} data-drop-day={date} key={date}>
-            <span className="month-number" aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}<i>{(events.data ?? []).filter(event => event.date === date).length || ""}</i></span>
+          </> : <div className="month-board" role="region" tabIndex={0} aria-label="Month dates"><div className="month-labels">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div><div className="month-dates">{days.map(date => <div className={`month-day ${date.slice(0, 7) !== cursor.slice(0, 7) ? "outside-month" : ""}`} data-drop-day={date} key={date}>
+            {compact ? <button type="button" className="month-number" data-date={date} onClick={() => selectDate(date)} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`} aria-pressed={date === selectedDay} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}<i aria-hidden="true">{(events.data ?? []).filter(event => event.date === date).length || ""}</i></button> : <time className="month-number" data-date={date} dateTime={date} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}</time>}
             <div className="month-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={() => { setSelected(event); setSelectedDay(event.date); }} />)}</div>
           </div>)}</div></div>}
           <Change identity={selectedDay} className="day-itinerary"><h3>{dayName(selectedDay)}, {shortDate(selectedDay)}</h3>{(events.data ?? []).filter(event => event.date === selectedDay).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={() => setSelected(event)} />)}{!(events.data ?? []).some(event => event.date === selectedDay) && <p className="muted">No sessions scheduled. Time to recover.</p>}</Change>
           </Change>
         </div>
-        <Presence>{selected && <Inspector key="session" title="Session" onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selected} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
+        <Presence>{selected && <Inspector key="session" title="Session" modal onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selected} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
       </div>}
     </>}
     </Change>
@@ -279,12 +269,39 @@ export function Training() {
     {benchmark && plan && <ScheduleBenchmark key="benchmark" plan={plan} initialDate={selectedDay} onClose={() => setBenchmark(false)} onScheduled={date => { setBenchmark(false); setCursor(date); setSelectedDay(date); setSelected(null); navigate("training", "week"); }} />}
     {reset && <ResetWeek key="reset" weekStart={first} onClose={() => setReset(false)} />}
     {create && <CreatePlan key="create" defaults={defaults.data} onClose={() => setCreate(false)} />}
-    {cancel && <Dialog key="cancel" title="End this plan?" onClose={() => setCancel(false)}><p>Future sessions will be removed. Completed activities stay in your activities list. Runalytics will also cancel the plan on your watch.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setCancel(false)}>Keep plan</Button><Button tone="danger" busy={command.busy} onClick={() => void command.run(async () => {
+    {cancel && <Dialog key="cancel" title="End current plan?" onClose={() => setCancel(false)}><p>This removes the current plan and its scheduled sessions. Other saved plans are kept. Recorded activities, health history and pain entries are not deleted.</p><p>Runalytics will attempt to cancel this plan on COROS and update your calendar and connected devices. To remove every saved plan instead, use Training data in Settings.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setCancel(false)}>Keep plan</Button><Button tone="danger" busy={command.busy} onClick={() => void command.run(async () => {
       try { await tauri.abortPlan(); } catch (error) { refresh(); notify(String(error)); throw error; }
       setCancel(false);
-    }, "Plan ended. Your completed runs are retained.")}>End plan</Button></div></Dialog>}
+    }, "Current plan ended. Your completed runs are retained.")}>End current plan</Button></div></Dialog>}
     </Presence>
   </>;
+}
+
+function PlanRoadmap({ identity, children }: { identity: string; children: ReactNode }) {
+  const roadmap = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const list = roadmap.current!;
+    const center = () => {
+      const current = list.querySelector<HTMLElement>(".roadmap-row.is-current");
+      if (!current) return;
+      list.scrollTop = Math.max(0, current.offsetTop - (list.clientHeight - current.offsetHeight) / 2);
+      const workspace = list.closest<HTMLElement>(".desk-workspace");
+      if (workspace) {
+        const bounds = list.getBoundingClientRect();
+        const viewport = workspace.getBoundingClientRect();
+        const style = getComputedStyle(workspace);
+        const top = viewport.top + parseFloat(style.scrollPaddingTop);
+        const bottom = viewport.bottom - parseFloat(style.scrollPaddingBottom);
+        if (bounds.bottom > bottom) workspace.scrollTop += bounds.bottom - bottom;
+        else if (bounds.top < top) workspace.scrollTop += bounds.top - top;
+      }
+    };
+    const resize = new ResizeObserver(center);
+    resize.observe(list);
+    center();
+    return () => resize.disconnect();
+  }, [identity]);
+  return <div className="plan-roadmap" ref={roadmap} role="region" aria-label="Plan weeks" tabIndex={0}>{children}</div>;
 }
 
 function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active: boolean; onSelect: () => void }) {

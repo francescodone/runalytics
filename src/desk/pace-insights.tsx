@@ -2,7 +2,7 @@ import { useState } from "react";
 import { IconArrowUpRight } from "@tabler/icons-react";
 import { tauri, displayTitle, fmtDateDMY, fmtKm, fmtPace } from "../lib/ipc";
 import { dateValue, navigate, shortDate, today, useRemote } from "./data";
-import { Button, ErrorNotice, Loading } from "./ui";
+import { Button, ErrorNotice, InfoDialog, Loading } from "./ui";
 import { PlanAdjustments } from "./proposals";
 import { Change, SelectionGroup, SelectionMarker } from "./interaction";
 
@@ -49,7 +49,7 @@ export function PaceInsightsView() {
         <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Pace insight repetitions"><table><caption className="sr-only">Measured work reps relative to their own prescribed target</caption><thead><tr><th>Rep</th><th>Pace /km</th><th>Target /km</th><th>Relative pace</th></tr></thead><tbody>{selected.reps.map(rep => <tr key={rep.index}><th scope="row">{rep.index}</th><td>{fmtPace(rep.actualSKm)}</td><td>{fmtPace(rep.bandLoSKm)} - {fmtPace(rep.bandHiSKm)}</td><td>{rep.relativePace > 1 ? "Faster than target" : rep.relativePace < -1 ? "Slower than target" : "Within target"}</td></tr>)}</tbody></table></div>
       </section>
     </>}
-    <details className="pace-method"><summary>About pace insights</summary><p>Up to five recent eligible sessions from your current plan. Rep boundaries are inferred from the planned distances along your GPS track, not imported watch laps. Only work reps with at least 98% of their prescribed distance measured are included; warm-ups, recoveries, missing reps, and invalid GPS measurements are excluded.</p><p>Each rep is compared with its own target midpoint and half-range, so different rep distances and prescribed speeds can be compared. The shaded band marks the prescribed limits; points closer together mean more consistent target-relative pacing. This is Runalytics' transparent calculation, not Runna's proprietary pace-status algorithm.</p><p>Targets are reconstructed from the current plan, not immutable historical snapshots. Speed sessions before the latest accepted pace adjustment are marked outdated and excluded from the current count. Long runs do not trigger quality-pace adjustments.</p></details>
+    <InfoDialog title="About pace insights" className="pace-method"><p>Up to five recent eligible sessions from your current plan. Rep boundaries are inferred from the planned distances along your GPS track, not imported watch laps. Only work reps with at least 98% of their prescribed distance measured are included; warm-ups, recoveries, missing reps, and invalid GPS measurements are excluded.</p><p>Each rep is compared with its own target midpoint and half-range, so different rep distances and prescribed speeds can be compared. The shaded band marks the prescribed limits; points closer together mean more consistent target-relative pacing. This is Runalytics' transparent calculation, not Runna's proprietary pace-status algorithm.</p><p>Targets are reconstructed from the current plan, not immutable historical snapshots. Speed sessions before the latest accepted pace adjustment are marked outdated and excluded from the current count. Long runs do not trigger quality-pace adjustments.</p></InfoDialog>
     {mode === "speed" && <div className="review-section"><PlanAdjustments source="pacing" /></div>}
   </section>;
 }

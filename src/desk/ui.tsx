@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck } from "@tabler/icons-react";
+import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
 import { motion, useDragControls, useIsPresent } from "motion/react";
 import { markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
@@ -13,7 +13,7 @@ export function Button({ children, tone = "normal", busy, className = "", onClic
     const feedback = (event: Event) => {
       clearTimeout(timer);
       setResult((event as CustomEvent<{ ok: boolean }>).detail.ok ? "success" : "error");
-      timer = setTimeout(() => setResult(null), 1000);
+      timer = setTimeout(() => setResult(null), tempo.resultHold);
     };
     element.addEventListener("desk:action-result", feedback);
     return () => { clearTimeout(timer); element.removeEventListener("desk:action-result", feedback); };
@@ -77,7 +77,12 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     <div className="dialog-surface"><header><h2>{title}</h2><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} /></IconButton></header>{children}</div>
   </motion.dialog>;
 }
-export function Inspector({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {
+  const [open, setOpen] = useState(false);
+  return <div className={`dialog-action ${className}`}><Button aria-haspopup="dialog" onClick={() => setOpen(true)}><span>{title}</span><IconChevronRight size={18} aria-hidden="true" /></Button><Presence>{open && <Dialog title={title} wide={wide} onClose={() => setOpen(false)}>{children}</Dialog>}</Presence></div>;
+}
+
+export function Inspector({ title, children, onClose, modal = false }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean }) {
   const host = useRef<HTMLElement>(null);
   const close = useRef(onClose);
   const surface = useSurfaceMotion("inspector");
@@ -93,17 +98,17 @@ export function Inspector({ title, children, onClose }: { title: string; childre
     const restore = () => { inertElements.forEach((inert, node) => { node.inert = inert; }); inertElements.clear(); unlock?.(); unlock = undefined; };
     const update = () => {
       restore();
-      if (!mobile.matches) return;
+      if (!modal && !mobile.matches) return;
       for (let ancestor: HTMLElement | null = element; ancestor?.parentElement; ancestor = ancestor.parentElement) {
         for (const sibling of ancestor.parentElement.children) {
-          if (sibling instanceof HTMLElement && sibling !== ancestor && !sibling.matches(".notification-viewport")) { inertElements.set(sibling, sibling.inert); sibling.inert = true; }
+          if (sibling instanceof HTMLElement && sibling !== ancestor && !sibling.matches(".notification-viewport, .inspector-backdrop")) { inertElements.set(sibling, sibling.inert); sibling.inert = true; }
         }
       }
       unlock = lockPageScroll();
     };
     const keys = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); close.current(); }
-      if (event.key !== "Tab" || !mobile.matches) return;
+      if (event.key !== "Tab" || (!modal && !mobile.matches)) return;
       const focusable = [...element.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')].filter(node => node.getClientRects().length);
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (event.shiftKey && (document.activeElement === first || document.activeElement === element)) { event.preventDefault(); last?.focus(); }
@@ -111,13 +116,14 @@ export function Inspector({ title, children, onClose }: { title: string; childre
     };
     update(); mobile.addEventListener("change", update); element.addEventListener("keydown", keys); element.focus({ preventScroll: true });
     return () => { restore(); mobile.removeEventListener("change", update); element.removeEventListener("keydown", keys); if (opener?.isConnected) opener.focus({ preventScroll: true }); };
-  }, [title]);
-  return <motion.aside className="desk-inspector" aria-label={title} ref={host} tabIndex={-1} data-state={present ? "open" : "closing"}
+  }, [title, modal]);
+  return <>{modal && <div className="inspector-backdrop" aria-hidden="true" data-state={present ? "open" : "closing"} onClick={() => { if (present) onClose(); }} />}
+  <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-state={present ? "open" : "closing"}
     initial={surface.initial} animate={surface.animate} exit={surface.exit}
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
     <div className="inspector-bar" onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}><Button onClick={onClose}><IconArrowLeft size={18} />Back</Button><span>{title}</span></div>{children}
-  </motion.aside>;
+  </motion.aside></>;
 }
 export function Metric({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {
   return <div className="desk-metric"><dt>{label}</dt><dd>{value}{unit && <small>{unit}</small>}</dd></div>;

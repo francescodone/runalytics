@@ -1,5 +1,5 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
-import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, MotionConfig, motion, useIsPresent, useReducedMotion } from "motion/react";
 import "./tokens.css";
 
 const tokenStyle = getComputedStyle(document.documentElement);
@@ -9,6 +9,7 @@ const curve = (name: string) => tokenStyle.getPropertyValue(name).trim().slice(1
 export const tempo = {
   press: seconds("--motion-press"),
   feedback: seconds("--motion-feedback"),
+  resultHold: seconds("--motion-result-hold") * 1000,
   change: seconds("--motion-change"),
   surface: seconds("--motion-surface"),
   exit: seconds("--motion-exit"),
@@ -31,29 +32,46 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   useEffect(() => {
-    const selector = "[data-entrance], .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, .settings-editor > section, .settings-editor > form, fieldset, .settings-section, .connection-summary, .form-grid, .form-actions, .milestones > *, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .plan-roadmap, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-board, .week-board, .mobile-date-ribbon, .pain-episode, .episode-chat, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .help-articles > details, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > :not(header)";
+    const selector = "[data-entrance], .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-context > *, .health-history > *, .trend-chart, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, fieldset, .connection-summary, .form-grid, .form-actions, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-labels, .month-day, .day-lane > header, .mobile-date-ribbon, .pain-episode > header, .episode-notes, .episode-actions, .episode-chat > h3, .episode-chat > form, .chat-message, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .dialog-action > .desk-button, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > header";
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    let sequence = 0;
+    const settleElement = (element: HTMLElement) => {
+      observer.unobserve(element);
+      pending.delete(element);
+      revealed.add(element);
+      element.dataset.reveal = "settled";
+    };
     const observer = new IntersectionObserver(entries => {
       let order = 0;
       for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
+        if (!entry.isIntersecting || entry.intersectionRatio < .08) continue;
         const element = entry.target as HTMLElement;
+        if (!pending.has(element)) continue;
         observer.unobserve(element);
         pending.delete(element);
         revealed.add(element);
-        const parentRevealing = element.parentElement?.closest('[data-reveal="visible"]');
-        element.style.setProperty("--reveal-delay", `${Math.min(order++, 3) * tempo.stagger}s`);
-        element.dataset.reveal = reduced.matches || parentRevealing ? "settled" : "visible";
+        const group = element.closest(".motion-change[data-stagger]");
+        const staggerIndex = group ? [...group.querySelectorAll('[data-reveal]:not([data-reveal="container"])')].indexOf(element) : order++;
+        element.style.setProperty("--reveal-delay", `${Math.min(Math.max(0, staggerIndex), 3) * tempo.stagger}s`);
+        element.dataset.reveal = reduced.matches || element.contains(document.activeElement) ? "settled" : "visible";
       }
-    }, { threshold: 0 });
+    }, { threshold: .08, rootMargin: "0px 0px -24px 0px" });
     const register = (root: ParentNode) => {
       const elements = [...root.querySelectorAll<HTMLElement>(selector)];
       if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
       for (const element of elements) {
         if (revealed.has(element) || pending.has(element)) continue;
-        if (reduced.matches) { revealed.add(element); element.dataset.reveal = "settled"; continue; }
+        if (element.closest(".motion-disclosure")) continue;
+        if (element.querySelector(`${selector}, .desk-inspector, .desk-dialog, .notification-viewport`)) continue;
+        for (let ancestor = element.parentElement?.closest<HTMLElement>("[data-reveal]"); ancestor; ancestor = ancestor.parentElement?.closest<HTMLElement>("[data-reveal]")) {
+          settleElement(ancestor);
+          ancestor.dataset.reveal = "container";
+        }
+        element.style.setProperty("--scatter-direction", String(sequence++ % 3 - 1));
+        if (reduced.matches || element.contains(document.activeElement) || element.matches(".activity-row, .roadmap-row")) { settleElement(element); continue; }
+        element.dataset.reveal = "waiting";
         pending.add(element);
         observer.observe(element);
       }
@@ -69,15 +87,26 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     register(document);
     mutations.observe(document.body, { childList: true, subtree: true });
     const settle = (event: AnimationEvent) => {
-      if (event.animationName === "content-arrive" && event.target instanceof HTMLElement) event.target.dataset.reveal = "settled";
+      if (["content-arrive", "status-arrive"].includes(event.animationName) && event.target instanceof HTMLElement && event.target.dataset.reveal === "visible") settleElement(event.target);
+    };
+    const settleInteraction = (event: Event) => {
+      if (!(event.target instanceof Element)) return;
+      for (let element = event.target.closest<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]'); element; element = element.parentElement?.closest<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]') ?? null) settleElement(element);
     };
     document.addEventListener("animationend", settle);
     document.addEventListener("animationcancel", settle);
+    document.addEventListener("focusin", settleInteraction);
+    document.addEventListener("pointerdown", settleInteraction, true);
     const settleMotion = () => {
-      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="visible"]').forEach(element => { element.dataset.reveal = "settled"; });
+      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
     };
     reduced.addEventListener("change", settleMotion);
-    return () => { observer.disconnect(); mutations.disconnect(); reduced.removeEventListener("change", settleMotion); document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle); };
+    return () => {
+      document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      observer.disconnect(); mutations.disconnect(); reduced.removeEventListener("change", settleMotion);
+      document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle);
+      document.removeEventListener("focusin", settleInteraction); document.removeEventListener("pointerdown", settleInteraction, true);
+    };
   }, []);
   // Scroll-edge cues: a list or tab strip that still has room to travel marks
   // the open edges, and CSS wears an inner shadow on exactly those edges, so
@@ -93,17 +122,34 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       element.dataset.scrollRight = element.scrollLeft < slackX - 2 ? "1" : "";
       element.dataset.scrollTop = element.scrollTop > 2 ? "1" : "";
       element.dataset.scrollBottom = element.scrollTop < slackY - 2 ? "1" : "";
+      element.style.setProperty("--scroll-top-opacity", String(Math.min(1, Math.max(0, element.scrollTop) / 32)));
+      element.style.setProperty("--scroll-bottom-opacity", String(Math.min(1, Math.max(0, slackY - element.scrollTop) / 32)));
     };
-    const refresh = () => document.querySelectorAll<HTMLElement>(selector).forEach(mark);
+    const observed = new Set<Element>();
+    let frame = 0;
+    const refresh = () => {
+      for (const element of observed) if (!element.isConnected) { resize.unobserve(element); observed.delete(element); }
+      document.querySelectorAll<HTMLElement>(selector).forEach(element => {
+        if (element.matches(".plan-roadmap, .activity-library")) {
+          const workspace = element.closest<HTMLElement>(".desk-workspace");
+          if (workspace) {
+            const navigation = document.querySelector(".desk-navigation")?.getBoundingClientRect();
+            const bottom = Math.min(workspace.getBoundingClientRect().bottom - 24, matchMedia("(max-width: 800px)").matches && navigation ? navigation.top - 12 : innerHeight);
+            const available = Math.max(Math.min(240, workspace.clientHeight / 2), bottom - element.getBoundingClientRect().top - workspace.scrollTop);
+            element.style.setProperty("--list-available-height", `${Math.round(available)}px`);
+            for (const target of [workspace, element.parentElement!]) if (!observed.has(target)) { observed.add(target); resize.observe(target); }
+          }
+        }
+        mark(element);
+      });
+    };
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(refresh); };
+    const resize = new ResizeObserver(schedule);
     const onScroll = (event: Event) => {
       const element = event.target;
       if (element instanceof HTMLElement && element.matches(selector)) mark(element);
     };
-    let frame = 0;
-    const mutations = new MutationObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(refresh);
-    });
+    const mutations = new MutationObserver(schedule);
     refresh();
     document.addEventListener("scroll", onScroll, { capture: true, passive: true });
     window.addEventListener("resize", refresh);
@@ -113,6 +159,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       document.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", refresh);
       mutations.disconnect();
+      resize.disconnect();
     };
   }, []);
   return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
@@ -122,26 +169,41 @@ export function Presence({ children }: { children: ReactNode }) {
   return <AnimatePresence initial={false}>{children}</AnimatePresence>;
 }
 
+export function Disclosure({ children, id, open, className = "", mountOnOpen = false }: { children: ReactNode; id: string; open: boolean; className?: string; mountOnOpen?: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [opened, setOpened] = useState(open);
+  useEffect(() => { if (open) setOpened(true); }, [open]);
+  useLayoutEffect(() => {
+    if (!open && host.current?.contains(document.activeElement)) {
+      [...document.querySelectorAll<HTMLElement>("[aria-controls]")].find(control => control.getAttribute("aria-controls") === id)?.focus({ preventScroll: true });
+    }
+  }, [id, open]);
+  return <div ref={host} id={id} className="motion-disclosure" data-state={open ? "open" : "closed"} inert={!open} aria-hidden={!open}>
+    <div className="motion-disclosure-clip"><div className={`motion-disclosure-content ${className}`}>{!mountOnOpen || open || opened ? children : null}</div></div>
+  </div>;
+}
+
 export function SelectionGroup({ children }: { children: ReactNode }) {
-  return <LayoutGroup id={useId()}>{children}</LayoutGroup>;
+  return <>{children}</>;
 }
 
 export function SelectionMarker() {
-  const reduced = useReducedMotion();
-  return <motion.span className="selection-marker" aria-hidden="true" layoutId="selection" initial={false} transition={reduced ? { duration: 0 } : tempo.spring} />;
+  return <span className="selection-marker" aria-hidden="true" />;
 }
 
-export function Change({ children, identity, className = "" }: { children: ReactNode; identity: string | number; className?: string }) {
+function ChangeContents({ children, className, stagger }: { children: ReactNode; className: string; stagger: boolean }) {
   const reduced = useReducedMotion();
+  const present = useIsPresent();
+  return <motion.div className={`motion-change ${className}`} data-stagger={stagger || undefined} data-transition-state={present ? "present" : "exiting"} inert={!present}
+    initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: 1, transition: { duration: reduced ? 0 : tempo.change, ease: tempo.settle } }} exit={{ opacity: 0, transition: { duration: reduced ? 0 : tempo.exit + (stagger ? 3 * tempo.stagger : 0), ease: tempo.leave } }}>
+    {children}
+  </motion.div>;
+}
+
+export function Change({ children, identity, className = "", stagger = false }: { children: ReactNode; identity: string | number; className?: string; stagger?: boolean }) {
   return (
     <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={identity}
-        className={`motion-change ${className}`}
-        exit={reduced ? undefined : { opacity: 0, transition: { duration: tempo.exit, ease: tempo.leave } }}
-      >
-        {children}
-      </motion.div>
+      <ChangeContents key={identity} className={className} stagger={stagger}>{children}</ChangeContents>
     </AnimatePresence>
   );
 }

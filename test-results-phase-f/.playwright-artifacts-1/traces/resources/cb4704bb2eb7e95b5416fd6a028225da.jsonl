@@ -1,5 +1,0 @@
-{"type":"receive","time":1793550391679.8652,"opcode":1,"data":"{\"type\":\"connected\"}"}
-{"type":"send","time":1793550391759.289,"opcode":1,"data":"{\"type\":\"custom\",\"event\":\"vite:forward-console\",\"data\":{\"type\":\"log\",\"data\":{\"level\":\"warn\",\"message\":\"You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled\"}}}"}
-{"type":"receive","time":1793550391821.176,"opcode":1,"data":"{\"type\":\"full-reload\",\"path\":\"/test-results-phase-f/.playwright-artifacts-1/traces/resources/2058d36b4666ac03e29b0e832c371a74a90f5adb.html\"}"}
-{"type":"receive","time":1793550391981.154,"opcode":1,"data":"{\"type\":\"full-reload\",\"path\":\"/test-results-phase-f/.playwright-artifacts-1/traces/resources/bdd2e4c76e19adbe4b2cbaadcea75562b4860aec.html\"}"}
-{"type":"send","time":1793550421680.7441,"opcode":1,"data":"{\"type\":\"ping\"}"}

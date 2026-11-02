@@ -6,16 +6,26 @@ import { tempo } from "./interaction";
 
 const scrollLocks = new Set<symbol>();
 let originalOverflow = "";
+let workspaceScroll: { element: HTMLElement; overflow: string } | undefined;
 export function lockPageScroll() {
   const lock = Symbol();
   if (!scrollLocks.size) {
     originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const element = document.getElementById("workspace");
+    if (element) {
+      workspaceScroll = { element, overflow: element.style.overflow };
+      element.style.overflow = "hidden";
+    }
   }
   scrollLocks.add(lock);
   return () => {
     scrollLocks.delete(lock);
-    if (!scrollLocks.size) document.body.style.overflow = originalOverflow;
+    if (!scrollLocks.size) {
+      document.body.style.overflow = originalOverflow;
+      if (workspaceScroll) workspaceScroll.element.style.overflow = workspaceScroll.overflow;
+      workspaceScroll = undefined;
+    }
   };
 }
 

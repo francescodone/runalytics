@@ -1,21 +1,22 @@
-@font-face { font-family: "Desk Sans"; src: url("../styles/fonts/source-sans-3-latin.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
+@font-face { font-family: "Outfit"; src: url("../styles/fonts/outfit-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: swap; }
 
 :root {
-  --font-ui: "Desk Sans", "Helvetica Neue", sans-serif;
-  --text-caption: 12px;
-  --text-detail: 13px;
-  --text-label: 14px;
-  --text-body: 16px;
-  --text-subtitle: 18px;
-  --text-title: 20px;
-  --text-heading: 24px;
-  --text-page: 28px;
-  --text-display: 32px;
-  --text-hero: 40px;
+  --font-ui: "Outfit", "Avenir Next", sans-serif;
+  --text-caption: .75rem;
+  --text-detail: .8125rem;
+  --text-label: .875rem;
+  --text-body: 1rem;
+  --text-subtitle: 1.125rem;
+  --text-title: 1.25rem;
+  --text-heading: 1.5rem;
+  --text-page: 2rem;
+  --text-display: 2.25rem;
+  --text-hero: 2.5rem;
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;
+  --weight-display: 800;
   --leading-tight: 1.2;
   --leading-heading: 1.3;
   --leading-control: 1.4;
@@ -34,17 +35,21 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
-  --radius-small: 4px;
-  --radius-control: 8px;
-  --radius-card: 8px;
-  --radius-panel: 16px;
-  --radius-overlay: 24px;
+  --radius-small: 8px;
+  --radius-control: 14px;
+  --radius-card: 20px;
+  --radius-panel: 28px;
+  --radius-overlay: 32px;
   --radius-pill: 999px;
+  --radius-button: var(--radius-pill);
   --control-size: 44px;
   --control-border: 1px;
   --focus-width: 2px;
   --focus-offset: 3px;
-  --content-max: 1600px;
+  --content-max: 1680px;
+  --navigation-width: max(208px, 13rem);
+  --shell-inset: var(--space-6);
+  --shell-gap: var(--space-6);
   --page-gutter: var(--space-8);
   --section-gap: var(--space-8);
   --section-inset: var(--space-6);
@@ -52,7 +57,7 @@
   --control-gap: var(--space-2);
   --appbar-height: 76px;
   --compact-appbar-height: 64px;
-  --navigation-height: 64px;
+  --navigation-height: max(64px, calc(2rem + 32px));
   --layer-content: 0;
   --layer-raised: 1;
   --layer-navigation: 10;
@@ -62,41 +67,62 @@
   --layer-tooltip: 30;
   --layer-drag: 40;
   --layer-skip: 50;
-  --desk-canvas: #edf1f5;
-  --desk-surface: #fff;
-  --desk-ink: #20272f;
-  --desk-muted: #52616f;
-  --desk-line: #cbd3dc;
-  --desk-soft: #e8edf2;
-  --desk-action: #176658;
+  --desk-canvas: #eef0f6;
+  --desk-surface: #ffffff;
+  --desk-ink: #191b20;
+  --desk-muted: #5e6470;
+  --desk-line: #d5d9e2;
+  --desk-soft: #e8ebf2;
+  --desk-action: #b6401e;
   --desk-on-action: #fff;
   --desk-blue: #2968ba;
   --desk-warning: #946000;
   --desk-danger: #b52f3b;
-  --desk-selection: #deeee8;
-  --desk-highlight: #ffffffcc;
+  --desk-selection: #ffede6;
+  --desk-highlight: #fffffff0;
   --desk-scrim: #17212f40;
-  --shadow-control: inset 0 1px 0 var(--desk-highlight), 0 1px 2px #182b4210;
-  --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 2px 6px #182b4206, 0 12px 32px -16px #182b4228;
-  --shadow-overlay: inset 0 1px 0 var(--desk-highlight), 0 8px 24px -8px #182b4226, 0 32px 80px -16px #182b4240;
-  --glass-navigation: color-mix(in srgb, var(--desk-surface) 72%, transparent);
+  --shadow-control: inset 0 1px 0 var(--desk-highlight), inset 0 -1px 0 #171c3008, 0 2px 6px -3px #171c3026;
+  --button-highlight: #ffffffb3;
+  --button-shade: #171c302b;
+  --button-sheen: linear-gradient(165deg, #ffffff45, #ffffff00 45%, #ffffff0a);
+  --button-primary-surface: color-mix(in srgb, var(--desk-action) 16%, var(--control-surface));
+  --button-primary-ink: color-mix(in srgb, var(--desk-action) 82%, var(--desk-ink));
+  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 var(--button-shade), 0 2px 2px -1px var(--button-shade), 0 5px 12px -7px var(--button-shade);
+  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 var(--button-shade), 0 3px 3px -2px var(--button-shade), 0 10px 18px -9px var(--button-shade);
+  --shadow-button-pressed: inset 0 1px 3px var(--button-shade), inset 0 -1px 0 var(--button-highlight), 0 0 0 0 transparent, 0 0 0 0 transparent;
+  --button-hover-transform: perspective(640px) rotateX(5deg);
+  --button-press-transform: perspective(640px) rotateX(-3deg);
+  --button-hover-offset: 0 -2px;
+  --button-press-offset: 0 1px;
+  --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 4px 12px -8px #171c3024, 0 24px 56px -28px #171c3030;
+  --shadow-overlay: inset 0 1px 0 var(--desk-highlight), 0 8px 24px -8px #171c3029, 0 40px 96px -24px #171c3052;
+  --glass-navigation: color-mix(in srgb, var(--desk-surface) 80%, transparent);
   --glass-floating: color-mix(in srgb, var(--desk-surface) 78%, transparent);
   --glass-content: color-mix(in srgb, var(--desk-surface) 60%, transparent);
-  --glass-control: color-mix(in srgb, var(--desk-surface) 76%, transparent);
+  --glass-control: color-mix(in srgb, var(--desk-surface) 42%, transparent);
   --glass-field: color-mix(in srgb, var(--desk-surface) 84%, transparent);
   --glass-dialog: color-mix(in srgb, var(--desk-surface) 88%, transparent);
   --glass-notice: color-mix(in srgb, var(--desk-ink) 96%, transparent);
   --glass-border: color-mix(in srgb, var(--desk-line) 72%, transparent);
-  --glass-filter: blur(20px) saturate(135%);
+  --glass-filter: blur(24px) saturate(145%);
   --glass-sheen: linear-gradient(155deg, #ffffff38, #ffffff00 48%);
-  --glass-scrim-filter: blur(4px);
-  --state-hover: color-mix(in srgb, var(--desk-action) 9%, var(--glass-control));
-  --state-pressed: color-mix(in srgb, var(--desk-action) 17%, var(--glass-control));
+  --glass-scrim-filter: blur(12px);
+  --material-atmospheric: linear-gradient(135deg, color-mix(in srgb, var(--desk-blue) 5%, var(--desk-canvas)), var(--desk-canvas) 55%, color-mix(in srgb, var(--desk-action) 3%, var(--desk-canvas)));
+  --material-architectural: linear-gradient(150deg, color-mix(in srgb, var(--desk-surface) 72%, transparent), color-mix(in srgb, var(--desk-surface) 32%, transparent));
+  --material-floating: var(--glass-floating);
+  --material-optical: var(--glass-control);
+  --material-liquid: var(--state-selected);
+  --material-dense: var(--desk-surface);
+  --control-surface: color-mix(in srgb, var(--desk-soft) 75%, var(--desk-surface));
+  --control-edge: color-mix(in srgb, var(--desk-muted) 36%, var(--desk-surface));
+  --state-hover: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface));
+  --state-pressed: color-mix(in srgb, var(--desk-action) 20%, var(--desk-surface));
   --state-selected: color-mix(in srgb, var(--desk-selection) 90%, var(--desk-surface));
   --state-focus: color-mix(in srgb, var(--desk-action) 16%, transparent);
   --state-primary-hover: color-mix(in srgb, var(--desk-action) 92%, #000);
   --state-primary-pressed: color-mix(in srgb, var(--desk-action) 82%, #000);
   --state-press-scale: .98;
+  --state-hover-scale: 1.015;
   --disabled-opacity: .55;
   --session-tempo: #be781d;
   --session-intervals: #cc565f;
@@ -106,12 +132,17 @@
   --notice-duration: 6000ms;
   --motion-press: 90ms;
   --motion-feedback: 180ms;
+  --motion-tooltip-delay: 450ms;
+  --motion-result-hold: 1000ms;
+  --motion-loading-delay: 120ms;
   --motion-change: 240ms;
   --motion-surface: 320ms;
   --motion-exit: 160ms;
   --motion-spring: 320ms;
   --motion-stagger: 32ms;
   --motion-reveal-distance: 6px;
+  --motion-reveal-blur: 6px;
+  --motion-scatter-distance: 4px;
   --motion-settle: cubic-bezier(.16, 1, .3, 1);
   --motion-leave: cubic-bezier(.4, 0, .8, .4);
   --desk-ease: var(--motion-settle);
@@ -135,22 +166,25 @@
 }
 :root[data-desk-theme="dark"] {
   color-scheme: dark;
-  --desk-canvas: #141619;
-  --desk-surface: #25292e;
+  --desk-canvas: #17181c;
+  --desk-surface: #24262c;
   --desk-ink: #f3f5f7;
-  --desk-muted: #b4bec9;
-  --desk-line: #48515c;
-  --desk-soft: #30363e;
-  --desk-action: #9cddc6;
-  --desk-on-action: #122720;
+  --desk-muted: #b9becb;
+  --desk-line: #474b57;
+  --desk-soft: #30333c;
+  --desk-action: #ffad91;
+  --desk-on-action: #35170e;
   --desk-blue: #96c4ff;
   --desk-warning: #edc47b;
   --desk-danger: #ffa5aa;
-  --desk-selection: #2a403b;
+  --desk-selection: #472d27;
   --desk-highlight: #ffffff1a;
   --desk-scrim: #00000070;
+  --button-highlight: #ffffff30;
+  --button-shade: #00000066;
+  --button-sheen: linear-gradient(165deg, #ffffff14, #ffffff00 45%, #ffffff04);
   --glass-sheen: linear-gradient(155deg, #ffffff08, #ffffff00 48%);
-  --shadow-control: inset 0 1px 0 var(--desk-highlight), 0 1px 2px #00000040;
+  --shadow-control: inset 0 1px 0 #ffffff26, inset 0 -1px 0 #00000024, 0 2px 6px -2px #00000050;
   --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 2px 6px #00000018, 0 12px 32px -16px #00000060;
   --shadow-overlay: inset 0 1px 0 var(--desk-highlight), 0 8px 24px -8px #00000060, 0 32px 80px -16px #000000a0;
 }
@@ -164,7 +198,8 @@
 :root[data-desk-theme="dark"][data-desk-palette="evergreen"] { --desk-action: #a6e2bc; --desk-selection: #293e31; }
 :root[data-desk-theme="dark"][data-desk-palette="sakura"] { --desk-action: #f2b5d0; --desk-selection: #462d38; }
 :root[data-desk-theme="dark"][data-desk-palette="ember"] { --desk-action: #f4b59a; --desk-selection: #473329; }
-@media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); } }
+@media (min-width: 801px) and (max-width: 1180px) { :root { --navigation-width: 88px; --shell-gap: var(--space-4); --shell-inset: var(--space-4); --page-gutter: var(--space-6); } }
+@media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); --text-page: 1.75rem; --text-display: 1.75rem; --text-hero: 2rem; } }
 @media (prefers-contrast: more) { :root { --desk-line: #63736a; } :root[data-desk-theme="dark"] { --desk-line: #b2c0b7; } }
 @media (forced-colors: active) {
   :root { --desk-canvas: Canvas; --desk-surface: Canvas; --desk-ink: CanvasText; --desk-muted: CanvasText; --desk-line: ButtonText; --desk-action: LinkText; --desk-on-action: Canvas; --desk-selection: Canvas; }

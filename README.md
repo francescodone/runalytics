@@ -18,7 +18,7 @@ distributed.
   stress), fitness assessment (VO₂max, threshold, predicted times) and
   training load.
 - **Training**: one workspace for the current week, month and entire plan.
-  Desktop uses day lanes with a contextual session inspector; mobile uses a
+  Desktop uses content-sized session tiles and a modal session inspector; mobile uses a
   date ribbon, daily itinerary and full-screen detail. Connection and initial
   sync actions appear when needed.
 - **Journal**: searchable activity history with sport, source and date filters;
@@ -32,16 +32,23 @@ distributed.
   rep table, outdated-session indicators, activity links and the next workout.
   Pace changes still use the existing review-and-approve workflow.
 - **Navigation**: Training, Activities and Health are the three primary workspaces.
-  Desktop has a top application bar; mobile has three bottom destinations.
-  Settings and Help are header utilities. Settings uses a searchable directory
+  Desktop has a floating navigation rail; mobile has three bottom destinations.
+  Settings and Help remain utility actions. Settings uses a searchable directory
   and focused task editors, not a second sidebar. The independent React
-  presentation uses locally bundled Source Sans 3 with silver/light and
-  graphite/dark glass, six accent palettes, shared spacing and consistent
-  control states. Buttons share press feedback; content uses one reveal pattern.
-  Charts remain clear, without individual blur layers. Reduced motion, reduced
-  transparency, increased contrast and forced colors have explicit fallbacks.
-  The font is OFL-licensed. See the
-  [Glass Design System](plan/ui-system-unification.md) for the current UI contract.
+  presentation uses locally bundled Outfit, neutral light and graphite dark
+  surfaces, a coral default accent and six accent palettes. Rounded controls,
+  evenly spaced day lanes and a centered floating mobile navigation share the
+  same geometry and spacing tokens. The shell stays within the viewport; its
+  workspace and height-bounded activity and plan lists own scrolling. Navigation
+  and tabs use the same hover, pressed and selected treatments as buttons.
+  Information buttons open dialogs with a blurred backdrop, contained keyboard
+  focus and nested scroll locks. Content reveals once on viewport entry,
+  settling from a brief blur and small staggered offsets. Outgoing views scatter
+  before removal; focus or a press immediately clears an incoming reveal.
+  Charts have no persistent blur layers. Reduced motion removes blur and movement;
+  reduced transparency, increased contrast and forced colors have explicit
+  fallbacks. The font is OFL-licensed. Shared visual and motion contracts live in
+  `src/desk/tokens.css`, `src/desk/interaction.tsx` and `src/desk/interaction.css`.
 - **Plans**: 5K / 10K / half / marathon plans to a target date from your
   threshold pace, weekly frequency, long-run day, and mileage-increase method
   (+5 / +8 / +12 % per week). Geometric ramp with 3-build/1-down cycles,
@@ -50,7 +57,11 @@ distributed.
   that defaults to today. Workouts begin no earlier than the selected day;
   maintenance block lengths are counted from that date. The plan horizon combines
   a week-by-week roadmap with inputs, predictions, publishing and management.
-  Creation is unavailable while a plan is active; ending it requires confirmation.
+  Each visit to Plan centers the current week. Creation is unavailable while a
+  plan is active. **End current plan** removes only the current plan and its
+  sessions; **Remove all saved plans** in Settings also removes older plans,
+  drafts and pending plan offers. Both require confirmation and preserve
+  recorded activities, health history and pain entries.
 - **Adaptive adjustments**: after every sync, poor recovery (sleep / RHR / HRV
   / ACWR) or a struggled session softens the next hard workout — never the
   other way around.
@@ -78,7 +89,7 @@ distributed.
   changes require review. Optional assistant conversations require consent and
   can be cleared separately from the pain record.
 - **Watch connection**: Settings shows the next setup step or a direct Sync now
-  action for connected accounts. Connection diagnostics remain collapsed.
+  action for connected accounts. Connection diagnostics open in a dialog.
 - **Heatmap**: MapLibre GL JS with a heatmap layer over OSM raster tiles, or
   fully offline from a [PMTiles] archive (path configurable in Settings).
 - **Plan sync**: the desktop app publishes the active plan to a private GitHub
@@ -171,8 +182,9 @@ and legacy deep links.
 The old suite opts into a development-only `X-Runalytics-Legacy: 1` header;
 ordinary requests and all production entry pages load Training Desk.
 
-See the [Glass Design System](plan/ui-system-unification.md) for the maintained
-UI reference and verification commands. The synthetic preview is available at
+See [Project Prism](docs/design-system/foundations.md) and its
+[migration ledger](docs/design-system/migration-status.md) for the maintained
+UI reference and verification evidence. The synthetic preview is available at
 `http://localhost:1500/__desk_preview.html` when the **Redesign preview** task runs.
 Live COROS, physical iPhone, updater and offline archive operation remain native
 acceptance checks, not claims made by the synthetic browser suite.
@@ -391,7 +403,9 @@ page styles. Original HTML and controller files remain in the working tree
 for regression comparison; Vite substitutes `desk.html` before processing
 each production entry, so the old presentation is not bundled into those pages.
 
-- `src/desk/desk.css` owns the new tokens, responsive layouts and motion rules.
+- `src/desk/tokens.css` owns semantic typography, materials, spacing and motion.
+- `src/desk/desk.css` owns responsive layout; `interaction.css` and
+  `interaction.tsx` share control states, selection and surface physics.
 - `src/desk/ui.tsx` owns buttons, feedback, native dialogs and inspectors.
   Inspectors remain nonmodal on desktop; on mobile they contain keyboard focus,
   make the background inert, prevent background scrolling and restore focus.
@@ -402,8 +416,10 @@ each production entry, so the old presentation is not bundled into those pages.
   workspaces. Rust and the existing `src/lib/ipc.ts` remain authoritative for
   training decisions, authentication, persistence and external publishing.
 
-The complete before/after screen comparison, three considered concepts and
-verification evidence are in [the design record](plan/training-desk-redesign.md).
+The three considered concepts and selected Architectural Spatial Glass direction
+are in [Prism foundations](docs/design-system/foundations.md). The
+[migration ledger](docs/design-system/migration-status.md) records executed checks
+and remaining acceptance limits; historical screenshots are not current evidence.
 
 ### Preview without the desktop app
 

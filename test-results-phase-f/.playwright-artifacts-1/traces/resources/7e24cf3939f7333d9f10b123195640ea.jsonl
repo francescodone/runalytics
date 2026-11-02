@@ -1,2 +1,0 @@
-{"type":"receive","time":1793550384440.0989,"opcode":1,"data":"{\"type\":\"connected\"}"}
-{"type":"send","time":1793550384607.89,"opcode":1,"data":"{\"type\":\"custom\",\"event\":\"vite:forward-console\",\"data\":{\"type\":\"log\",\"data\":{\"level\":\"warn\",\"message\":\"You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled\"}}}"}

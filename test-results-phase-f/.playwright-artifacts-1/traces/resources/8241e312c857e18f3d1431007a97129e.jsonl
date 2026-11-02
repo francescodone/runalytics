@@ -1,3 +1,0 @@
-{"type":"receive","time":1793550391419.392,"opcode":1,"data":"{\"type\":\"connected\"}"}
-{"type":"receive","time":1793550391419.5242,"opcode":1,"data":"{\"type\":\"full-reload\",\"triggeredBy\":\"/Users/donefran/Documents/git/personal/runalytics/src/desk/interaction.tsx\",\"path\":\"*\"}"}
-{"type":"send","time":1793550391467.8071,"opcode":1,"data":"{\"type\":\"custom\",\"event\":\"vite:forward-console\",\"data\":{\"type\":\"log\",\"data\":{\"level\":\"warn\",\"message\":\"You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled\"}}}"}

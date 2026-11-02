@@ -12,9 +12,12 @@ test.describe("motion system", () => {
     const action = page.getByRole("button", { name: "Log pain", exact: true });
     await expect(page.locator(".desk-toolbar")).toHaveAttribute("data-reveal", "settled");
     const rest = await action.boundingBox();
-    await action.hover({ position: { x: rest.width - 4, y: 4 } });
+    await action.hover({ position: { x: rest.width / 2, y: rest.height / 2 } });
     await expect(action.locator(".button-content")).toHaveCSS("transform", "none");
-    expect(await action.boundingBox()).toEqual(rest);
+    await expect(action).toHaveCSS("scale", "1.015");
+    const hovered = await action.boundingBox();
+    expect(hovered.width / rest.width).toBeCloseTo(1.015, 2);
+    expect(hovered.x + hovered.width / 2).toBeCloseTo(rest.x + rest.width / 2, 1);
     for (const control of [action, page.getByRole("button", { name: "Settings", exact: true })]) {
       await control.hover();
       await page.mouse.down();
@@ -37,6 +40,81 @@ test.describe("motion system", () => {
     await expect(action).toBeFocused();
   });
 
+  for (const theme of ["light", "dark"]) {
+    test(`translucent button depth and accessible fallbacks ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
+      await page.goto(`/desk.html?theme=${theme}#settings/thresholds`);
+      const primary = page.getByRole("button", { name: "Save boundaries", exact: true });
+      const secondary = page.getByRole("button", { name: "Restore defaults", exact: true });
+      const alpha = control => control.evaluate(element => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.fillStyle = getComputedStyle(element).backgroundColor;
+        context.fillRect(0, 0, 1, 1);
+        return context.getImageData(0, 0, 1, 1).data[3] / 255;
+      });
+      for (const control of [primary, secondary, page.getByRole("button", { name: "Help", exact: true }), page.getByRole("link", { name: "Health", exact: true })]) {
+        await control.scrollIntoViewIfNeeded();
+        await expect(control).toBeVisible();
+        await expect.poll(() => alpha(control)).toBeLessThan(.7);
+        const restShadow = await control.evaluate(element => getComputedStyle(element).boxShadow);
+        await control.hover();
+        await expect(control).toHaveCSS("translate", "0px -2px");
+        await expect(control).toHaveCSS("transform", /matrix3d/);
+        await expect.poll(() => control.evaluate(element => getComputedStyle(element).boxShadow)).not.toBe(restShadow);
+        await expect.poll(() => alpha(control)).toBeLessThan(.7);
+        const hoverShadow = await control.evaluate(element => getComputedStyle(element).boxShadow);
+        await page.mouse.down();
+        await expect(control).toHaveCSS("translate", "0px 1px");
+        await expect(control).toHaveCSS("scale", "0.98");
+        await expect.poll(() => control.evaluate(element => getComputedStyle(element).boxShadow)).not.toBe(hoverShadow);
+        await expect.poll(() => alpha(control)).toBeLessThan(.7);
+        await page.mouse.move(0, 0);
+        await page.mouse.up();
+        await expect(control).toHaveCSS("transform", "none");
+      }
+      await secondary.click();
+      const dialog = page.getByRole("dialog", { name: "Restore training defaults?" });
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(secondary).toBeFocused();
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await primary.hover();
+      await page.mouse.down();
+      await expect(primary).toHaveCSS("transform", "none");
+      await expect(primary).toHaveCSS("translate", "none");
+      await expect(primary).toHaveCSS("scale", "1");
+      await page.mouse.move(0, 0);
+      await page.mouse.up();
+      await primary.evaluate(element => { element.disabled = true; });
+      await primary.hover();
+      await expect(primary).toHaveCSS("box-shadow", "none");
+      await primary.evaluate(element => { element.disabled = false; });
+      await page.emulateMedia({ contrast: "more" });
+      for (const control of [primary, secondary]) await expect.poll(() => alpha(control)).toBe(1);
+      const session = await page.context().newCDPSession(page);
+      await session.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }] });
+      for (const control of [primary, secondary]) await expect.poll(() => alpha(control)).toBe(1);
+      await session.send("Emulation.setEmulatedMedia", { features: [] });
+      await session.detach();
+      await page.emulateMedia({ reducedMotion: "no-preference", contrast: "no-preference", colorScheme: theme });
+      await page.goto(`/desk.html?theme=${theme}#settings/training`);
+      const danger = page.getByRole("button", { name: "Remove all saved plans", exact: true });
+      await expect(danger).toBeVisible();
+      await expect.poll(() => alpha(danger)).toBeLessThan(.7);
+      await danger.hover();
+      await page.mouse.down();
+      await expect(danger).toHaveCSS("translate", "0px 1px");
+      await page.mouse.move(0, 0);
+      await page.mouse.up();
+      await expect(danger).toHaveCSS("transform", "none");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    });
+  }
+
   for (const width of [390, 1440]) {
     for (const theme of ["light", "dark"]) {
       test(`frosted surfaces and opaque fallbacks ${theme} ${width}px`, async ({ page }) => {
@@ -54,10 +132,10 @@ test.describe("motion system", () => {
           const [, , , a] = style.backgroundColor.match(/[\d.]+/g) ?? [];
           return { filter: style.backdropFilter, alpha: a === undefined ? 1 : Number(a) };
         });
-        expect(appbarGlass.filter).toBe("blur(20px) saturate(1.35)");
+        expect(appbarGlass.filter).toBe("blur(24px) saturate(1.45)");
         expect(appbarGlass.alpha).toBeLessThan(1);
         if (width === 390) {
-          await expect(page.locator(".desk-navigation")).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
+          await expect(page.locator(".desk-navigation")).toHaveCSS("backdrop-filter", "blur(24px) saturate(1.45)");
           const navigation = await page.locator(".desk-navigation").boundingBox();
           // The island floats: inset from the screen edges and above the
           // bottom, as a rounded pill with content scrolling underneath.
@@ -71,7 +149,8 @@ test.describe("motion system", () => {
         }
         await page.getByRole("button", { name: "Log pain", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Log pain" });
-        await expect(dialog).toHaveCSS("backdrop-filter", "blur(20px) saturate(1.35)");
+        await expect(dialog).toHaveCSS("backdrop-filter", "blur(24px) saturate(1.45)");
+        await expect.poll(() => dialog.evaluate(element => getComputedStyle(element, "::backdrop").backdropFilter)).toBe("blur(12px)");
         // Axe samples the painted pixels: measuring while the dialog is still
         // fading in blends its colours with the page behind and invents a
         // contrast failure that never exists once the arrival animation ends.
@@ -80,6 +159,7 @@ test.describe("motion system", () => {
         await page.screenshot({ path: `test-results/glass-${theme}-${width}.png`, animations: "disabled" });
         await page.emulateMedia({ contrast: "more" });
         await expect(dialog).toHaveCSS("backdrop-filter", "none");
+        await expect.poll(() => dialog.evaluate(element => getComputedStyle(element, "::backdrop").backdropFilter)).toBe("none");
         for (const selector of [".desk-toolbar", ".health-verdict", ".health-analysis"]) await expect(page.locator(selector)).toHaveCSS("backdrop-filter", "none");
         const surface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-surface").trim());
         const opaqueColor = await page.evaluate(value => { const probe = document.createElement("span"); probe.style.color = value; document.body.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; }, surface);
@@ -135,7 +215,8 @@ test.describe("motion system", () => {
           expect(events[1].width).toBeCloseTo(events[0].width, 3);
           expect(events[1].height).toBeCloseTo(events[0].height, 3);
           expect(events[1].elapsed).toBe(.32);
-          expect(events[0].filter).toBe("none");
+          expect(events[0].filter).toMatch(/^blur\(/);
+          expect(parseFloat(events[0].filter.slice(5))).toBeGreaterThan(0);
           await expect(verdict).toHaveAttribute("data-reveal", "settled");
           await expect(verdict).toHaveCSS("filter", "none");
           await verdict.hover();
@@ -154,6 +235,8 @@ test.describe("motion system", () => {
         await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.98");
         expect(await selector.evaluate(element => element.offsetWidth)).toBe(Math.round(bounds.width));
         await page.mouse.up();
+        await expect(selector).toHaveCSS("scale", reducedMotion === "reduce" ? "none" : "1.015");
+        await page.mouse.move(0, 0);
         await expect(selector).toHaveCSS("scale", "none");
         await expect(selector).toHaveAttribute("aria-pressed", "true");
         await page.goto("/desk.html#settings");
@@ -170,6 +253,87 @@ test.describe("motion system", () => {
         await page.screenshot({ path: `test-results/micro-motion-${reducedMotion}-${width}.png`, fullPage: true });
       });
     }
+  }
+
+  test("viewport reveals wait for entry, run once, and settle on focus or preference changes", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#settings");
+    const lastTask = page.locator(".settings-task-list > a").last();
+    await expect(lastTask).toHaveAttribute("data-reveal", "waiting");
+    await expect(lastTask).toHaveCSS("opacity", "0");
+    await lastTask.evaluate(element => {
+      window.__viewportReveals = [];
+      document.addEventListener("animationstart", event => {
+        if (event.target === element) window.__viewportReveals.push(event.animationName);
+      });
+      element.scrollIntoView({ block: "center" });
+    });
+    await expect(lastTask).toHaveAttribute("data-reveal", "settled");
+    await expect(lastTask).toHaveCSS("filter", "none");
+    await expect(lastTask).toHaveCSS("opacity", "1");
+    await page.locator("#workspace").evaluate(element => element.scrollTo(0, 0));
+    await expect(page.locator(".workspace-heading")).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && scrollY === 0)).toBe(true);
+    await lastTask.evaluate(element => element.scrollIntoView({ block: "center" }));
+    expect(await page.evaluate(() => window.__viewportReveals)).toEqual(["content-arrive"]);
+
+    await page.locator("#workspace").evaluate(element => element.scrollTo(0, 0));
+    await page.reload();
+    await expect(lastTask).toHaveAttribute("data-reveal", "waiting");
+    await lastTask.evaluate(element => element.focus({ preventScroll: true }));
+    await expect(lastTask).toBeFocused();
+    await expect(lastTask).toHaveAttribute("data-reveal", "settled");
+    await expect(lastTask).toHaveCSS("opacity", "1");
+    await expect(lastTask).toHaveCSS("filter", "none");
+    await expect(lastTask).toHaveCSS("animation-name", "none");
+
+    await page.locator("#workspace").evaluate(element => element.scrollTo(0, 0));
+    await page.reload();
+    await expect(lastTask).toHaveAttribute("data-reveal", "waiting");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator('[data-reveal="waiting"], [data-reveal="visible"]')).toHaveCount(0);
+    await expect(lastTask).toHaveCSS("opacity", "1");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await lastTask.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await expect(lastTask).toHaveCSS("animation-name", "none");
+    expect(await page.evaluate(() => document.querySelectorAll('[data-reveal]:not([data-reveal="container"]) [data-reveal]:not([data-reveal="container"])').length)).toBe(0);
+  });
+
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    test(`scatter exits retain content without transforming fixed ancestors ${reducedMotion}`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.emulateMedia({ reducedMotion });
+      await page.addInitScript(() => {
+        window.__scatterExits = [];
+        document.addEventListener("animationstart", event => {
+          if (event.animationName !== "content-depart") return;
+          const host = event.target.closest('.motion-change[data-transition-state="exiting"]');
+          if (!host) return;
+          const effect = event.target.getAnimations().find(animation => animation.animationName === "content-depart")?.effect;
+          window.__scatterExits.push({ connected: host.isConnected, inert: host.inert, filter: getComputedStyle(host).filter, transform: getComputedStyle(host).transform, frames: effect?.getKeyframes() });
+        });
+      });
+      await page.goto("/desk.html#health");
+      await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+      await page.getByRole("link", { name: "Activities", exact: true }).click();
+      await expect(page.locator(".activity-library")).toBeVisible();
+      await expect(page.locator('[data-transition-state="exiting"]')).toHaveCount(0);
+      const exits = await page.evaluate(() => window.__scatterExits);
+      if (reducedMotion === "reduce") {
+        expect(exits).toEqual([]);
+      } else {
+        expect(exits.length).toBeGreaterThan(1);
+        for (const exit of exits) {
+          expect(exit).toMatchObject({ connected: true, inert: true, filter: "none", transform: "none" });
+          expect(exit.frames.at(-1).filter).toBe("blur(6px)");
+        }
+        expect(new Set(exits.map(exit => exit.frames.at(-1).translate)).size).toBeGreaterThan(1);
+      }
+      const navigation = await page.locator(".desk-navigation").boundingBox();
+      expect(navigation.x + navigation.width / 2).toBeCloseTo(195, 1);
+      expect(navigation.y + navigation.height).toBeCloseTo(888, 1);
+    });
   }
 
   for (const width of [390, 1440]) {
@@ -229,7 +393,8 @@ test.describe("motion system", () => {
     await expect.poll(async () => {
       const link = await active.boundingBox();
       const marker = await active.locator(".selection-marker").boundingBox();
-      return Math.abs(link.x - marker.x) + Math.abs(link.width - marker.width);
+      const border = await active.evaluate(element => parseFloat(getComputedStyle(element).borderLeftWidth) * (parseFloat(getComputedStyle(element).scale) || 1));
+      return Math.abs(link.x + border - marker.x) + Math.abs(link.width - 2 * border - marker.width);
     }).toBeLessThan(1);
     const help = page.getByRole("button", { name: "Help", exact: true });
     await help.hover();
@@ -268,15 +433,16 @@ test.describe("motion system", () => {
     const save = page.getByRole("button", { name: "Save map source", exact: true });
     await expect(save).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    const resting = await save.boundingBox();
+    const layout = () => save.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }));
+    const resting = await layout();
     await save.click();
     await expect(save).toHaveAttribute("aria-busy", "true");
     await expect(save).toBeDisabled();
-    expect((await save.boundingBox()).width).toBeCloseTo(resting.width, 1);
-    expect((await save.boundingBox()).height).toBeCloseTo(resting.height, 1);
+    expect(await layout()).toEqual(resting);
     await page.evaluate(() => window.__releaseMotionAction());
     await expect(save).toHaveAttribute("data-result", "success");
     await expect(save).toBeEnabled();
+    expect(await layout()).toEqual(resting);
     await expect(page.getByRole("status")).toContainText("Map source saved");
     await page.evaluate(() => { window.__deskFail = "save_settings"; });
     await page.getByLabel("Raster PMTiles archive").fill("/synthetic/map.pmtiles");
@@ -286,7 +452,7 @@ test.describe("motion system", () => {
     await expect(save).toHaveAttribute("data-result", "error");
     await expect(page.getByRole("alert")).toContainText("Unable to save");
     await expect(page.getByLabel("Raster PMTiles archive")).toHaveValue("/synthetic/map.pmtiles");
-    expect((await save.boundingBox()).width).toBeCloseTo(resting.width, 1);
+    expect(await layout()).toEqual(resting);
     await page.evaluate(() => { window.__deskFail = ""; });
     await save.press("Enter");
     await page.evaluate(() => window.__releaseMotionAction());
@@ -597,6 +763,7 @@ test('graded performance proposals preview race estimates and only change them a
   await page.getByRole('button',{name:'Apply changes',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('link',{name:'Overview',exact:true}).click();
+  await page.getByRole('button',{name:'Show health details',exact:true}).click();
   const estimates=page.getByRole('region',{name:'Training race estimates'});
   await expect(estimates).toBeVisible();
   expect(await estimates.locator('tbody td').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
@@ -609,7 +776,7 @@ for (const width of [320,1440]) {
       await page.goto(`/desk.html?theme=${theme}&palette=amethyst#health`);
       await expect(page.locator('.trend-chart[data-percent]')).toHaveCount(5);
       await page.evaluate(()=>document.fonts.ready);
-      expect(await page.evaluate(()=>document.fonts.check('16px "Desk Sans"') && document.fonts.check('24px "Desk Serif"'))).toBe(true);
+      expect(await page.evaluate(()=>[...document.fonts].some(font=>font.family==='Outfit' && font.status==='loaded'))).toBe(true);
       const charts=await page.locator('.trend-chart[data-percent]').evaluateAll(figures=>figures.map(figure=>({
         label:figure.querySelector('figcaption span').textContent,
         latest:figure.querySelector('figcaption strong').textContent,
@@ -856,13 +1023,14 @@ for (const width of [320,1440]) {
 
 test('ending a plan requires confirmation and keeps recorded history',async ({page})=>{
   await page.goto('/plan.html');
-  await page.getByRole('button',{name:'End plan',exact:true}).click();
+  await page.getByRole('button',{name:'End current plan',exact:true}).click();
+  await expect(page.getByRole('dialog')).toContainText('Other saved plans are kept.');
   expect(await page.evaluate(()=>window.__deskCalls.filter(call=>call.command==='abort_plan'))).toEqual([]);
   await page.getByRole('button',{name:'Keep plan',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByRole('button',{name:'End plan',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'End plan',exact:true}).click();
-  await page.getByRole('dialog').getByRole('button',{name:'End plan',exact:true}).click();
+  await expect(page.getByRole('button',{name:'End current plan',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'End current plan',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button',{name:'End current plan',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(()=>window.__deskCalls.filter(call=>call.command==='abort_plan'))).toHaveLength(1);
   await page.getByRole('link',{name:'Activities',exact:true}).click();
@@ -919,14 +1087,14 @@ for (const theme of ['light','dark']) {
       await page.goto(`/desk.html?theme=${theme}#training`);
       if (width<=800) await page.locator('.mobile-date-ribbon button').first().click();
       await page.locator(width>800 ? '.week-board .session-tile' : '.day-itinerary .session-tile').first().click();
-      await expect(page.getByRole('complementary',{name:'Session',exact:true})).toBeVisible();
+      await expect(page.getByRole('dialog',{name:'Session',exact:true})).toBeVisible();
       if (width<=800) {
         for(let index=0;index<14;index++) {await page.keyboard.press('Tab');expect(await page.evaluate(()=>Boolean(document.activeElement?.closest('.desk-inspector')))).toBe(true);}
       }
       expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations,'session inspector').toEqual([]);
       await page.screenshot({path:`test-results/desk-session-${theme}-${width}.png`,fullPage:true});
       await page.keyboard.press('Escape');
-      await expect(page.getByRole('complementary',{name:'Session',exact:true})).toHaveCount(0);
+      await expect(page.getByRole('dialog',{name:'Session',exact:true})).toHaveCount(0);
       await expect(page.getByRole('navigation',{name:'Workspaces'})).toBeVisible();
       expect(errors).toEqual([]);
     });
@@ -979,7 +1147,7 @@ test("pointer drag moves a session to the lane under the pointer and never opens
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='move_workout').map(call=>call.args.date))).toHaveLength(1);
   await expect(page.getByRole('status')).toContainText('Moved to');
   // The click the browser fires after the release must not open the inspector.
-  await expect(page.getByRole('complementary',{name:'Session',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('dialog',{name:'Session',exact:true})).toHaveCount(0);
 });
 
 test("month view marks finished sessions like the week board does", async ({page}) => {
@@ -987,13 +1155,14 @@ test("month view marks finished sessions like the week board does", async ({page
   await page.goto('/desk.html#training/month');
   const tiles = page.locator('.month-sessions .session-tile');
   await expect(tiles.first()).toBeVisible();
-  // The fixture links finished workouts to an activity, so their tiles carry
-  // the same Completed mark as on the week board; the kind label is what the
-  // month cell gives up for space, never the mark.
   const done = page.locator('.month-sessions .session-tile [aria-label="Completed"]');
   expect(await done.count()).toBeGreaterThan(0);
   await expect(done.first()).toBeVisible();
-  await expect(page.locator('.month-sessions .session-kind').first()).toBeHidden();
+  await expect(page.locator('.month-sessions .session-kind').first()).toBeVisible();
+  await expect(page.locator('button.month-number')).toHaveCount(0);
+  await expect(page.locator('.month-day').first()).toHaveCSS('border-radius', '0px');
+  await expect(page.locator('.month-day').last()).toHaveCSS('border-bottom-width', '1px');
+  await expect(page.locator('.month-day').last()).toHaveCSS('border-right-width', '1px');
   // Today stays highlighted in the month grid: the number carries
   // aria-current="date" and wears the filled disc, not plain ink.
   const todayCell = page.locator('.month-number[aria-current="date"]');
@@ -1090,8 +1259,14 @@ for (const width of [390,1440]) {
       const context=canvas.getContext('webgl2');
       const bytes=new Uint8Array(context.drawingBufferWidth*context.drawingBufferHeight*4);
       context.readPixels(0,0,context.drawingBufferWidth,context.drawingBufferHeight,context.RGBA,context.UNSIGNED_BYTE,bytes);
+      const probe = document.createElement("canvas");
+      probe.width = probe.height = 1;
+      const paint = probe.getContext("2d");
+      paint.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--desk-action").trim();
+      paint.fillRect(0, 0, 1, 1);
+      const accent = paint.getImageData(0, 0, 1, 1).data;
       let colored=0, fingerprint=0;
-      for(let index=0;index<bytes.length;index+=64) { if(bytes[index+3]>0 && bytes[index+1]>bytes[index]+10 && bytes[index+1]>bytes[index+2]+5) colored++; fingerprint=(fingerprint+bytes[index]*(index+1))%1000000007; }
+      for(let index=0;index<bytes.length;index+=64) { if(bytes[index+3]>0 && Math.abs(bytes[index] - accent[0]) < 30 && Math.abs(bytes[index+1] - accent[1]) < 30 && Math.abs(bytes[index+2] - accent[2]) < 30) colored++; fingerprint=(fingerprint+bytes[index]*(index+1))%1000000007; }
       return {colored,fingerprint};
     });
     await expect.poll(async () => (await pixels()).colored).toBeGreaterThan(10);
@@ -1103,6 +1278,125 @@ for (const width of [390,1440]) {
     await page.screenshot({path:`test-results/desk-map-${width}.png`,fullPage:true});
   });
 }
+
+for (const width of [390, 1440]) {
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    test(`plan centers the current week on every visit ${width}px ${reducedMotion}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion });
+      await page.goto("/desk.html#training");
+      for (let visit = 0; visit < 2; visit++) {
+        await page.getByRole("link", { name: "Plan", exact: true }).click();
+        const list = page.getByRole("region", { name: "Plan weeks", exact: true });
+        const current = list.locator(".is-current");
+        await expect(current).toBeInViewport({ ratio: .9 });
+        await expect.poll(() => list.evaluate(element => {
+          const row = element.querySelector(".is-current");
+          const target = Math.min(element.scrollHeight - element.clientHeight, Math.max(0, row.offsetTop - (element.clientHeight - row.offsetHeight) / 2));
+          return Math.abs(element.scrollTop - target);
+        })).toBeLessThan(2);
+        expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && scrollY === 0)).toBe(true);
+        await list.evaluate(element => { element.scrollTop = element.scrollHeight; });
+        await page.getByRole("link", { name: "Week", exact: true }).click();
+        await expect(list).toHaveCount(0);
+      }
+    });
+  }
+}
+
+for (const viewport of [{ width: 320, height: 640 }, { width: 844, height: 390 }, { width: 1440, height: 900 }]) {
+  test(`content owns scroll without stretching the shell ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/desk.html#health");
+    const workspace = page.locator("#workspace");
+    await page.getByRole("button", { name: "Show health details", exact: true }).click();
+    const navigation = page.getByRole("navigation", { name: "Workspaces" });
+    const before = await navigation.boundingBox();
+    await workspace.hover({ position: { x: 20, y: 100 } });
+    await page.mouse.wheel(0, 800);
+    await expect.poll(() => workspace.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    expect(await navigation.boundingBox()).toEqual(before);
+    expect(await page.evaluate(() => ({ height: document.documentElement.scrollHeight, width: document.documentElement.scrollWidth, scroll: scrollY }))).toEqual({ height: viewport.height, width: viewport.width, scroll: 0 });
+    await page.goto("/desk.html#journal");
+    const library = page.getByRole("region", { name: "Activity history" });
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+    await expect.poll(() => library.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    expect(await library.evaluate(element => element.clientHeight <= document.querySelector("#workspace").clientHeight)).toBe(true);
+    await library.focus();
+    await page.keyboard.press("End");
+    await expect.poll(() => library.evaluate(element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThan(2);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+    await page.goto("/desk.html#training");
+    if (viewport.width <= 800) await page.locator(".mobile-date-ribbon button").first().click();
+    const tiles = page.locator(viewport.width <= 800 ? ".day-itinerary .session-tile" : ".week-board .session-tile");
+    await expect(tiles.first()).toBeVisible();
+    expect(await tiles.evaluateAll(elements => elements.every(element => {
+      const styles = getComputedStyle(element);
+      const children = [...element.children].filter(child => getComputedStyle(child).position !== "absolute");
+      const content = children.reduce((height, child) => height + child.getBoundingClientRect().height, 0);
+      const needed = content + Math.max(0, children.length - 1) * parseFloat(styles.rowGap) + parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      return element.clientHeight <= Math.max(44, needed) + 2;
+    }))).toBe(true);
+  });
+}
+
+test("floating session details blur and lock their background without changing inline activity review", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#training");
+  const opener = page.locator(".week-board .session-tile").first();
+  await opener.click();
+  const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+  const backdrop = page.locator(".inspector-backdrop");
+  await expect(inspector).toBeVisible();
+  await expect(backdrop).toHaveCSS("backdrop-filter", "blur(12px)");
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+  expect(await page.locator(".desk-appbar").evaluate(element => element.inert)).toBe(true);
+  await inspector.getByRole("button", { name: "Back", exact: true }).focus();
+  await page.keyboard.press("Shift+Tab");
+  expect(await inspector.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await backdrop.click({ position: { x: 20, y: 200 } });
+  await expect(inspector).toHaveCount(0);
+  await expect(backdrop).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "auto");
+  expect(await page.locator(".desk-appbar").evaluate(element => element.inert)).toBe(false);
+  await page.goto("/desk.html#journal/1");
+  await expect(page.getByRole("complementary", { name: "Activity review" })).toBeVisible();
+  await expect(backdrop).toHaveCount(0);
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+  await expect(page.getByRole("complementary", { name: "Activity review" })).toHaveCSS("overflow-y", "auto");
+});
+
+test("nested information dialogs retain review drafts and outer scroll ownership", async ({ page }) => {
+  await page.goto("/desk.html?pacingProposal=1#health/pace");
+  await page.getByRole("button", { name: "Review changes", exact: true }).click();
+  const review = page.getByRole("dialog", { name: "Review plan changes", exact: true });
+  const reason = review.getByRole("textbox", { name: "Reason for dismissing (optional)" });
+  await reason.fill("Review after my next workout");
+  const basis = review.getByRole("button", { name: "Estimate basis", exact: true });
+  await basis.click();
+  await expect(page.locator("dialog[open]")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Estimate basis", exact: true })).toHaveCount(0);
+  await expect(reason).toHaveValue("Review after my next workout");
+  await expect(basis).toBeFocused();
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+  await review.getByRole("button", { name: "Dismiss changes", exact: true }).click();
+  await expect(review).toHaveCount(0);
+  await page.getByRole("button", { name: "Adjustment history", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "Adjustment history", exact: true });
+  const entry = history.getByRole("button", { name: /Sharpen quality pace/ });
+  await entry.click();
+  await expect(review).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(entry).toBeFocused();
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+  await page.keyboard.press("Escape");
+  await expect(history).toHaveCount(0);
+  await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "auto");
+});
 
 test("independent shell loads only new presentation", async ({ page }) => {
   const loaded = [];
@@ -1122,7 +1416,7 @@ test("mobile date selection opens a full-screen session and returns to its opene
   await page.locator(".mobile-date-ribbon button").first().click();
   const session = page.locator(".day-itinerary .session-tile").first();
   await session.click();
-  await expect(page.getByRole("complementary", { name: "Session", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Session", exact: true })).toBeVisible();
   await expect.poll(async () => {
     const bounds = await page.locator(".desk-inspector").boundingBox();
     return bounds && Object.fromEntries(Object.entries(bounds).map(([key,value]) => [key,Math.round(value)]));
@@ -1239,10 +1533,153 @@ for (const width of [320, 390, 768, 1440]) {
   });
 }
 
+for (const width of [390, 1440]) {
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    test(`disclosure filters retain values and reverse cleanly ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion });
+      await page.goto("/desk.html#journal");
+      const toggle = page.locator(".filters-toggle");
+      const filters = page.locator("#activity-filters");
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      await expect(filters).toHaveAttribute("inert", "");
+      await expect(filters).toBeHidden();
+      const sampleToggle = async () => {
+        await toggle.evaluate(button => {
+          window.__filterHeights = null;
+          button.addEventListener("click", () => {
+            const panel = document.getElementById("activity-filters");
+            const samples = [panel.getBoundingClientRect().height];
+            const deadline = performance.now() + 600;
+            const sample = () => {
+              samples.push(panel.getBoundingClientRect().height);
+              if (performance.now() < deadline) requestAnimationFrame(sample);
+              else window.__filterHeights = samples;
+            };
+            requestAnimationFrame(sample);
+          }, { once: true, capture: true });
+        });
+      };
+      await sampleToggle();
+      await toggle.focus();
+      await page.keyboard.press("Enter");
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await expect.poll(() => page.evaluate(() => window.__filterHeights)).not.toBeNull();
+      const heights = await page.evaluate(() => window.__filterHeights);
+      const expandedHeight = heights.at(-1);
+      expect(expandedHeight).toBeGreaterThan(100);
+      expect(heights.some(height => height > 1 && height < expandedHeight - 1)).toBe(reducedMotion === "no-preference");
+      await page.screenshot({ path: testInfo.outputPath("filters-open.png") });
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("searchbox", { name: "Search activities" })).toBeFocused();
+      await page.getByRole("searchbox", { name: "Search activities" }).fill("Run");
+      await sampleToggle();
+      await toggle.click();
+      await expect(filters).toHaveAttribute("inert", "");
+      await expect(filters).toHaveAttribute("aria-hidden", "true");
+      await expect.poll(() => page.evaluate(() => window.__filterHeights)).not.toBeNull();
+      const closingHeights = await page.evaluate(() => window.__filterHeights);
+      expect(closingHeights.at(-1)).toBe(0);
+      expect(closingHeights.some(height => height > 1 && height < expandedHeight - 1)).toBe(reducedMotion === "no-preference");
+      await expect(filters).toBeHidden();
+      await toggle.press("Enter");
+      await toggle.press("Enter");
+      await toggle.press("Enter");
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await expect(filters).not.toHaveAttribute("inert", "");
+      await expect(page.getByRole("searchbox", { name: "Search activities" })).toHaveValue("Run");
+      await expect.poll(() => filters.evaluate(element => getComputedStyle(element).height)).not.toBe("0px");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+
+    test(`disclosure health details and conversation drafts stay accessible ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion });
+      await page.goto("/desk.html#health");
+      const toggle = page.locator(".health-detail-toggle");
+      const details = page.locator("#health-details");
+      await expect(details).toBeHidden();
+      await expect(details).toHaveAttribute("inert", "");
+      await toggle.click();
+      await expect(page.getByRole("heading", { name: "Risk contributors" })).toBeVisible();
+      await expect.poll(() => details.evaluate(element => element.getAnimations({ subtree: true }).filter(animation => animation.playState === "running").length)).toBe(0);
+      await expect(toggle.locator(".disclosure-indicator")).toHaveCSS("rotate", "180deg");
+      await page.screenshot({ path: testInfo.outputPath("health-details-open.png") });
+      await details.getByRole("button").first().focus();
+      await toggle.evaluate(button => button.click());
+      await expect(toggle).toBeFocused();
+      await expect(details).toHaveAttribute("inert", "");
+      await expect(details).toBeHidden();
+      await page.keyboard.press("Tab");
+      expect(await details.evaluate(element => element.contains(document.activeElement))).toBe(false);
+      await page.getByRole("link", { name: "Pain journal", exact: true }).click();
+      await page.getByRole("button", { name: "Log pain", exact: true }).first().click();
+      await page.getByRole("combobox", { name: "Body region", exact: true }).selectOption("knee.left");
+      await page.getByRole("button", { name: "Save pain entry" }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      const discuss = page.getByRole("button", { name: "Discuss episode" });
+      await expect(discuss).toBeVisible();
+      await expect(page.locator(".episode-chat")).toHaveCount(0);
+      await discuss.click();
+      const question = page.getByRole("textbox", { name: "Your question" });
+      await question.fill("Keep this unfinished question");
+      await page.getByRole("checkbox", { name: /I agree to send/ }).check();
+      await discuss.click();
+      await expect(page.getByRole("region", { name: "Episode conversation" })).toHaveCount(0);
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeFocused();
+      await discuss.click();
+      await expect(question).toHaveValue("Keep this unfinished question");
+      await expect(page.getByRole("checkbox", { name: /I agree to send/ })).toBeChecked();
+      await expect(page.getByRole("button", { name: "Send question" })).toBeEnabled();
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "ask_assistant").length)).toBe(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+
+    test(`view changes reveal filtered results without transforming their container ${reducedMotion} ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion });
+      await page.goto("/desk.html#journal");
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      await page.getByRole("button", { name: "Filters", exact: true }).click();
+      await page.locator(".activity-library").evaluate(library => {
+        window.__resultArrival = [];
+        const observer = new MutationObserver(records => {
+          for (const record of records) {
+            for (const node of record.addedNodes) {
+              if (!(node instanceof HTMLElement) || !node.matches(".motion-change")) continue;
+              const sample = () => {
+                const style = getComputedStyle(node);
+                window.__resultArrival.push({ opacity: Number(style.opacity), transform: style.transform, filter: style.filter });
+                if (Number(style.opacity) < 1) requestAnimationFrame(sample);
+              };
+              sample();
+              observer.disconnect();
+            }
+          }
+        });
+        observer.observe(library, { childList: true });
+      });
+      await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
+      await expect(page.locator(".activity-row")).toHaveCount(6);
+      await expect.poll(() => page.evaluate(() => window.__resultArrival.at(-1)?.opacity)).toBe(1);
+      const frames = await page.evaluate(() => window.__resultArrival);
+      expect(frames.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(reducedMotion === "no-preference");
+      expect(frames.every(frame => frame.transform === "none" && frame.filter === "none")).toBe(true);
+      await page.getByRole("button", { name: "Reset filters" }).click();
+      await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("garmin");
+      await page.getByRole("button", { name: "Reset filters" }).click();
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      await expect(page.locator(".activity-library > .motion-change")).toHaveCount(1);
+      await expect(page.locator(".activity-library > .motion-change")).not.toHaveAttribute("inert", "");
+    });
+  }
+}
+
 test("Activities list hides filters until revealed and opens recorded splits", async ({ page }) => {
   await page.goto("/desk.html#journal");
   await expect(page.locator(".activity-row")).toHaveCount(9);
-  await expect(page.locator(".journal-tools")).toHaveCount(0);
+  await expect(page.locator("#activity-filters")).toBeHidden();
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Sport", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
@@ -1340,17 +1777,19 @@ test("calendar settings never publish on read and retain blank credentials and s
 
 test("clearing training data needs confirmation and never touches recorded history", async ({ page }) => {
   await page.goto("/desk.html#settings/training");
-  await expect(page.getByRole("button", { name: "Clear training plans", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Clear training plans", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Only end the current plan" })).toHaveAttribute("href", "#training/plan");
+  await expect(page.getByRole("button", { name: "Remove all saved plans", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Remove all saved plans", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Pending plan offers are also removed. This cannot be undone.");
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toEqual([]);
-  await page.getByRole("button", { name: "Keep my plan", exact: true }).click();
+  await page.getByRole("button", { name: "Keep my plans", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Clear training plans", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Clear plans", exact: true }).click();
+  await page.getByRole("button", { name: "Remove all saved plans", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Remove all saved plans", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toHaveLength(1);
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "delete_pain_entry" || call.command === "clear_pain_messages"))).toBe(false);
-  await expect(page.getByRole("button", { name: "Clear training plans", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Remove all saved plans", exact: true })).toBeDisabled();
 });
 
 test("plan import only overwrites after explicit confirmation", async ({ page }) => {
@@ -1388,6 +1827,46 @@ test("removing an assistant clears its key without deleting pain data", async ({
 });
 
 for (const width of [320, 1440]) {
+  test(`information dialogs preserve focus and scroll locks at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    for (const [route, title, content] of [
+      ["health", "Data for readiness", "Readiness measurements"],
+      ["health", "Training boundaries", "Decreasing ceiling"],
+      ["health", "Estimate basis", "Riegel model"],
+      ["health/pace", "About pace insights", "Rep boundaries are inferred"],
+      ["settings/watch", "Connection diagnostics", "Check COROS API"],
+      ["settings/calendar", "Local calendar file", "Reveal calendar"],
+      ["help", "A recent workout is missing", "Check watch connection"],
+    ]) {
+      await page.goto(`/desk.html#${route}`);
+      if (route === "health" && title !== "Data for readiness") {
+        const detailsToggle = page.getByRole("button", { name: /^(Show|Hide) health details$/ });
+        await expect(detailsToggle).toBeVisible();
+        if (await detailsToggle.getAttribute("aria-expanded") === "false") await detailsToggle.click();
+      }
+      const trigger = page.getByRole("button", { name: title, exact: true });
+      await expect(trigger).toHaveCSS("text-align", "center");
+      await expect(trigger.locator(".button-content")).toHaveCSS("justify-content", "center");
+      await expect.poll(() => trigger.evaluate(element => {
+        const button = element.getBoundingClientRect();
+        const content = element.querySelector(".button-content").getBoundingClientRect();
+        return Math.max(Math.abs(content.x + content.width / 2 - button.x - button.width / 2), Math.abs(content.y + content.height / 2 - button.y - button.height / 2));
+      })).toBeLessThan(1);
+      await trigger.click();
+      const dialog = page.getByRole("dialog", { name: title, exact: true });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText(content);
+      await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+      expect(await dialog.evaluate(element => getComputedStyle(element, "::backdrop").backdropFilter)).toBe("blur(12px)");
+      await expect(page.locator("details")).toHaveCount(0);
+      expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "auto");
+    }
+  });
+
   test(`Settings and Help are accessible at ${width}px`, async ({ page }) => {
     test.setTimeout(90000);
     await page.setViewportSize({width,height:900});
@@ -1395,14 +1874,13 @@ for (const width of [320, 1440]) {
       await page.goto(`/desk.html?theme=${theme}#settings${section}`);
       await expect(page.locator(".desk-loading")).toHaveCount(0);
       await expect(page.getByRole("heading", {name:"Settings",exact:true})).toBeVisible();
-      for (const detail of await page.locator(".settings-editor details:not([open])").all()) await detail.locator(":scope > summary").click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${section}`).toBe(true);
       expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa","wcag21aa"]).analyze()).violations, `${theme} ${section}`).toEqual([]);
       await page.screenshot({path:`test-results/glass-settings${section.replace("/", "-")}-${theme}-${width}.png`,fullPage:true});
     }
     await page.goto("/desk.html#help");
     await page.getByRole("searchbox", {name:"Search help"}).fill("missing");
-    await expect(page.locator(".help-articles details")).toHaveCount(1);
+    await expect(page.locator(".help-articles > .dialog-action")).toHaveCount(1);
     await page.getByText("A recent workout is missing", {exact:true}).click();
     await page.getByRole("link", {name:"Check watch connection"}).click();
     await expect(page.getByRole("heading", {name:"Watch connection",exact:true})).toBeVisible();
@@ -1575,12 +2053,12 @@ test("design system primitives share type, control geometry and bounded glass", 
   await expect(page.getByRole("button", { name: "Save boundaries" })).toBeVisible();
   const controls = await page.locator('.settings-editor :is(input[type="number"], .desk-button)').evaluateAll(elements => elements.map(element => {
     const style = getComputedStyle(element);
-    return { font: style.fontFamily, radius: style.borderRadius, height: element.getBoundingClientRect().height, blur: style.backdropFilter };
+    return { font: style.fontFamily, radius: style.borderRadius, height: element.getBoundingClientRect().height, blur: style.backdropFilter, button: element.matches(".desk-button") };
   }));
   expect(controls.length).toBeGreaterThan(10);
   for (const control of controls) {
-    expect(control.font).toContain("Desk Sans");
-    expect(control.radius).toBe("8px");
+    expect(control.font).toContain("Outfit");
+    expect(control.radius).toBe(control.button ? "999px" : "14px");
     expect(control.height).toBe(44);
     expect(control.blur).toBe("none");
   }
