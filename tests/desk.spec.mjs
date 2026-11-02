@@ -5,29 +5,31 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
 test.describe("motion system", () => {
-  test("primary action depth is bounded, interruptible and preference-aware", async ({ page }) => {
+  test("all action tones share bounded press feedback without moving their labels", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#health");
     const action = page.getByRole("button", { name: "Log pain", exact: true });
-    const content = action.locator(".button-content");
+    await expect(page.locator(".desk-toolbar")).toHaveAttribute("data-reveal", "settled");
     const rest = await action.boundingBox();
     await action.hover({ position: { x: rest.width - 4, y: 4 } });
-    await expect.poll(() => content.evaluate(element => Number(element.style.transform.match(/rotateY\(([-.\d]+)deg\)/)?.[1] ?? 0))).toBeGreaterThan(.5);
-    const angles = await content.evaluate(element => [...element.style.transform.matchAll(/rotate[XY]\(([-.\d]+)deg\)/g)].map(match => Math.abs(Number(match[1]))));
-    expect(angles).toHaveLength(2);
-    expect(angles.every(angle => angle <= 1.5)).toBe(true);
+    await expect(action.locator(".button-content")).toHaveCSS("transform", "none");
     expect(await action.boundingBox()).toEqual(rest);
-    await action.dispatchEvent("pointercancel", { pointerType: "mouse" });
-    await expect.poll(() => content.evaluate(element => element.style.transform)).not.toMatch(/rotate[XY]|translateY/);
-    await action.hover({ position: { x: 4, y: 4 } });
-    await expect.poll(() => content.evaluate(element => element.style.transform)).toContain("rotateY");
+    for (const control of [action, page.getByRole("button", { name: "Settings", exact: true })]) {
+      await control.hover();
+      await page.mouse.down();
+      await expect(control).toHaveCSS("scale", "0.98");
+      await expect(control.locator(".button-content")).toHaveCSS("transform", "none");
+      await page.mouse.move(0, 0);
+      await page.mouse.up();
+      await expect(control).toHaveCSS("scale", "none");
+    }
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(content).toHaveCSS("transform", "none");
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    await action.dispatchEvent("pointermove", { pointerType: "touch", clientX: rest.x + 4, clientY: rest.y + 4 });
-    await expect.poll(() => content.evaluate(element => element.style.transform)).not.toMatch(/rotate[XY]|translateY/);
+    await action.hover();
+    await page.mouse.down();
+    await expect(action).toHaveCSS("scale", "1");
     await page.mouse.move(20, 200);
+    await page.mouse.up();
     await action.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog", { name: "Log pain" })).toBeVisible();
@@ -42,9 +44,8 @@ test.describe("motion system", () => {
         await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
         await page.goto(`/desk.html?theme=${theme}#health`);
         await expect(page.locator(".health-verdict")).toBeVisible();
-        for (const selector of [".desk-toolbar", ".health-verdict", ".health-analysis"]) {
-          await expect(page.locator(selector)).toHaveCSS("backdrop-filter", /blur\(/);
-        }
+        await expect(page.locator(".desk-toolbar")).toHaveCSS("backdrop-filter", /blur\(/);
+        for (const selector of [".health-verdict", ".health-analysis"]) await expect(page.locator(selector)).toHaveCSS("backdrop-filter", "none");
         // The header's glass sits on a ::before layer, not on the header
         // itself: backdrop-filter on the header would make it the containing
         // block for the fixed mobile nav island and pin it to the top bar.
@@ -133,8 +134,8 @@ test.describe("motion system", () => {
           const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
           expect(events[1].width).toBeCloseTo(events[0].width, 3);
           expect(events[1].height).toBeCloseTo(events[0].height, 3);
-          expect(events[1].elapsed).toBe(.42);
-          expect(events[0].filter).toContain("blur(");
+          expect(events[1].elapsed).toBe(.32);
+          expect(events[0].filter).toBe("none");
           await expect(verdict).toHaveAttribute("data-reveal", "settled");
           await expect(verdict).toHaveCSS("filter", "none");
           await verdict.hover();
@@ -150,7 +151,7 @@ test.describe("motion system", () => {
         const bounds = await selector.boundingBox();
         await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
         await page.mouse.down();
-        await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.96");
+        await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.98");
         expect(await selector.evaluate(element => element.offsetWidth)).toBe(Math.round(bounds.width));
         await page.mouse.up();
         await expect(selector).toHaveCSS("scale", "none");
@@ -160,7 +161,7 @@ test.describe("motion system", () => {
         const editor = page.locator(".settings-editor");
         await expect(editor).toBeVisible();
         if (reducedMotion === "no-preference") {
-          await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "settings-editor" && event.type === "animationend").length)).toBe(1);
+          await expect.poll(() => editor.locator("header").getAttribute("data-reveal")).toBe("settled");
         }
         const before = await page.evaluate(() => window.__contentReveals.length);
         await page.getByLabel("Raster PMTiles archive").fill("/synthetic/new-map.pmtiles");
@@ -516,12 +517,18 @@ for (const [width, pointCount, span] of [[390, 2, .001], [1440, 1001, .5]]) {
     expect(await progress()).toBeCloseTo(.5, 1);
     expect(await page.evaluate(() => window.__routeTestMap.getPaintProperty('route-outline','line-gradient')[3])).toBeCloseTo(.5, 1);
     const pixels = () => page.locator('.maplibregl-canvas').evaluate(canvas => {
+      const probe = document.createElement('canvas');
+      probe.width = probe.height = 1;
+      const paint = probe.getContext('2d');
+      paint.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--desk-action').trim();
+      paint.fillRect(0, 0, 1, 1);
+      const accent = paint.getImageData(0, 0, 1, 1).data;
       const context = canvas.getContext('webgl2');
       const bytes = new Uint8Array(context.drawingBufferWidth * context.drawingBufferHeight * 4);
       context.readPixels(0, 0, context.drawingBufferWidth, context.drawingBufferHeight, context.RGBA, context.UNSIGNED_BYTE, bytes);
       const counts = {start:0, end:0};
       for (let index = 0; index < bytes.length; index += 4) {
-        if (bytes[index + 3] && bytes[index + 1] > bytes[index] + 30 && bytes[index + 1] > bytes[index + 2] + 15) {
+        if (bytes[index + 3] > 240 && [0, 1, 2].every(channel => Math.abs(bytes[index + channel] - accent[channel]) < 20)) {
           counts[(index / 4) % context.drawingBufferWidth < context.drawingBufferWidth / 2 ? 'start' : 'end']++;
         }
       }
@@ -910,7 +917,8 @@ for (const theme of ['light','dark']) {
         await page.screenshot({path:`test-results/desk-${route.replace('/','-')}-${theme}-${width}.png`,fullPage:true});
       }
       await page.goto(`/desk.html?theme=${theme}#training`);
-      await page.locator(width>800 ? '.week-board .session-tile.movable' : '.day-itinerary .session-tile.movable').first().click();
+      if (width<=800) await page.locator('.mobile-date-ribbon button').first().click();
+      await page.locator(width>800 ? '.week-board .session-tile' : '.day-itinerary .session-tile').first().click();
       await expect(page.getByRole('complementary',{name:'Session',exact:true})).toBeVisible();
       if (width<=800) {
         for(let index=0;index<14;index++) {await page.keyboard.press('Tab');expect(await page.evaluate(()=>Boolean(document.activeElement?.closest('.desk-inspector')))).toBe(true);}
@@ -1381,13 +1389,16 @@ test("removing an assistant clears its key without deleting pain data", async ({
 
 for (const width of [320, 1440]) {
   test(`Settings and Help are accessible at ${width}px`, async ({ page }) => {
+    test.setTimeout(90000);
     await page.setViewportSize({width,height:900});
-    for (const section of ["", "/watch", "/appearance", "/thresholds", "/training", "/calendar", "/assistant", "/maps", "/about"]) {
-      await page.goto(`/desk.html#settings${section}`);
+    for (const theme of ["light", "dark"]) for (const section of ["", "/watch", "/appearance", "/thresholds", "/training", "/calendar", "/assistant", "/maps", "/about"]) {
+      await page.goto(`/desk.html?theme=${theme}#settings${section}`);
       await expect(page.locator(".desk-loading")).toHaveCount(0);
       await expect(page.getByRole("heading", {name:"Settings",exact:true})).toBeVisible();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), section).toBe(true);
-      expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa","wcag21aa"]).analyze()).violations, section).toEqual([]);
+      for (const detail of await page.locator(".settings-editor details:not([open])").all()) await detail.locator(":scope > summary").click();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${section}`).toBe(true);
+      expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa","wcag21aa"]).analyze()).violations, `${theme} ${section}`).toEqual([]);
+      await page.screenshot({path:`test-results/glass-settings${section.replace("/", "-")}-${theme}-${width}.png`,fullPage:true});
     }
     await page.goto("/desk.html#help");
     await page.getByRole("searchbox", {name:"Search help"}).fill("missing");
@@ -1466,3 +1477,163 @@ test("the plain notice carries the same countdown ring around its dismiss button
   await expect(page.getByRole("status")).toContainText("Training boundaries saved");
   await expect(page.locator(".desk-notice .stage-ring")).toBeVisible();
 });
+
+for (const width of [390, 1440]) {
+  test(`unified notifications do not overlap progress or navigation ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/desk.html#settings/thresholds");
+    await emitStage(page, { op: "sync", target: "coros", state: "working" });
+    await page.getByRole("button", { name: "Save boundaries" }).click();
+    const progress = page.getByRole("status", { name: "Plan sync progress" });
+    const notice = page.locator(".desk-notice").filter({ hasText: "Training boundaries saved." });
+    await expect(progress).toBeVisible();
+    await expect(notice).toBeVisible();
+    const progressBox = await progress.boundingBox();
+    const noticeBox = await notice.boundingBox();
+    expect(progressBox.y + progressBox.height <= noticeBox.y || noticeBox.y + noticeBox.height <= progressBox.y).toBe(true);
+    expect(progressBox.x).toBeGreaterThanOrEqual(0);
+    expect(noticeBox.x + noticeBox.width).toBeLessThanOrEqual(width);
+    if (width === 390) {
+      const navigation = await page.locator(".desk-navigation").boundingBox();
+      expect(Math.max(progressBox.y + progressBox.height, noticeBox.y + noticeBox.height)).toBeLessThan(navigation.y);
+    }
+  });
+}
+
+test("unified notifications queue distinct messages and deduplicate background failures", async ({ page }) => {
+  await page.goto("/desk.html#settings/thresholds");
+  await page.getByRole("button", { name: "Save boundaries" }).click();
+  await expect(page.locator(".desk-notice")).toContainText("Training boundaries saved.");
+  await page.evaluate(() => {
+    window.__deskEmit("sync://completed", { ok: false });
+    window.__deskEmit("sync://completed", { ok: false });
+  });
+  await expect(page.locator(".desk-notice")).toHaveCount(1);
+  await expect(page.locator(".desk-notice")).toContainText("Training boundaries saved.");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(page.locator(".desk-notice")).toContainText("Background sync failed.");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(page.locator(".desk-notice")).toHaveCount(0);
+});
+
+test("unified notifications remain dismissible above a native modal without losing form state", async ({ page }) => {
+  await page.goto("/desk.html#health");
+  await page.getByRole("button", { name: "Log pain", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Log pain" });
+  await dialog.getByLabel("Notes", { exact: true }).fill("Keep this draft");
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: false }));
+  const notice = dialog.locator(".notification-viewport .desk-notice");
+  await expect(notice).toContainText("Background sync failed.");
+  await notice.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(notice).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  const notes = dialog.getByRole("textbox", { name: "Notes", exact: true });
+  await expect(notes).toHaveValue("Keep this draft");
+  await expect(notes).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("hidden");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => document.body.style.overflow)).not.toBe("hidden");
+});
+
+test("design system appearance updates cached and native control themes together", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.theme", "dark"));
+  await page.goto("/desk.html#settings/appearance");
+  await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await page.getByRole("radio", { name: "Dark", exact: true }).check();
+  await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.theme"))).toBe("dark");
+  await page.getByRole("radio", { name: "Glacier", exact: true }).check();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.palette"))).toBe("glacier");
+  await page.getByRole("radio", { name: "System", exact: true }).check();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+});
+
+test("unified notifications preserve an earlier Undo behind newer action feedback", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/desk.html");
+  await page.getByRole("button", { name: "Next week", exact: true }).click();
+  await page.locator(".week-board .session-tile.movable").first().click();
+  await page.getByRole("button", { name: "Skip session", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
+  await page.locator(".week-board .session-tile.movable").first().click();
+  await page.getByRole("button", { name: "Copy prescription", exact: true }).click();
+  await expect(page.locator(".desk-notice")).toContainText("Session copied.");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(page.locator(".desk-notice")).toContainText("Session skipped");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "set_workout_skipped").map(call => call.args.skipped))).toEqual([true, false]);
+});
+
+test("design system primitives share type, control geometry and bounded glass", async ({ page }) => {
+  await page.goto("/desk.html#settings/thresholds");
+  await expect(page.getByRole("button", { name: "Save boundaries" })).toBeVisible();
+  const controls = await page.locator('.settings-editor :is(input[type="number"], .desk-button)').evaluateAll(elements => elements.map(element => {
+    const style = getComputedStyle(element);
+    return { font: style.fontFamily, radius: style.borderRadius, height: element.getBoundingClientRect().height, blur: style.backdropFilter };
+  }));
+  expect(controls.length).toBeGreaterThan(10);
+  for (const control of controls) {
+    expect(control.font).toContain("Desk Sans");
+    expect(control.radius).toBe("8px");
+    expect(control.height).toBe(44);
+    expect(control.blur).toBe("none");
+  }
+  const drift = await page.evaluate(() => {
+    const violations = [];
+    const visit = rules => {
+      for (const rule of rules) {
+        if (rule.cssRules) visit(rule.cssRules);
+        if (!rule.style) continue;
+        for (const property of ["font-size", "font-weight", "z-index"]) {
+          const value = rule.style.getPropertyValue(property).trim();
+          if (/^\d/.test(value)) violations.push(`${rule.selectorText}: ${property}: ${value}`);
+        }
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      const identifier = sheet.ownerNode?.getAttribute("data-vite-dev-id") ?? sheet.href ?? "";
+      if (/\/src\/desk\/(desk|interaction)\.css/.test(identifier)) visit(sheet.cssRules);
+    }
+    return violations;
+  });
+  expect(drift).toEqual([]);
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`glass system palette states remain legible and consistent in ${theme}`, async ({ page }) => {
+    test.setTimeout(90000);
+    await page.setViewportSize({ width: 390, height: 900 });
+    for (const palette of ["reference", "amethyst", "glacier", "evergreen", "sakura", "ember"]) {
+      await page.goto(`/desk.html?theme=${theme}&palette=${palette}#settings/thresholds`);
+      const primary = page.getByRole("button", { name: "Save boundaries" });
+      const secondary = page.getByRole("button", { name: "Restore defaults", exact: true });
+      await expect(primary).toBeVisible();
+      await primary.scrollIntoViewIfNeeded();
+      const rest = await primary.evaluate(element => getComputedStyle(element).backgroundColor);
+      await primary.hover();
+      const hover = await primary.evaluate(element => getComputedStyle(element).backgroundColor);
+      expect(hover, palette).not.toBe(rest);
+      expect((await new AxeBuilder({ page }).include(".settings-editor").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, `${palette} hover`).toEqual([]);
+      await page.mouse.down();
+      expect(await primary.evaluate(element => getComputedStyle(element).backgroundColor), palette).not.toBe(hover);
+      expect((await new AxeBuilder({ page }).include(".settings-editor").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, `${palette} pressed`).toEqual([]);
+      await page.mouse.move(0, 0);
+      await page.mouse.up();
+      await secondary.click();
+      const dialog = page.getByRole("dialog", { name: "Restore training defaults?" });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toHaveCSS("backdrop-filter", /blur/);
+      expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, `${palette} dialog`).toEqual([]);
+      await page.screenshot({ path: `test-results/glass-system-${theme}-${palette}.png` });
+      await page.keyboard.press("Escape");
+      await expect(secondary).toBeFocused();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), palette).toBe(true);
+    }
+  });
+}

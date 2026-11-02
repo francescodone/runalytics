@@ -31,15 +31,17 @@ distributed.
   session's fastest and slowest target-relative work reps, with an inspectable
   rep table, outdated-session indicators, activity links and the next workout.
   Pace changes still use the existing review-and-approve workflow.
-- **Navigation**: Training, Journal and Health are the three primary workspaces.
+- **Navigation**: Training, Activities and Health are the three primary workspaces.
   Desktop has a top application bar; mobile has three bottom destinations.
   Settings and Help are header utilities. Settings uses a searchable directory
   and focused task editors, not a second sidebar. The independent React
-  presentation pairs locally bundled Source Serif 4 and Source Sans 3 with
-  translucent rounded chrome, stronger palette tints and restrained spring
-  transitions. Charts retain green evidence colors and fading fills. Reduced
-  motion, reduced transparency and increased contrast have explicit fallbacks.
-  Both fonts are OFL-licensed; appearance and palette preferences remain available.
+  presentation uses locally bundled Source Sans 3 with silver/light and
+  graphite/dark glass, six accent palettes, shared spacing and consistent
+  control states. Buttons share press feedback; content uses one reveal pattern.
+  Charts remain clear, without individual blur layers. Reduced motion, reduced
+  transparency, increased contrast and forced colors have explicit fallbacks.
+  The font is OFL-licensed. See the
+  [Glass Design System](plan/ui-system-unification.md) for the current UI contract.
 - **Plans**: 5K / 10K / half / marathon plans to a target date from your
   threshold pace, weekly frequency, long-run day, and mileage-increase method
   (+5 / +8 / +12 % per week). Geometric ramp with 3-build/1-down cycles,
@@ -158,24 +160,20 @@ preview is already running. `npm run build` checks TypeScript and production
 page entries, including Support. Screenshots and failure traces go into the
 ignored `test-results/` directory.
 
-The original redesign acceptance passed 89 tests. On 31/10/2026, a full 97-test
-run passed 87; six mobile visual-matrix tests and four legacy daily-signal tests
-failed because they require a workout today while the Saturday fixture is a
-rest day. Those existing date-dependent assumptions remain unchanged.
-
-After the adaptation/material changes, production build and 90 selected browser
-tests pass out of 100 total, excluding those ten previously diagnosed cases.
-Run that verification with `npm run build && npx playwright test --grep-invert
-'visual matrix (light|dark) (320|390|768)px|daily signal labels'`.
-The updated animated mobile-inspector geometry test also passes independently.
-Backend verification passes 19 pacing/adaptation, 15 lap and 13 scoring tests.
-Replacement coverage includes ten views at 320/390/768/1440px in light/dark
-themes, Axe checks, keyboard focus, map pixels/zoom, failed drafts, Undo,
-reviewed mutations, credential preservation and legacy deep links.
+The **Verify UI system unification** VS Code task runs the production build,
+the complete browser suite without exclusions, and `git diff --check`. It writes
+`test-results/ui-system-report.json` and failure artifacts under
+`test-results/ui-system`. Coverage includes 320/390/768/1440px light/dark layouts,
+all settings editors and collapsed diagnostics, all six palettes' interaction
+states, Axe checks, keyboard focus, touch dismissal, accessibility preferences,
+map pixels/zoom, failed drafts, Undo, reviewed mutations, credential preservation
+and legacy deep links.
 The old suite opts into a development-only `X-Runalytics-Legacy: 1` header;
 ordinary requests and all production entry pages load Training Desk.
 
-See the [architecture comparison and acceptance record](plan/training-desk-redesign.md).
+See the [Glass Design System](plan/ui-system-unification.md) for the maintained
+UI reference and verification commands. The synthetic preview is available at
+`http://localhost:1500/__desk_preview.html` when the **Redesign preview** task runs.
 Live COROS, physical iPhone, updater and offline archive operation remain native
 acceptance checks, not claims made by the synthetic browser suite.
 

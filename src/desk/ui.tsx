@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck } from "@tabler/icons-react";
 import { motion, useDragControls, useIsPresent } from "motion/react";
-import { markActionOrigin, Presence, tempo, useActionDepth, useSurfaceMotion } from "./interaction";
+import { markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
+import { lockPageScroll } from "./overlays";
 
 export function Button({ children, tone = "normal", busy, className = "", onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean }) {
   const button = useRef<HTMLButtonElement>(null);
   const [result, setResult] = useState<"success" | "error" | null>(null);
-  const depth = useActionDepth(button, tone === "primary" && !props.disabled && !busy && !result);
   useEffect(() => {
     const element = button.current!;
     let timer: ReturnType<typeof setTimeout>;
@@ -20,7 +20,7 @@ export function Button({ children, tone = "normal", busy, className = "", onClic
   }, []);
   useEffect(() => { if (busy) setResult(null); }, [busy]);
   return <button type="button" {...props} ref={button} onClick={event => { markActionOrigin(event.currentTarget); onClick?.(event); }} disabled={props.disabled || busy} className={`desk-button ${tone} ${className}`} aria-busy={busy || undefined} data-result={result ?? undefined}>
-    <motion.span className="button-content" style={tone === "primary" ? depth : undefined}>{children}</motion.span>
+    <span className="button-content">{children}</span>
     <Presence>{busy ? <motion.span key="pending" className="button-progress" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconLoader2 size={18} className="spinner" /></motion.span>
       : result && <motion.span key={result} className="button-result" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}>{result === "success" ? <IconCheck size={20} /> : <IconAlertCircle size={20} />}</motion.span>}</Presence>
   </button>;
@@ -62,12 +62,11 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockPageScroll();
     element.showModal();
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current(); };
     element.addEventListener("cancel", cancel);
-    return () => { element.removeEventListener("cancel", cancel); element.close(); document.body.style.overflow = overflow; const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.querySelector<HTMLElement>(".workspace-heading h1"); target?.focus({ preventScroll: true }); };
+    return () => { element.removeEventListener("cancel", cancel); element.close(); unlock(); const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.querySelector<HTMLElement>(".workspace-heading h1"); target?.focus({ preventScroll: true }); };
   }, []);
   return <motion.dialog ref={dialog} aria-label={title} className={`desk-dialog ${wide ? "wide" : ""}`} data-state={present ? "open" : "closing"}
     initial={surface.initial} animate={surface.animate} exit={surface.exit}
@@ -90,17 +89,17 @@ export function Inspector({ title, children, onClose }: { title: string; childre
     const element = host.current!;
     const mobile = matchMedia("(max-width: 800px)");
     const inertElements = new Map<HTMLElement, boolean>();
-    const originalOverflow = document.body.style.overflow;
-    const restore = () => { inertElements.forEach((inert, node) => { node.inert = inert; }); inertElements.clear(); document.body.style.overflow = originalOverflow; };
+    let unlock: (() => void) | undefined;
+    const restore = () => { inertElements.forEach((inert, node) => { node.inert = inert; }); inertElements.clear(); unlock?.(); unlock = undefined; };
     const update = () => {
       restore();
       if (!mobile.matches) return;
       for (let ancestor: HTMLElement | null = element; ancestor?.parentElement; ancestor = ancestor.parentElement) {
         for (const sibling of ancestor.parentElement.children) {
-          if (sibling instanceof HTMLElement && sibling !== ancestor) { inertElements.set(sibling, sibling.inert); sibling.inert = true; }
+          if (sibling instanceof HTMLElement && sibling !== ancestor && !sibling.matches(".notification-viewport")) { inertElements.set(sibling, sibling.inert); sibling.inert = true; }
         }
       }
-      document.body.style.overflow = "hidden";
+      unlock = lockPageScroll();
     };
     const keys = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); close.current(); }

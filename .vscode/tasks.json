@@ -43,7 +43,7 @@
 		{
 			"label": "Verify glass interaction rewrite",
 			"type": "shell",
-			"command": "npx playwright test tests/desk.spec.mjs --grep 'primary action depth|touch surfaces track|reduced motion keeps|selection continuity|semantic reveals|frosted surfaces' --workers=1",
+			"command": "npx playwright test tests/desk.spec.mjs --grep 'all action tones|glass system palette states|touch surfaces track|reduced motion keeps|selection continuity|semantic reveals|frosted surfaces' --workers=1",
 			"isBackground": false,
 			"group": "test"
 		},
@@ -80,6 +80,14 @@
 			"type": "shell",
 			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline -- --skip calendar::tests::quality_sessions_are_named_and_easy_steps_have_no_upper_bound && npm run build && npx playwright test tests/desk.spec.mjs --grep 'benchmark|schedule mutations|reset previews|plan creation|pacing' --output test-results-benchmark-regressions && git diff --check",
 			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify UI system unification",
+			"type": "shell",
+			"command": "npm run build && PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/ui-system-report.json npm run test:ui -- --reporter=dot,json --output=test-results/ui-system && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
 			"group": "test"
 		}
 	]

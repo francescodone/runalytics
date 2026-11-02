@@ -1,5 +1,9 @@
 # Runna (iOS) — UI/UX investigation
 
+> External product research, not Runalytics UI guidance. Application design is
+> governed by the [Glass Design System](../../plan/ui-system-unification.md).
+> Recommendations in this research do not override that reference.
+
 **App:** Runna v8.59.0 (`com.runbuddy.prod`) on iPhone 16 / iOS 27.0.1
 **Investigated:** 2026-10-26
 **Companion evidence:** `screens/`, `EVIDENCE-*.txt` in this folder

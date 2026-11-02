@@ -1,8 +1,13 @@
-# Runna parity backlog
+# Feature Research Backlog
 
-Consolidated, re-verified backlog of everything that would make Runalytics behave
-and look as close to Runna as our deliberate-divergence rules allow — features
-(`RUNNA-FEATURE-PARITY.md`) and UI/UX (`RUNNA-UIUX-PARITY.md`), desktop and mobile.
+Historical feature research and implementation notes for Runalytics. The
+[feature backlog](RUNNA-FEATURE-PARITY.md) remains relevant to training behavior.
+The UI-parity backlog and U-numbered requirements are retired. Current visuals,
+navigation, control states, spacing and motion are governed only by the
+[Glass Design System](../../plan/ui-system-unification.md).
+
+The wave ordering, U-number references and verification counts below describe
+the historical implementation, not current UI requirements or acceptance results.
 
 Sources: the six research phases in [`../runna-ux/`](../runna-ux/) (each phase's
 "What this changes for Runalytics" section), re-checked line-by-line against the
@@ -16,7 +21,8 @@ the phase docs carry the evidence and the quote audit.
 | File | Contents |
 | --- | --- |
 | [`RUNNA-FEATURE-PARITY.md`](./RUNNA-FEATURE-PARITY.md) | F-nn — logic, state model, plan engine, insights, integrations |
-| [`RUNNA-UIUX-PARITY.md`](./RUNNA-UIUX-PARITY.md) | U-nn — layout, copy, navigation, accessibility; Desktop + Mobile delta per item |
+| [Glass Design System](../../plan/ui-system-unification.md) | Current materials, states, motion, spacing, responsive behavior and verification |
+| [`RUNNA-UIUX-PARITY.md`](./RUNNA-UIUX-PARITY.md) | Retirement notice for historical U-numbered UI requirements |
 
 ## Item schema
 
@@ -113,13 +119,9 @@ would reintroduce them contradicts this list.
    (`prog §8.4`, `achievements.ts:82` comment).
 10. **Point economy (Levels)** — farmable without caps, demotion on inactivity;
     gated behind Labs *and* Premium in Runna (`ins §11.7`). Not copied.
-11. **Superseded 2026-10-30 by the Runna redesign:** the reference appearance now
-   uses purpose-specific workout colours and five persistent primary destinations.
-   Legacy palette preferences remain available. The earlier decision was:
-   **Runna's chip colour grammar** (green=easy / orange=tempo / red=intervals /
-    purple=long / grey=imported, `ux`) — Runalytics deliberately uses one hue
-    ramp per palette with per-kind lightness steps (`app.css:76-80` and the
-    palette blocks). The grammar is carried by labels + fill (done), not hue.
+11. **UI guidance retired:** palette, session-kind presentation and navigation
+   requirements belong to the [Glass Design System](../../plan/ui-system-unification.md).
+   Earlier single-hue and five-destination requirements no longer apply.
 12. **Plan Versions revert** — our sync is monotonic by design (`installed_rev`,
     `plan_sync.rs`); Runna's revert is unavailable exactly when needed
     (`ins §11.5`, `ins §10.7`). Keep monotonic; adopt only the status pill (F-24).

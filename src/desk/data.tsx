@@ -2,9 +2,9 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle, fmtDateDMY } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
-import { motion, useReducedMotion } from "motion/react";
-import { IconX, IconLoader2, IconCheck, IconAlertCircle } from "@tabler/icons-react";
+import { IconLoader2, IconCheck, IconAlertCircle } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
+import { Notification, NotificationViewport } from "./overlays";
 
 export type Workspace = "training" | "journal" | "health" | "settings" | "help";
 /// `detail` is the third hash segment (`#journal/1/splits`): the open tab of a
@@ -44,7 +44,7 @@ type Notice = { text: string; action?: { label: string; run: () => Promise<unkno
 /// while the runner is reaching for it. The hold is read from the live element
 /// when the timer fires rather than tracked in state, because a notice removed
 /// under a resting pointer never gets the leave event that would clear a flag.
-const NOTICE_MS = 6000;
+const NOTICE_MS = tempo.notice;
 const NOTICE_HOLD_POLL_MS = 500;
 
 /// One mirror report from the backend's `plan://stage` channel. `target`
@@ -66,14 +66,19 @@ const Context = createContext<WorkspaceContext>({ revision: 0, syncing: false, p
 export const useWorkspace = () => useContext(Context);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [notices, setNotices] = useState<NonNullable<Notice>[]>([]);
+  const notice = notices[0] ?? null;
+  const setNotice = (next: Notice, immediate = false) => setNotices(previous => {
+    if (!next) return previous.slice(1);
+    if (previous.some(item => item.text === next.text && item.action === next.action)) return previous;
+    return immediate && !acting ? [next, ...previous.filter(item => item.action)] : [...previous, next];
+  });
   const noticeRef = useRef<HTMLDivElement>(null);
   const [stageOps, setStageOps] = useState<Record<string, StageOp>>({});
   const stagesRef = useRef<HTMLDivElement>(null);
   const [acting, setActing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [planProgress, setPlanProgress] = useState<PlanSyncProgress | null>(null);
-  const reduced = useReducedMotion();
   const refresh = () => setRevision(value => value + 1);
   useEffect(() => {
     if (!inTauri) return;
@@ -111,7 +116,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, []);
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || acting) return;
     let timer = 0;
     const expire = () => {
       const node = noticeRef.current;
@@ -123,7 +128,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
     timer = window.setTimeout(expire, NOTICE_MS);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [notice, acting]);
   // The stage toast keeps itself open while any line is still working, and
   // while the operation itself has not returned (a mirror that was never
   // attempted emits nothing, so only the op settle proves the list is
@@ -145,24 +150,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timer = window.setTimeout(expire, NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [stagesQuiet, stageOps]);
-  return <Context.Provider value={{ revision, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }) }}>
+  return <Context.Provider value={{ revision, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
     {children}
-    <Presence>{notice && <motion.div key="notice" ref={noticeRef} className="desk-notice" role="status" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}><Change identity={notice.text}><span>{notice.text}</span></Change>
-      {notice.action && <button disabled={acting} onClick={async () => {
+    <NotificationViewport>
+    <Presence>{notice && <Notification key="notice" elementRef={noticeRef} onDismiss={() => setNotice(null)} dismissDisabled={acting} countdown={!acting} countdownKey={notice.text} actions={notice.action && <button type="button" disabled={acting} onClick={async () => {
         setActing(true);
-        try { await notice.action!.run(); refresh(); setNotice({ text: "Change undone." }); }
-        catch (error) { setNotice({ text: String(error) }); }
+        try { await notice.action!.run(); refresh(); setNotices(previous => [{ text: "Change undone." }, ...previous.slice(1)]); }
+        catch (error) { setNotices(previous => [{ text: String(error) }, ...previous.slice(1)]); }
         finally { setActing(false); }
-      }}>{notice.action.label}</button>}
-      <button className="notice-close" aria-label="Dismiss notification" onClick={() => setNotice(null)}><IconX size={18} aria-hidden="true" /><svg key={notice.text} className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg></button>
-    </motion.div>}</Presence>
-    <Presence>{stageEntries.length > 0 && <motion.div key="stages" ref={stagesRef} className="desk-notice desk-stages" role="status" aria-label="Plan sync progress" initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? .08 : tempo.change, ease: tempo.settle }}>
+      }}>{notice.action.label}</button>}><Change identity={notice.text}><span>{notice.text}</span></Change></Notification>}</Presence>
+    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label="Plan sync progress" onDismiss={() => setStageOps({})} countdown={stagesQuiet}>
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
         {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconAlertCircle size={16} aria-hidden="true" />}
         <span>{stageText(line)}</span>
       </li>))}</ul>
-      <button className="notice-close" aria-label="Dismiss notification" onClick={() => setStageOps({})}><IconX size={18} aria-hidden="true" />{stagesQuiet && <svg className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg>}</button>
-    </motion.div>}</Presence>
+    </Notification>}</Presence>
+    </NotificationViewport>
   </Context.Provider>;
 }
 

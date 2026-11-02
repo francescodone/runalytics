@@ -34,9 +34,21 @@ function App() {
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const paint = () => {
-      const theme = settings.data?.theme ?? localStorage.getItem("runalytics.theme") ?? "system";
+      let cachedTheme = "system";
+      let cachedPalette = "reference";
+      try {
+        cachedTheme = localStorage.getItem("runalytics.theme") ?? "system";
+        cachedPalette = localStorage.getItem("runalytics.palette") ?? "reference";
+        if (settings.data) {
+          localStorage.setItem("runalytics.theme", settings.data.theme ?? "system");
+          localStorage.setItem("runalytics.palette", settings.data.palette ?? "reference");
+        }
+      } catch {}
+      const theme = settings.data?.theme ?? cachedTheme;
       document.documentElement.dataset.deskTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
-      document.documentElement.dataset.deskPalette = settings.data?.palette ?? "reference";
+      document.documentElement.style.colorScheme = document.documentElement.dataset.deskTheme;
+      document.documentElement.dataset.deskPalette = settings.data?.palette ?? cachedPalette;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--desk-canvas").trim());
     };
     paint(); media.addEventListener("change", paint);
     return () => media.removeEventListener("change", paint);

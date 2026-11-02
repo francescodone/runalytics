@@ -1,15 +1,22 @@
-import { useEffect, useId, useState, type ReactNode, type RefObject } from "react";
-import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion, useSpring } from "motion/react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
+import "./tokens.css";
+
+const tokenStyle = getComputedStyle(document.documentElement);
+const seconds = (name: string) => parseFloat(tokenStyle.getPropertyValue(name)) / 1000;
+const curve = (name: string) => tokenStyle.getPropertyValue(name).trim().slice(13, -1).split(",").map(Number) as [number, number, number, number];
 
 export const tempo = {
-  press: .09,
-  feedback: .18,
-  change: .3,
-  surface: .42,
-  exit: .2,
-  settle: [ .16, 1, .3, 1 ] as const,
-  leave: [ .4, 0, .8, .4 ] as const,
-  spring: { type: "spring", visualDuration: .36, bounce: 0 } as const,
+  press: seconds("--motion-press"),
+  feedback: seconds("--motion-feedback"),
+  change: seconds("--motion-change"),
+  surface: seconds("--motion-surface"),
+  exit: seconds("--motion-exit"),
+  stagger: seconds("--motion-stagger"),
+  notice: seconds("--notice-duration") * 1000,
+  settle: curve("--motion-settle"),
+  leave: curve("--motion-leave"),
+  spring: { type: "spring", visualDuration: seconds("--motion-spring"), bounce: 0 } as const,
 };
 
 let initiatingControl: HTMLButtonElement | null = null;
@@ -24,7 +31,7 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   useEffect(() => {
-    const selector = ".health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor, .milestones > *, .desk-empty, .review-section, .plan-basis, .plan-roadmap, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-board, .week-board";
+    const selector = "[data-entrance], .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-analysis, .health-history, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, .settings-editor > section, .settings-editor > form, fieldset, .settings-section, .connection-summary, .form-grid, .form-actions, .milestones > *, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .plan-roadmap, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-board, .week-board, .mobile-date-ribbon, .pain-episode, .episode-chat, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .help-articles > details, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > :not(header)";
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -36,16 +43,17 @@ export function MotionSystem({ children }: { children: ReactNode }) {
         observer.unobserve(element);
         pending.delete(element);
         revealed.add(element);
-        element.style.setProperty("--reveal-delay", `${Math.min(order++, 4) * 45}ms`);
-        element.dataset.reveal = "visible";
+        const parentRevealing = element.parentElement?.closest('[data-reveal="visible"]');
+        element.style.setProperty("--reveal-delay", `${Math.min(order++, 3) * tempo.stagger}s`);
+        element.dataset.reveal = reduced.matches || parentRevealing ? "settled" : "visible";
       }
-    }, { threshold: .08 });
+    }, { threshold: 0 });
     const register = (root: ParentNode) => {
       const elements = [...root.querySelectorAll<HTMLElement>(selector)];
       if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
       for (const element of elements) {
         if (revealed.has(element) || pending.has(element)) continue;
-        if (reduced.matches) { revealed.add(element); continue; }
+        if (reduced.matches) { revealed.add(element); element.dataset.reveal = "settled"; continue; }
         pending.add(element);
         observer.observe(element);
       }
@@ -65,7 +73,11 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     };
     document.addEventListener("animationend", settle);
     document.addEventListener("animationcancel", settle);
-    return () => { observer.disconnect(); mutations.disconnect(); document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle); };
+    const settleMotion = () => {
+      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="visible"]').forEach(element => { element.dataset.reveal = "settled"; });
+    };
+    reduced.addEventListener("change", settleMotion);
+    return () => { observer.disconnect(); mutations.disconnect(); reduced.removeEventListener("change", settleMotion); document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle); };
   }, []);
   // Scroll-edge cues: a list or tab strip that still has room to travel marks
   // the open edges, and CSS wears an inner shadow on exactly those edges, so
@@ -106,50 +118,6 @@ export function MotionSystem({ children }: { children: ReactNode }) {
   return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
 }
 
-export function useActionDepth(control: RefObject<HTMLButtonElement | null>, enabled: boolean) {
-  const rotateX = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
-  const rotateY = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
-  const lift = useSpring(0, { stiffness: 300, damping: 30, mass: .6 });
-  useEffect(() => {
-    const element = control.current;
-    if (!element || !enabled) return;
-    const media = matchMedia("(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)");
-    const reset = () => { rotateX.set(0); rotateY.set(0); lift.set(0); };
-    const stop = () => { rotateX.jump(0); rotateY.jump(0); lift.jump(0); };
-    const move = (event: PointerEvent) => {
-      if (!media.matches || event.pointerType !== "mouse" || event.buttons || element.disabled) { stop(); return; }
-      const bounds = element.getBoundingClientRect();
-      const horizontal = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
-      const vertical = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
-      rotateX.set(-vertical * 1.5);
-      rotateY.set(horizontal * 1.5);
-      lift.set(-1);
-    };
-    element.addEventListener("pointerenter", move);
-    element.addEventListener("pointermove", move);
-    element.addEventListener("pointerup", move);
-    element.addEventListener("pointerdown", stop);
-    element.addEventListener("pointerleave", reset);
-    element.addEventListener("pointercancel", stop);
-    element.addEventListener("blur", reset);
-    window.addEventListener("blur", stop);
-    media.addEventListener("change", stop);
-    return () => {
-      element.removeEventListener("pointerenter", move);
-      element.removeEventListener("pointermove", move);
-      element.removeEventListener("pointerup", move);
-      element.removeEventListener("pointerdown", stop);
-      element.removeEventListener("pointerleave", reset);
-      element.removeEventListener("pointercancel", stop);
-      element.removeEventListener("blur", reset);
-      window.removeEventListener("blur", stop);
-      media.removeEventListener("change", stop);
-      stop();
-    };
-  }, [control, enabled, rotateX, rotateY, lift]);
-  return { rotateX, rotateY, y: lift, transformPerspective: 600 };
-}
-
 export function Presence({ children }: { children: ReactNode }) {
   return <AnimatePresence initial={false}>{children}</AnimatePresence>;
 }
@@ -165,17 +133,12 @@ export function SelectionMarker() {
 
 export function Change({ children, identity, className = "" }: { children: ReactNode; identity: string | number; className?: string }) {
   const reduced = useReducedMotion();
-  // Switching what is mounted (a horizon, a health tab, a selected day) reads as
-  // one surface dissolving into the next: the outgoing pane blurs away, then the
-  // incoming pane sharpens in. The arrival is a CSS keyframe rather than an
-  // inline motion style on purpose — a settled inline filter would turn this
-  // wrapper into the containing block for the mobile full-screen inspector.
   return (
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
         key={identity}
         className={`motion-change ${className}`}
-        exit={reduced ? undefined : { opacity: 0, filter: "blur(8px)", transition: { duration: tempo.exit, ease: "easeIn" } }}
+        exit={reduced ? undefined : { opacity: 0, transition: { duration: tempo.exit, ease: tempo.leave } }}
       >
         {children}
       </motion.div>
