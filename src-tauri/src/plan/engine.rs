@@ -158,6 +158,14 @@ pub(crate) fn taper_weeks_for(kind: PlanKind, d: RaceDistance) -> i64 {
     }
 }
 
+pub(super) fn method_taper_weeks(kind: PlanKind, distance: RaceDistance, weeks: usize, method: TrainingMethod) -> i64 {
+    if method == TrainingMethod::RunnaLike && kind.has_race() {
+        if matches!(distance, RaceDistance::K21 | RaceDistance::K42) || weeks >= 10 { 3 } else { 2 }
+    } else {
+        taper_weeks_for(kind, distance)
+    }
+}
+
 pub(crate) fn weeks_of(plan: &TrainingPlan) -> usize {
     ((plan.target_date - plan.start_date.unwrap_or(plan.created_at.date_naive())).num_days() as f64 / 7.0).ceil() as usize
 }
@@ -193,7 +201,7 @@ pub fn week_is_down(plan: &TrainingPlan, day: NaiveDate) -> bool {
     let w = offset as usize / 7;
     let is_race_week = plan.kind.has_race() && w == weeks - 1;
     let weeks_to_race = (weeks - 1 - w) as i64;
-    let tapering = weeks_to_race < taper_weeks_for(plan.kind, plan.distance) && !is_race_week;
+    let tapering = weeks_to_race < method_taper_weeks(plan.kind, plan.distance, weeks, plan.training_method) && !is_race_week;
     !is_race_week && !tapering && (w + 1) % 4 == 0
 }
 
@@ -229,6 +237,18 @@ pub(super) fn quality_load_at(d: RaceDistance, baseline_km: f64, progress: f64) 
     // session hardness stays comparable across plans of different frequency.
     let status = (baseline_km / peak_weekly_km(d, IncreaseMethod::Moderate, 4)).clamp(0.0, 1.0);
     base * (0.7 + 0.3 * status) * (0.85 + 0.15 * progress.clamp(0.0, 1.0))
+}
+
+pub(super) fn quality_load_for_plan(plan: &TrainingPlan, weeks: usize, week: usize) -> f64 {
+    let load = quality_load_at(plan.distance, plan.baseline_weekly_km.unwrap_or(0.0), fitness_progress(plan.kind, plan.distance, weeks, week));
+    let capped = plan.threshold_state.as_ref().map_or(load, |state| load.min(state.quality_minutes_cap));
+    let remaining = weeks.saturating_sub(week);
+    if plan.training_method == TrainingMethod::RunnaLike && plan.kind.has_race()
+        && remaining <= method_taper_weeks(plan.kind, plan.distance, weeks, plan.training_method) as usize {
+        capped * if remaining >= 3 { 0.75 } else { 0.5 }
+    } else {
+        capped
+    }
 }
 
 /// The load at the *end* of a plan — the full amount a developed runner holds.
@@ -439,7 +459,8 @@ pub fn generate_with_evidence(
     };
     let baseline = requested.clamp(10.0, peak);
 
-    let taper_weeks = taper_weeks_for(req.kind, req.distance);
+    let taper_weeks = method_taper_weeks(req.kind, req.distance, weeks, req.training_method);
+    let min_run_km = if req.training_method == TrainingMethod::RunnaLike { 3.0 } else { MIN_RUN_KM };
     // The geometric ramp only multiplies on *build* weeks — down, taper and
     // race weeks hold or cut volume without applying the ratio. Sizing the
     // ratio over every week undershot the peak: a 16-week marathon plan
@@ -474,6 +495,7 @@ pub fn generate_with_evidence(
     let plan = TrainingPlan {
         id: plan_id.clone(),
         distance: req.distance,
+        training_method: req.training_method,
         kind: req.kind,
         start_date: req.start_date,
         target_date: req.target_date,
@@ -501,6 +523,7 @@ pub fn generate_with_evidence(
     let first_monday = week_start(add_days(req.target_date, -7 * weeks as i64 + 1));
     let mut workouts = Vec::new();
     let mut week_volume = baseline;
+    let mut long_build_km = (baseline * long_run_share(req.distance)).min(peak_long_run_km(req.distance));
 
     for w in 0..weeks {
         let monday = add_days(first_monday, 7 * w as i64);
@@ -514,7 +537,7 @@ pub fn generate_with_evidence(
             week_volume * 0.55
         } else if tapering {
             week_volume
-                * if taper_weeks == 2 && weeks_to_race == 1 {
+                * if weeks_to_race == taper_weeks - 1 {
                     0.85
                 } else {
                     0.7
@@ -554,10 +577,14 @@ pub fn generate_with_evidence(
                 _ => 6.0,
             }
         } else if tapering {
-            ceil_km((target * 0.35).min(long_cap * 0.6)).max(MIN_RUN_KM)
+            ceil_km((target * 0.35).min(long_cap * 0.6)).max(min_run_km)
         } else {
-            ceil_km((target * long_run_share(req.distance)).min(long_cap)).max(MIN_RUN_KM)
+            let desired = (target * long_run_share(req.distance)).min(long_cap);
+            ceil_km(if req.training_method == TrainingMethod::RunnaLike { desired.min(long_build_km) } else { desired }).max(min_run_km)
         };
+        if req.training_method == TrainingMethod::RunnaLike && !down && !tapering && !is_race_week {
+            long_build_km = (long_build_km * 1.10).min(long_build_km + 2.0).min(long_cap);
+        }
         let long_pattern = super::session::long_pattern_for_plan(&plan, w, weeks);
         // A tune-up is a race effort, not a long run: hold it near a half
         // marathon and drop the excess, making the week a lighter one.
@@ -601,18 +628,14 @@ pub fn generate_with_evidence(
         // Fitness ramps week by week: the threshold sharpens and the quality
         // load grows with it, so week 1's intervals are not week 10's.
         let thr_w = threshold_for_plan(&plan, weeks, w);
-        let load = quality_load_at(
-            req.distance,
-            baseline,
-            fitness_progress(req.kind, req.distance, weeks, w),
-        ).min(plan.threshold_state.as_ref().unwrap().quality_minutes_cap);
+        let load = quality_load_for_plan(&plan, weeks, w);
 
         // Every quality session carries the plan's fixed load; a week too
         // small to hold it alongside the long run runs easy instead.
         let week_quality = super::session::quality_for_plan(&plan, w, weeks);
         let session_km = |pattern| {
             ceil_km(super::session::quality_session_m(pattern, thr_w, load) / 1000.0)
-                .max(MIN_RUN_KM)
+                .max(min_run_km)
         };
         // The tune-up is that week's quality: a race effort fills its 80/20 budget.
         let tune_up = long_pattern == super::session::LongRunPattern::TuneUp && long_km > 0.0;
@@ -649,7 +672,7 @@ pub fn generate_with_evidence(
                     && !tapering
                     && !(long_km > 0.0 && long_pattern.is_hard())
                     && 2.0 * load + long_fast_minutes <= MAX_HARD_SHARE * week_minutes
-                    && lead_km + follow_km + long_km + MIN_RUN_KM <= target_km
+                    && lead_km + follow_km + long_km + min_run_km <= target_km
             })
             .and_then(|primary| {
                 // Hard days never touch: two clear days from the long run and
@@ -713,7 +736,7 @@ pub fn generate_with_evidence(
             .collect();
         easy_offs.sort_by_key(|&off| std::cmp::Reverse(gap(off)));
         let mut rest = (target_km - long_km - quality_km - second_km).max(0.0);
-        while rest < MIN_RUN_KM * easy_offs.len() as f64 {
+        while rest < min_run_km * easy_offs.len() as f64 {
             easy_offs.pop();
         }
         if easy_offs.is_empty() {
@@ -746,7 +769,7 @@ pub fn generate_with_evidence(
                     16.0
                 };
                 let others = easy_offs.len() as f64 - 1.0;
-                ceil_km((long_km * 0.6).min(cap)).min(rest - MIN_RUN_KM * others)
+                ceil_km((long_km * 0.6).min(cap)).min(rest - min_run_km * others)
             })
             .filter(|&km| km >= 10.0 && km >= (rest / easy_offs.len() as f64).floor() + 2.0);
         let (split_rest, split_n) = match medium_long {
@@ -846,8 +869,8 @@ pub fn generate_with_evidence(
                     date: shake,
                     planned_date: shake,
                     kind: WorkoutKind::Easy,
-                    title: format!("Shakeout {MIN_RUN_KM:.0} km"),
-                    distance_m: Some(MIN_RUN_KM * 1000.0),
+                    title: format!("Shakeout {min_run_km:.0} km"),
+                    distance_m: Some(min_run_km * 1000.0),
                     duration_min: None,
                     pace_lo_s_km: Some(pace.0),
                     pace_hi_s_km: Some(pace.1),
@@ -913,6 +936,7 @@ mod tests {
 
     fn req(distance: RaceDistance, weeks_out: i64) -> PlanRequest {
         PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance,
             kind: PlanKind::Race,
@@ -1367,6 +1391,7 @@ mod tests {
     /// how many weeks a plan has and with it any assertion about week counts.
     fn req_from_now(distance: RaceDistance, weeks_out: i64) -> PlanRequest {
         PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance,
             kind: PlanKind::Race,

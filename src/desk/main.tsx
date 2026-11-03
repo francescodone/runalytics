@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { IconCalendarWeek, IconRun, IconHeart, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
 import { tauri } from "../lib/ipc";
@@ -21,11 +21,38 @@ const workspaces = [
 function App() {
   const route = useRoute();
   const heading = useRef<HTMLHeadingElement>(null);
+  const appbar = useRef<HTMLElement>(null);
+  const appbarOffset = useRef(0);
   const initial = useRef(true);
+  const [appbarHidden, setAppbarHidden] = useState(false);
   const settings = useRemote(tauri.getSettings);
   const providers = useRemote(tauri.providerStatus);
   const command = useCommand();
   const { syncing, notify } = useWorkspace();
+  useEffect(() => {
+    const workspace = document.getElementById("workspace");
+    const compact = matchMedia("(max-width: 800px)");
+    if (!workspace) return;
+    let previous = workspace.scrollTop;
+    const reveal = () => { appbarOffset.current = 0; appbar.current?.style.setProperty("--appbar-offset", "0px"); setAppbarHidden(false); };
+    reveal();
+    const onScroll = () => {
+      const position = Math.max(0, Math.min(workspace.scrollTop, workspace.scrollHeight - workspace.clientHeight));
+      const delta = position - previous;
+      previous = position;
+      if (!compact.matches || position <= 0) { reveal(); return; }
+      const height = appbar.current?.offsetHeight ?? 0;
+      appbarOffset.current = Math.max(0, Math.min(height, appbarOffset.current + delta));
+      appbar.current?.style.setProperty("--appbar-offset", `${appbarOffset.current}px`);
+      setAppbarHidden(height > 0 && appbarOffset.current >= height);
+    };
+    workspace.addEventListener("scroll", onScroll, { passive: true });
+    compact.addEventListener("change", reveal);
+    return () => {
+      workspace.removeEventListener("scroll", onScroll);
+      compact.removeEventListener("change", reveal);
+    };
+  }, [route.workspace, route.section]);
   useEffect(() => {
     if (initial.current) { initial.current = false; return; }
     document.getElementById("workspace")?.scrollTo({ top: 0, behavior: "instant" });
@@ -56,7 +83,7 @@ function App() {
   const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? route.workspace[0].toUpperCase() + route.workspace.slice(1);
   return <>
     <a className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>Skip to workspace</a>
-    <header className="desk-appbar">
+    <header ref={appbar} style={{ "--appbar-offset": "0px" } as CSSProperties} className={`desk-appbar${appbarHidden ? " is-scrolled-away" : ""}`} onFocusCapture={() => { appbarOffset.current = 0; appbar.current?.style.setProperty("--appbar-offset", "0px"); setAppbarHidden(false); }}>
       <a href="#training" className="desk-brand" aria-label="Runalytics training">
         <span className="desk-brand-icon" data-entrance aria-hidden="true"><svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor" focusable="false">
           <path d="M32 4C8 4 4 8 4 32s4 28 28 28 28-4 28-28S56 4 32 4Z" />

@@ -333,6 +333,7 @@ mod tests {
     fn plan_with_workouts(s: &Store, days: &[(i64, WorkoutKind, f64)]) {
         let today = Utc::now().date_naive();
         let plan = TrainingPlan {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             id: uuid::Uuid::new_v4().to_string(),
             distance: RaceDistance::K21,

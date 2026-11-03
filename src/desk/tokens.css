@@ -109,6 +109,10 @@
   --glass-scrim-filter: blur(12px);
   --material-atmospheric: linear-gradient(135deg, color-mix(in srgb, var(--desk-action) 15%, var(--desk-canvas)), color-mix(in srgb, var(--desk-action) 5%, var(--desk-canvas)) 55%, color-mix(in srgb, var(--desk-blue) 10%, var(--desk-canvas)));
   --material-architectural: linear-gradient(150deg, color-mix(in srgb, var(--desk-surface) 72%, transparent), color-mix(in srgb, var(--desk-surface) 32%, transparent));
+  /* The same action/blue wash the global atmosphere paints across the canvas,
+     at shell strength: floating glass wears it as a background-image so the
+     toolbar reads as cut from the background rather than a flat white slab. */
+  --material-aura: linear-gradient(115deg, color-mix(in srgb, var(--desk-action) 14%, transparent), transparent 40%, color-mix(in srgb, var(--desk-blue) 12%, transparent) 80%, transparent);
   --material-floating: var(--glass-floating);
   --material-optical: var(--glass-control);
   --material-liquid: var(--state-selected);
@@ -197,6 +201,15 @@
 :root[data-desk-palette="tide"] { --desk-action: #176b6a; --desk-blue: #176b6a; --desk-selection: #e1f1ef; }
 :root[data-desk-palette="aurora"] { --desk-action: #166b68; --desk-blue: #6d4aa4; --desk-selection: #e1f1ef; --session-tempo: #c55b52; --session-intervals: #6d4aa4; --session-long: #166b68; }
 :root[data-desk-palette="summit"] { --desk-action: #a84a2e; --desk-blue: #285fa5; --desk-selection: #f9ebe5; --session-tempo: #a84a2e; --session-intervals: #285fa5; --session-long: #317756; }
+:root[data-desk-palette="coastline"] { --desk-action: #225f9a; --desk-blue: #187465; --desk-selection: #e7f0f8; --session-tempo: #bd594b; --session-intervals: #225f9a; --session-long: #187465; }
+:root[data-desk-palette="wildflower"] { --desk-action: #963e6c; --desk-blue: #31715a; --desk-selection: #f8e9f0; --session-tempo: #a46912; --session-intervals: #963e6c; --session-long: #31715a; }
+:root[data-desk-palette="citrus"] { --desk-action: #ad2835; --desk-blue: #244f86; --desk-selection: #fae9eb; --session-tempo: #a76e00; --session-intervals: #ad2835; --session-long: #244f86; }
+:root[data-desk-palette="cobalt"] { --desk-action: #285ea1; --desk-blue: var(--desk-action); --desk-selection: #e7effa; }
+:root[data-desk-palette="moss"] { --desk-action: #526c35; --desk-blue: var(--desk-action); --desk-selection: #edf2e7; }
+:root[data-desk-palette="garnet"] { --desk-action: #285b98; --desk-blue: var(--desk-action); --desk-selection: #e7effa; }
+:root[data-desk-palette="ochre"] { --desk-action: #866000; --desk-blue: var(--desk-action); --desk-selection: #f7f0dc; }
+:root:is([data-desk-palette="cobalt"], [data-desk-palette="moss"], [data-desk-palette="garnet"], [data-desk-palette="ochre"]) { --session-tempo: var(--desk-action); --session-intervals: var(--desk-action); --session-long: var(--desk-action); --session-race: var(--desk-action); --session-recorded: var(--desk-action); }
+:root:is([data-desk-palette="amethyst"], [data-desk-palette="glacier"], [data-desk-palette="evergreen"], [data-desk-palette="sakura"], [data-desk-palette="ember"]) { --desk-blue: var(--desk-action); }
 :root[data-desk-theme="dark"][data-desk-palette="amethyst"] { --desk-action: #d0b5ff; --desk-selection: #3c304b; }
 :root[data-desk-theme="dark"][data-desk-palette="glacier"] { --desk-action: #9bd4ec; --desk-selection: #263d46; }
 :root[data-desk-theme="dark"][data-desk-palette="evergreen"] { --desk-action: #a6e2bc; --desk-selection: #293e31; }
@@ -206,6 +219,13 @@
 :root[data-desk-theme="dark"][data-desk-palette="tide"] { --desk-action: #91d9d2; --desk-blue: #91d9d2; --desk-selection: #263f3e; }
 :root[data-desk-theme="dark"][data-desk-palette="aurora"] { --desk-action: #91d9d2; --desk-blue: #cdb5f1; --desk-selection: #263f3e; --session-tempo: #f0a6a0; --session-intervals: #cdb5f1; --session-long: #91d9d2; }
 :root[data-desk-theme="dark"][data-desk-palette="summit"] { --desk-action: #f3b49f; --desk-blue: #a9caff; --desk-selection: #48312b; --session-tempo: #f3b49f; --session-intervals: #a9caff; --session-long: #a5d9b9; }
+:root[data-desk-theme="dark"][data-desk-palette="coastline"] { --desk-action: #a9caff; --desk-blue: #93d9c7; --desk-selection: #293b4b; --session-tempo: #f1aea1; --session-intervals: #a9caff; --session-long: #93d9c7; }
+:root[data-desk-theme="dark"][data-desk-palette="wildflower"] { --desk-action: #efb2d0; --desk-blue: #a5d9b9; --desk-selection: #462d39; --session-tempo: #eac276; --session-intervals: #efb2d0; --session-long: #a5d9b9; }
+:root[data-desk-theme="dark"][data-desk-palette="citrus"] { --desk-action: #ffb2b7; --desk-blue: #adcaff; --desk-selection: #482d32; --session-tempo: #e9c66e; --session-intervals: #ffb2b7; --session-long: #adcaff; }
+:root[data-desk-theme="dark"][data-desk-palette="cobalt"] { --desk-action: #a9caff; --desk-selection: #293b50; }
+:root[data-desk-theme="dark"][data-desk-palette="moss"] { --desk-action: #c0d9a4; --desk-selection: #333f2d; }
+:root[data-desk-theme="dark"][data-desk-palette="garnet"] { --desk-action: #a9caff; --desk-selection: #293b50; }
+:root[data-desk-theme="dark"][data-desk-palette="ochre"] { --desk-action: #e8cc83; --desk-selection: #403923; }
 @media (min-width: 801px) and (max-width: 1180px) { :root { --navigation-width: 88px; --shell-gap: var(--space-4); --shell-inset: var(--space-4); --page-gutter: var(--space-6); } }
 @media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); --text-page: 1.75rem; --text-display: 1.75rem; --text-hero: 2rem; } }
 @media (prefers-contrast: more) { :root { --desk-line: #63736a; } :root[data-desk-theme="dark"] { --desk-line: #b2c0b7; } }

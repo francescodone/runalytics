@@ -248,6 +248,7 @@ mod tests {
     fn seed_plan(s: &Store, hard_in: i64) -> PlanWorkout {
         let today = Utc::now().date_naive();
         let plan = TrainingPlan {
+            training_method: TrainingMethod::Norwegian,
             id: "p1".into(),
             distance: RaceDistance::K21,
             kind: PlanKind::Race,

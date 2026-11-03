@@ -1160,6 +1160,7 @@ test("month view marks finished sessions like the week board does", async ({page
   await expect(done.first()).toBeVisible();
   await expect(page.locator('.month-sessions .session-kind').first()).toBeVisible();
   await expect(page.locator('button.month-number')).toHaveCount(0);
+  await expect(page.locator('.month-dates')).toHaveCSS('border-radius', '8px');
   await expect(page.locator('.month-day').first()).toHaveCSS('border-radius', '0px');
   await expect(page.locator('.month-day').last()).toHaveCSS('border-bottom-width', '1px');
   await expect(page.locator('.month-day').last()).toHaveCSS('border-right-width', '1px');
@@ -1168,6 +1169,21 @@ test("month view marks finished sessions like the week board does", async ({page
   const todayCell = page.locator('.month-number[aria-current="date"]');
   await expect(todayCell).toHaveCount(1);
   await expect.poll(async () => (await todayCell.evaluate(el => getComputedStyle(el).backgroundColor)) !== 'rgba(0, 0, 0, 0)').toBe(true);
+});
+
+test("mobile month today fills its calendar cell", async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/desk.html#training/month');
+  const today = page.locator('.month-number[aria-current="date"]');
+  await expect(today).toBeVisible();
+  const dimensions = await today.evaluate(element => {
+    const button = element.getBoundingClientRect();
+    const cell = element.parentElement.getBoundingClientRect();
+    return {width: cell.width - button.width, height: cell.height - button.height};
+  });
+  expect(dimensions.width).toBeLessThanOrEqual(1);
+  expect(dimensions.height).toBeLessThanOrEqual(1);
+  await expect(page.locator('.month-dates')).toHaveCSS('border-radius', '8px');
 });
 
 test("schedule mutations retain intent and Undo restores the original date", async ({page}) => {
@@ -1457,6 +1473,43 @@ for (const width of [390, 1440]) {
   });
 }
 
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 1440]) {
+    test(`training method chooser ${theme} ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto(`/desk.html?noPlan=1&theme=${theme}`);
+      await page.getByRole("button", { name: "Create plan", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Create training plan" });
+      const norwegian = dialog.getByRole("radio", { name: "Norwegian method", exact: true });
+      const runna = dialog.getByRole("radio", { name: "Runna-like", exact: true });
+      await expect(norwegian).toBeChecked();
+      await expect(norwegian).toHaveAccessibleDescription(/Controlled sub-threshold repeats/);
+      await expect(runna).toHaveAccessibleDescription(/varied mix of intervals, tempo and long runs/);
+      await norwegian.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(runna).toBeChecked();
+      await expect(dialog.locator(".composer-summary")).toContainText("Runna-like");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await dialog.screenshot({ path: `test-results/training-method-${theme}-${width}.png`, animations: "disabled" });
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await dialog.getByRole("button", { name: "Back", exact: true }).click();
+      await expect(runna).toBeChecked();
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await page.evaluate(() => { window.__deskFail = "create_plan"; });
+      await dialog.getByRole("button", { name: "Build plan", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toContainText("Unable to save right now");
+      await expect(dialog.locator(".composer-summary")).toContainText("Runna-like");
+      await page.evaluate(() => { window.__deskFail = ""; });
+      await dialog.getByRole("button", { name: "Build plan", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "create_plan").pop().args.request.trainingMethod)).toBe("runna_like");
+      await expect(page.locator(".metrics-line")).toContainText("Runna-like");
+    });
+  }
+}
+
 test("plan creation submits the established contract", async ({ page }) => {
   await page.goto("/desk.html?noPlan=1");
   await page.getByRole("button", { name: "Create plan", exact: true }).click();
@@ -1473,7 +1526,7 @@ test("plan creation submits the established contract", async ({ page }) => {
   await page.getByRole("button", { name: "Build plan", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const request = await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request);
-  expect(request).toMatchObject({kind:"race",distance:"21K",startDate:selectedDate,thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40,name:"Spring half build"});
+  expect(request).toMatchObject({kind:"race",trainingMethod:"norwegian",distance:"21K",startDate:selectedDate,thresholdSecKm:280,weeklyFrequency:4,currentWeeklyKm:40,name:"Spring half build"});
   await expect(page.locator(".plan-basis")).toContainText("40.0 km/week");
 });
 
@@ -1754,7 +1807,7 @@ test("settings directory searches tasks and preserves unrelated settings", async
   const settings = await page.evaluate(() => window.__deskCalls.find(call => call.command === "save_settings").args.settings);
   expect(settings.llmEndpoint).toBe("https://example.test/v1");
   expect(settings.thresholds.buildWeeks).toBe(3);
-  await page.getByRole("radio", { name: "Glacier", exact: true }).check();
+  await page.getByRole("radio", { name: "Ice Ice Pacey", exact: true }).check();
   await expect(page.locator("html")).toHaveAttribute("data-desk-palette", "glacier");
 });
 
@@ -1956,7 +2009,7 @@ test("the plain notice carries the same countdown ring around its dismiss button
   await expect(page.locator(".desk-notice .stage-ring")).toBeVisible();
 });
 
-for (const width of [390, 1440]) {
+for (const width of [320, 390, 768, 1440]) {
   test(`unified notifications do not overlap progress or navigation ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/desk.html#settings/thresholds");
@@ -1971,10 +2024,28 @@ for (const width of [390, 1440]) {
     expect(progressBox.y + progressBox.height <= noticeBox.y || noticeBox.y + noticeBox.height <= progressBox.y).toBe(true);
     expect(progressBox.x).toBeGreaterThanOrEqual(0);
     expect(noticeBox.x + noticeBox.width).toBeLessThanOrEqual(width);
-    if (width === 390) {
+    const clipping = await notice.evaluate(element => {
+      const viewport = element.closest('.notification-viewport');
+      const viewportStyle = getComputedStyle(viewport);
+      const noticeStyle = getComputedStyle(element);
+      return {
+        padding: parseFloat(viewportStyle.paddingTop),
+        radius: parseFloat(viewportStyle.borderTopLeftRadius),
+        noticeRadius: parseFloat(noticeStyle.borderTopLeftRadius),
+      };
+    });
+    expect(clipping.padding).toBeGreaterThanOrEqual(6);
+    expect(clipping.radius).toBeGreaterThanOrEqual(clipping.noticeRadius + clipping.padding);
+    const dismiss = notice.getByRole('button', { name: 'Dismiss notification' });
+    await dismiss.focus();
+    await expect(dismiss).toBeFocused();
+    await expect(notice).toHaveCSS('outline-style', 'solid');
+    if (width <= 800) {
       const navigation = await page.locator(".desk-navigation").boundingBox();
       expect(Math.max(progressBox.y + progressBox.height, noticeBox.y + noticeBox.height)).toBeLessThan(navigation.y);
     }
+    await page.keyboard.press('Enter');
+    await expect(notice).toHaveCount(0);
   });
 }
 
@@ -2023,7 +2094,7 @@ test("design system appearance updates cached and native control themes together
   await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.theme"))).toBe("dark");
-  await page.getByRole("radio", { name: "Glacier", exact: true }).check();
+  await page.getByRole("radio", { name: "Ice Ice Pacey", exact: true }).check();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.palette"))).toBe("glacier");
   await page.getByRole("radio", { name: "System", exact: true }).check();
   await page.emulateMedia({ colorScheme: "dark" });
@@ -2035,12 +2106,23 @@ test("design system appearance updates cached and native control themes together
 test("new palettes apply and persist across appearance modes", async ({ page }) => {
   await page.goto("/desk.html#settings/appearance");
   const root = page.locator("html");
-  await expect(page.getByText("Training Desk", { exact: true }).locator(".palette-swatch")).toHaveCSS("background-image", /conic-gradient/);
+  await expect(page.locator(".palette-options .palette-name")).toHaveText([
+    "Blue Steel Sprint", "Burnt Toast Tempo", "Dashing Blueberry", "Golden Hour Hustle", "Graphite Gallop", "Ice Ice Pacey", "Moss Boss", "Pink It and Sprint", "Purple Reign", "Teal We Meet Again", "The Green Mile",
+    "Chasing Confetti", "Fast and Curious", "Kaleidoscope Cadence", "Miles of Mischief", "Sunrise Shenanigans", "The Coastal Chaos",
+  ]);
+  await expect(page.getByRole("radio", { name: "Fast and Curious", exact: true }).locator("..").locator(".palette-swatch")).toHaveCSS("background-image", /conic-gradient/);
   for (const [name, id, light, dark] of [
-    ["Midnight Ink", "midnight", "#525866", "#c3cad6"],
-    ["Deep Tide", "tide", "#176b6a", "#91d9d2"],
-    ["Aurora Run", "aurora", "#166b68", "#91d9d2"],
-    ["Summit Sunrise", "summit", "#a84a2e", "#f3b49f"],
+    ["Graphite Gallop", "midnight", "#525866", "#c3cad6"],
+    ["Teal We Meet Again", "tide", "#176b6a", "#91d9d2"],
+    ["Kaleidoscope Cadence", "aurora", "#166b68", "#91d9d2"],
+    ["Sunrise Shenanigans", "summit", "#a84a2e", "#f3b49f"],
+    ["The Coastal Chaos", "coastline", "#225f9a", "#a9caff"],
+    ["Miles of Mischief", "wildflower", "#963e6c", "#efb2d0"],
+    ["Chasing Confetti", "citrus", "#ad2835", "#ffb2b7"],
+    ["Blue Steel Sprint", "cobalt", "#285ea1", "#a9caff"],
+    ["Moss Boss", "moss", "#526c35", "#c0d9a4"],
+    ["Dashing Blueberry", "garnet", "#285b98", "#a9caff"],
+    ["Golden Hour Hustle", "ochre", "#866000", "#e8cc83"],
   ]) {
     await page.getByRole("radio", { name: "Light", exact: true }).check();
     await page.getByRole("radio", { name, exact: true }).check();
@@ -2049,6 +2131,30 @@ test("new palettes apply and persist across appearance modes", async ({ page }) 
     await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.palette"))).toBe(id);
     await page.getByRole("radio", { name: "Dark", exact: true }).check();
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--desk-action").trim())).toBe(dark);
+  }
+});
+
+test("multicolor palettes use secondary colors in navigation and sessions", async ({ page }) => {
+  await page.goto("/desk.html#settings/appearance");
+  await page.getByRole("radio", { name: "Light", exact: true }).check();
+  for (const name of ["Fast and Curious", "Kaleidoscope Cadence", "Sunrise Shenanigans", "The Coastal Chaos", "Miles of Mischief", "Chasing Confetti"]) {
+    await page.getByRole("radio", { name, exact: true }).check();
+    await page.getByRole("link", { name: "Training", exact: true }).first().click();
+    await expect(page.locator(".desk-navigation a[aria-current]").first()).toBeAttached();
+    const colors = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      return { action: root.getPropertyValue("--desk-action").trim(), secondary: root.getPropertyValue("--desk-blue").trim(), navigation: getComputedStyle(document.querySelector(".desk-navigation a[aria-current]")).color };
+    });
+    expect(colors.secondary).not.toBe(colors.action);
+    expect(colors.navigation).toBe(await page.evaluate(color => {
+      const element = document.createElement("span");
+      element.style.color = color;
+      document.body.appendChild(element);
+      const result = getComputedStyle(element).color;
+      element.remove();
+      return result;
+    }, colors.secondary));
+    await page.goto("/desk.html#settings/appearance");
   }
 });
 

@@ -157,6 +157,7 @@ export type WorkoutKind = "rest" | "easy" | "tempo" | "intervals" | "longRun" | 
 /// only a race build gets a taper and a race day, only a build ramps volume,
 /// and a maintenance block holds the runner's current mileage.
 export type PlanKind = "race" | "improvement" | "maintenance";
+export type TrainingMethod = "norwegian" | "runna_like";
 
 /// Progress of a plan push/cancel toward the watch, emitted on `plan://sync`.
 /// COROS takes a whole plan in one call, so the percentage tracks the steps
@@ -169,6 +170,7 @@ export interface PlanSyncProgress {
 
 export interface PlanRequest {
   distance: RaceDistance;
+  trainingMethod?: TrainingMethod;
   /// What the plan is for; the backend defaults an absent kind to "race".
   kind: PlanKind;
   startDate?: string | null;
@@ -210,6 +212,7 @@ export interface PlanDefaults {
 export interface TrainingPlan {
   id: string;
   distance: RaceDistance;
+  trainingMethod?: TrainingMethod;
   /// What the plan is built for; "race" for plans stored before kinds existed.
   kind: PlanKind;
   startDate?: string | null;
@@ -514,7 +517,7 @@ export interface SyncReport {
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember" | "midnight" | "tide" | "aurora" | "summit";
+export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember" | "midnight" | "tide" | "aurora" | "summit" | "coastline" | "wildflower" | "citrus" | "cobalt" | "moss" | "garnet" | "ochre";
 
 export interface Settings {
   pmtilesPath: string | null;

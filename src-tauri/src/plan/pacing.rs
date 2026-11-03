@@ -807,6 +807,7 @@ mod tests {
     fn plan_with_quality(s: &Store, offsets: &[i64]) -> (TrainingPlan, Vec<PlanWorkout>) {
         let today = Utc::now().date_naive();
         let req = PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,

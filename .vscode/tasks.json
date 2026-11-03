@@ -89,6 +89,14 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify training methods",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline training_method -- --nocapture",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

@@ -160,6 +160,8 @@ pub(crate) struct CalendarWire {
 struct PlanWire {
     id: String,
     distance: crate::types::RaceDistance,
+    #[serde(default)]
+    training_method: crate::types::TrainingMethod,
     #[serde(default = "crate::types::PlanKind::default_race")]
     kind: crate::types::PlanKind,
     #[serde(default)]
@@ -244,6 +246,7 @@ impl PlanWire {
         PlanWire {
             id: p.id.clone(),
             distance: p.distance,
+            training_method: p.training_method,
             kind: p.kind,
             start_date: p.start_date,
             target_date: p.target_date,
@@ -266,6 +269,7 @@ impl PlanWire {
         TrainingPlan {
             id: self.id.clone(),
             distance: self.distance,
+            training_method: self.training_method,
             kind: self.kind,
             start_date: self.start_date,
             target_date: self.target_date,
@@ -1372,6 +1376,7 @@ mod tests {
             rev: 1_700_000_000,
             synced_at: 1_700_000_100,
             plan: PlanWire {
+                training_method: crate::types::TrainingMethod::Norwegian,
                 start_date: None,
                 id: "plan-1".into(),
                 distance: crate::types::RaceDistance::K21,
@@ -1414,6 +1419,7 @@ mod tests {
 
     fn shipped_plan() -> TrainingPlan {
         TrainingPlan {
+            training_method: crate::types::TrainingMethod::Norwegian,
             start_date: None,
             id: "plan-1".into(),
             distance: crate::types::RaceDistance::K21,
@@ -1593,6 +1599,31 @@ mod tests {
         let reopened = crate::store::Store::open(&directory.join("start-date.sqlite")).unwrap();
         assert_eq!(reopened.current_plan().unwrap().unwrap().0.start_date, plan.start_date);
         drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn training_method_survives_wire_store_replace_and_reopen() {
+        let mut plan = shipped_plan();
+        plan.training_method = crate::types::TrainingMethod::RunnaLike;
+        let mut json = serde_json::to_value(PlanWire::from_plan(&plan)).unwrap();
+        let decoded: PlanWire = serde_json::from_value(json.clone()).unwrap();
+        let restored = decoded.to_plan();
+        assert_eq!(restored.training_method, plan.training_method);
+        let directory = std::env::temp_dir().join(format!("plan-method-{}", uuid::Uuid::new_v4()));
+        let database = directory.join("method.sqlite");
+        let store = crate::store::Store::open(&database).unwrap();
+        store.insert_plan(&restored).unwrap();
+        assert_eq!(store.current_plan().unwrap().unwrap().0.training_method, plan.training_method);
+        assert_eq!(store.all_plans().unwrap()[0].training_method, plan.training_method);
+        store.replace_plan(&restored, &[], 123).unwrap();
+        drop(store);
+        let reopened = crate::store::Store::open(&database).unwrap();
+        assert_eq!(reopened.current_plan().unwrap().unwrap().0.training_method, plan.training_method);
+        drop(reopened);
+        json.as_object_mut().unwrap().remove("trainingMethod");
+        let legacy: PlanWire = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.to_plan().training_method, crate::types::TrainingMethod::Norwegian);
         std::fs::remove_dir_all(directory).unwrap();
     }
 

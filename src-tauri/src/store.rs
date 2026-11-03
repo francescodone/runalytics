@@ -725,6 +725,7 @@ impl Store {
         )?;
         add_column_if_missing(&conn, "training_plans", "quality_offset_from", "TEXT")?;
         add_column_if_missing(&conn, "training_plans", "threshold_state", "TEXT")?;
+        add_column_if_missing(&conn, "training_plans", "training_method", "TEXT NOT NULL DEFAULT 'norwegian'")?;
         add_column_if_missing(&conn, "training_plans", "start_date", "TEXT")?;
         // What the runner calls the plan. Nullable rather than defaulted:
         // a plan nobody named genuinely has no name, and every naming
@@ -1515,8 +1516,8 @@ impl Store {
         conn.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name, training_method)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 p.id,
                 distance_name(p.distance),
@@ -1538,7 +1539,8 @@ impl Store {
                 p.created_at.timestamp(),
                 p.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
                 p.start_date.map(|date| date.format("%Y-%m-%d").to_string()),
-                p.name.as_deref().map(str::trim).filter(|n| !n.is_empty())
+                p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()),
+                serde_json::to_value(p.training_method)?.as_str().unwrap(),
             ],
         )?;
         Ok(())
@@ -1673,7 +1675,7 @@ impl Store {
             let row = conn.query_row(
                 "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
                         increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                        kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name
+                        kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name, training_method
                  FROM training_plans
                  WHERE status IN ('draft', 'active', 'pushed')
                  ORDER BY created_ts DESC LIMIT 1",
@@ -1697,6 +1699,7 @@ impl Store {
                         r.get::<_, Option<String>>(14)?,
                         r.get::<_, Option<String>>(15)?,
                         r.get::<_, Option<String>>(16)?,
+                        r.get::<_, String>(17)?,
                     ))
                 },
             );
@@ -1720,9 +1723,11 @@ impl Store {
                     threshold_state,
                     start_date,
                     name,
+                    training_method,
                 )) => TrainingPlan {
                     id,
                     distance: distance_from(&dist),
+                    training_method: serde_json::from_value(serde_json::Value::String(training_method))?,
                     kind: plan_kind_from(&kind),
                     start_date: start_date.as_deref().map(parse_date).transpose()?,
                     target_date: parse_date(&target)?,
@@ -1806,7 +1811,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT id, distance, target_date, status, weekly_frequency, longrun_day,
                     increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                    kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name
+                    kind, quality_offset_sec_km, quality_offset_from, threshold_state, start_date, name, training_method
              FROM training_plans ORDER BY created_ts DESC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -1828,6 +1833,7 @@ impl Store {
                 r.get::<_, Option<String>>(14)?,
                 r.get::<_, Option<String>>(15)?,
                 r.get::<_, Option<String>>(16)?,
+                r.get::<_, String>(17)?,
             ))
         })?;
         let mut out = Vec::new();
@@ -1850,10 +1856,12 @@ impl Store {
                 threshold_state,
                 start_date,
                 name,
+                training_method,
             ) = row?;
             out.push(TrainingPlan {
                 id,
                 distance: distance_from(&dist),
+                training_method: serde_json::from_value(serde_json::Value::String(training_method))?,
                 kind: plan_kind_from(&kind),
                 start_date: start_date.as_deref().map(parse_date).transpose()?,
                 target_date: parse_date(&target)?,
@@ -1898,8 +1906,8 @@ impl Store {
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
                 longrun_day, increase, threshold_sec_km, created_ts, pushed_id, baseline_weekly_km,
-                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+                     kind, quality_offset_sec_km, quality_offset_from, rev, threshold_state, start_date, name, training_method)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 plan.id,
                 distance_name(plan.distance),
@@ -1919,7 +1927,8 @@ impl Store {
                 rev,
                 plan.threshold_state.as_ref().map(serde_json::to_string).transpose()?,
                 plan.start_date.map(|date| date.format("%Y-%m-%d").to_string()),
-                plan.name.as_deref().map(str::trim).filter(|n| !n.is_empty())
+                plan.name.as_deref().map(str::trim).filter(|n| !n.is_empty()),
+                serde_json::to_value(plan.training_method)?.as_str().unwrap(),
             ],
         )?;
         for w in workouts {
@@ -3761,6 +3770,7 @@ mod tests {
         assert!(m.total_m >= m.this_week_m);
 
         let req = crate::types::PlanRequest {
+            training_method: crate::types::TrainingMethod::Norwegian,
             start_date: None,
             distance: crate::types::RaceDistance::K21,
             kind: crate::types::PlanKind::Race,

@@ -1,5 +1,7 @@
 # Norwegian-Inspired Threshold Engine
 
+New plans default to this method and can instead select the independent [Runna-like heuristic](runna-like-plan-model.md). The selected method is stored with the plan; the shared evidence and recovery safeguards apply to both.
+
 ## Purpose and Evidence
 
 This is a conservative individualized training heuristic, not an implementation of an elite athlete's schedule, a lactate meter, an injury diagnosis, or a claim that Norwegian training is universally superior. Its scores and policy cutoffs are engineering/coaching assumptions, not clinically validated probabilities or physiological laws.

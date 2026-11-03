@@ -270,10 +270,20 @@ pub enum WorkoutKind {
     Race,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingMethod {
+    #[default]
+    Norwegian,
+    RunnaLike,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanRequest {
     pub distance: RaceDistance,
+    #[serde(default)]
+    pub training_method: TrainingMethod,
     /// What the plan is built for. Absent on requests stored before plan
     /// kinds existed, and on any caller that only speaks race dates: both
     /// mean a race build, which is what every plan in the database is.
@@ -305,6 +315,8 @@ pub struct PlanRequest {
 pub struct TrainingPlan {
     pub id: String,
     pub distance: RaceDistance,
+    #[serde(default)]
+    pub training_method: TrainingMethod,
     /// What the plan is built for; `Race` for plans stored before kinds existed.
     #[serde(default = "PlanKind::default_race")]
     pub kind: PlanKind,

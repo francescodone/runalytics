@@ -128,6 +128,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
   :root { --control-surface: var(--glass-control); }
 }
 :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is([aria-current], [aria-selected="true"], [aria-pressed="true"]) { color: var(--desk-action); border-color: var(--desk-action); background: var(--state-selected); }
+.desk-navigation a[aria-current] { color: var(--desk-blue); border-color: var(--desk-blue); background: color-mix(in srgb, var(--desk-blue) 14%, var(--desk-surface)); }
 :is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker) .selection-marker { inset: 0; height: auto; background: var(--state-selected); transition: background-color var(--motion-feedback) var(--motion-settle); box-shadow: none; }
 .horizon-switch a, .pace-mode button { font-weight: var(--weight-semibold); }
 .desk-navigation a { font-weight: var(--weight-semibold); }
@@ -136,7 +137,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .dialog-grip { display: none; }
 .desk-dialog::backdrop, .inspector-backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }
 .desk-dialog[data-state="closing"]::backdrop, .inspector-backdrop[data-state="closing"] { animation: scrim-leave var(--motion-exit) var(--motion-leave) both; }
-.notification-viewport { position: fixed; inset: auto 0 var(--space-6); margin: 0 auto; width: min(520px, calc(100% - 2 * var(--page-gutter))); max-height: calc(100dvh - 120px); padding: 0; border: 0; background: transparent; overflow: auto; pointer-events: none; z-index: var(--layer-notification); }
+.notification-viewport { position: fixed; inset: auto 0 var(--space-6); margin: 0 auto; width: min(520px, calc(100% - 2 * var(--page-gutter))); max-height: calc(100dvh - 120px); padding: var(--space-2); border: 0; border-radius: calc(var(--radius-overlay) + var(--space-2)); background: transparent; overflow: auto; pointer-events: none; z-index: var(--layer-notification); }
 .notification-viewport:not([popover]) { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport:popover-open { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport::backdrop { display: none; }

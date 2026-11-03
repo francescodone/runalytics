@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::engine::Phase;
-use crate::types::{PlanKind, PlanWorkout, RaceDistance, TrainingPlan, WorkoutKind};
+use crate::types::{PlanKind, PlanWorkout, RaceDistance, TrainingMethod, TrainingPlan, WorkoutKind};
 use chrono::{Datelike, NaiveDate};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,7 +175,16 @@ pub(super) fn week_quality(
 
 pub(super) fn quality_for_plan(plan: &TrainingPlan, week: usize, weeks: usize) -> WeekQuality {
     let mut quality = week_quality(plan.kind, plan.distance, week, weeks);
-    if plan.threshold_state.is_some() {
+    if plan.training_method == TrainingMethod::RunnaLike && plan.kind.has_race()
+        && weeks.saturating_sub(week) <= super::engine::method_taper_weeks(plan.kind, plan.distance, weeks, plan.training_method) as usize {
+        quality = WeekQuality {
+            threshold: QualityPattern::Cruise,
+            speed: QualityPattern::Repeats(400),
+            single: QualityPattern::Repeats(400),
+            emphasis: QualityPattern::Repeats(400),
+        };
+    }
+    if plan.training_method == TrainingMethod::Norwegian && plan.threshold_state.is_some() {
         let cap = plan.threshold_state.as_ref().unwrap().quality_minutes_cap;
         let duration = if cap < 24.0 { 180 } else { [180, 360, 600][week % 3] };
         quality.threshold = QualityPattern::Controlled(duration);
@@ -186,7 +195,9 @@ pub(super) fn quality_for_plan(plan: &TrainingPlan, week: usize, weeks: usize) -
 }
 
 pub(super) fn long_pattern_for_plan(plan: &TrainingPlan, week: usize, weeks: usize) -> LongRunPattern {
-    if plan.threshold_state.as_ref().is_some_and(|state| !state.allow_second_quality) {
+    if plan.threshold_state.as_ref().is_some_and(|state| !state.allow_second_quality)
+        || (plan.training_method == TrainingMethod::RunnaLike && plan.kind.has_race()
+            && weeks.saturating_sub(week) <= super::engine::method_taper_weeks(plan.kind, plan.distance, weeks, plan.training_method) as usize) {
         LongRunPattern::Easy
     } else {
         long_run_pattern(plan.kind, plan.distance, week, weeks)
@@ -441,14 +452,7 @@ fn plan_week(plan: &TrainingPlan, workout: &PlanWorkout) -> (usize, usize) {
 /// end-of-plan load scaled by how far through the build that week sits.
 pub(super) fn workout_load(plan: &TrainingPlan, workout: &PlanWorkout) -> Option<f64> {
     let (weeks, week) = plan_week(plan, workout);
-    plan.baseline_weekly_km.map(|baseline| {
-        let load = super::engine::quality_load_at(
-            plan.distance,
-            baseline,
-            super::engine::fitness_progress(plan.kind, plan.distance, weeks, week),
-        );
-        plan.threshold_state.as_ref().map_or(load, |state| load.min(state.quality_minutes_cap))
-    })
+    plan.baseline_weekly_km.map(|_| super::engine::quality_load_for_plan(plan, weeks, week))
 }
 
 /// The quality-pace offset in force for a session on `date`.
@@ -1009,6 +1013,7 @@ mod tests {
 
     fn request(distance: RaceDistance, weeks: i64, threshold: f64, baseline: f64) -> PlanRequest {
         PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance,
             kind: PlanKind::Race,
@@ -1020,6 +1025,71 @@ mod tests {
             current_weekly_km: Some(baseline),
             name: None,
         }
+    }
+
+    #[test]
+    fn training_method_changes_generated_sessions_without_dropping_safety_state() {
+        let mut req = request(RaceDistance::K10, 12, 285.0, 40.0);
+        let (norwegian, controlled) = super::super::engine::generate(&req, 40.0).unwrap();
+        req.training_method = TrainingMethod::RunnaLike;
+        let (runna, varied) = super::super::engine::generate(&req, 40.0).unwrap();
+        assert_eq!(norwegian.training_method, TrainingMethod::Norwegian);
+        assert_eq!(runna.training_method, TrainingMethod::RunnaLike);
+        assert!(controlled.iter().all(|workout| workout.kind != WorkoutKind::Intervals));
+        assert!(varied.iter().any(|workout| workout.kind == WorkoutKind::Intervals));
+        assert!(varied.iter().any(|workout| workout.kind == WorkoutKind::Tempo));
+        assert_eq!(norwegian.threshold_state.as_ref().unwrap().quality_minutes_cap, runna.threshold_state.as_ref().unwrap().quality_minutes_cap);
+        for workout in varied.iter().filter(|workout| matches!(workout.kind, WorkoutKind::Intervals | WorkoutKind::Tempo)) {
+            let details = details_for_plan(workout, &runna);
+            assert!(!details.steps.is_empty());
+            let distance: f64 = details.steps.iter().map(|step| step.distance_m * step.repeats as f64 + step.recovery_m * step.repeats.saturating_sub(1) as f64).sum();
+            assert!((distance - workout.distance_m.unwrap()).abs() < 1.0);
+        }
+    }
+
+    #[test]
+    fn training_method_defaults_and_rejects_unknown_values() {
+        let req = request(RaceDistance::K10, 12, 285.0, 40.0);
+        let mut json = serde_json::to_value(&req).unwrap();
+        json.as_object_mut().unwrap().remove("trainingMethod");
+        assert_eq!(serde_json::from_value::<PlanRequest>(json.clone()).unwrap().training_method, TrainingMethod::Norwegian);
+        json["trainingMethod"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<PlanRequest>(json).is_err());
+    }
+
+    #[test]
+    fn training_method_runna_like_keeps_injury_hold() {
+        let mut req = request(RaceDistance::K10, 12, 285.0, 40.0);
+        req.training_method = TrainingMethod::RunnaLike;
+        let mut evidence = super::super::threshold::Evidence::default();
+        evidence.capacity.injury_active = Some(true);
+        let (plan, workouts) = super::super::engine::generate_with_evidence(&req, 40.0, &evidence).unwrap();
+        assert!(plan.threshold_state.as_ref().unwrap().hold_quality);
+        assert!(workouts.iter().all(|workout| !matches!(workout.kind, WorkoutKind::Intervals | WorkoutKind::Tempo | WorkoutKind::Race)));
+    }
+
+    #[test]
+    fn training_method_taper_and_long_run_progression_are_bounded() {
+        let mut req = request(RaceDistance::K42, 16, 285.0, 40.0);
+        req.training_method = TrainingMethod::RunnaLike;
+        let (plan, workouts) = super::super::engine::generate(&req, 40.0).unwrap();
+        assert_eq!(super::super::engine::method_taper_weeks(plan.kind, plan.distance, 16, plan.training_method), 3);
+        let first_long = workouts.iter().find(|workout| workout.kind == WorkoutKind::LongRun).unwrap();
+        assert_eq!(first_long.distance_m, Some(18_000.0));
+        let mut previous_build = 0.0_f64;
+        for workout in workouts.iter().filter(|workout| workout.kind == WorkoutKind::LongRun) {
+            let (weeks, week) = plan_week(&plan, workout);
+            if week + 3 >= weeks { continue; }
+            let km = workout.distance_m.unwrap() / 1000.0;
+            assert!(km <= 35.0);
+            if !super::super::engine::week_is_down(&plan, workout.date) {
+                if previous_build > 0.0 { assert!(km <= previous_build + 2.0); }
+                previous_build = km;
+            }
+        }
+        assert_eq!(long_pattern_for_plan(&plan, 13, 16), LongRunPattern::Easy);
+        assert!(super::super::engine::quality_load_for_plan(&plan, 16, 13) < super::super::engine::quality_load_for_plan(&plan, 16, 12));
+        assert!(super::super::engine::quality_load_for_plan(&plan, 16, 14) < super::super::engine::quality_load_for_plan(&plan, 16, 13));
     }
 
     #[test]
@@ -1206,6 +1276,7 @@ mod tests {
     #[test]
     fn steps_preserve_distance_and_include_recovery_and_pace_ranges() {
         let request = PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,

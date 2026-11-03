@@ -55,6 +55,13 @@ export const PALETTES: {
   { id: "tide", name: "Deep Tide", blurb: "Layers of ocean teal", swatch: ["#123737", "#176b6a", "#91d9d2"], bar: "#176b6a" },
   { id: "aurora", name: "Aurora Run", blurb: "Teal, violet and coral", swatch: ["#166b68", "#6d4aa4", "#c55b52"], bar: "#166b68" },
   { id: "summit", name: "Summit Sunrise", blurb: "Copper, blue and alpine green", swatch: ["#a84a2e", "#285fa5", "#317756"], bar: "#a84a2e" },
+  { id: "coastline", name: "Coastal Relay", blurb: "Ocean blue, sea green and coral", swatch: ["#225f9a", "#187465", "#bd594b"], bar: "#225f9a" },
+  { id: "wildflower", name: "Wildflower Miles", blurb: "Berry, forest and gold", swatch: ["#963e6c", "#31715a", "#a46912"], bar: "#963e6c" },
+  { id: "citrus", name: "Citrus Grove", blurb: "Golden citrus and fresh leaves", swatch: ["#8b6200", "#497323", "#b55330"], bar: "#8b6200" },
+  { id: "cobalt", name: "Cobalt Horizon", blurb: "Deep and brilliant blues", swatch: ["#17375f", "#285ea1", "#a9caff"], bar: "#285ea1" },
+  { id: "moss", name: "Moss Trail", blurb: "Quiet shades of green", swatch: ["#263b24", "#526c35", "#c0d9a4"], bar: "#526c35" },
+  { id: "garnet", name: "Garnet Pace", blurb: "Rich red tones", swatch: ["#4b2029", "#963c4c", "#f0b4bf"], bar: "#963c4c" },
+  { id: "ochre", name: "Golden Hour", blurb: "Warm golden tones", swatch: ["#493719", "#866000", "#e8cc83"], bar: "#866000" },
 ];
 
 const PALETTE_KEY = "runalytics.palette";

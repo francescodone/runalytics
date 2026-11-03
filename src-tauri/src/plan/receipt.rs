@@ -42,7 +42,7 @@ pub struct ReceiptLine {
 pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine> {
     let weeks = engine::weeks_of(plan);
     let down = engine::down_weeks(plan);
-    let taper = engine::taper_weeks_for(plan.kind, plan.distance);
+    let taper = engine::method_taper_weeks(plan.kind, plan.distance, weeks, plan.training_method);
     let first_week = workouts
         .iter()
         .map(|w| w.planned_date)
@@ -110,12 +110,23 @@ pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine
     // 3. Threshold pace — it sets every pace band in the plan.
     lines.push(ReceiptLine {
         input: format!("{} per km", fmt_pace(plan.threshold_sec_km as i64)),
-        sentence: if let Some(state) = &plan.threshold_state {
+        sentence: if plan.training_method == crate::types::TrainingMethod::RunnaLike {
+            "Pace targets reflect your current fitness, not a goal time. Interval and tempo formats vary through the block; quality load remains limited by recovery evidence.".into()
+        } else if let Some(state) = &plan.threshold_state {
             format!("Threshold pace is held between assessments (evidence confidence {:.0}%). Controlled work is capped at {:.0} minutes per session; faster repetitions alone do not raise the target.", state.threshold_confidence * 100.0, state.quality_minutes_cap)
         } else { format!(
             "Every pace in the plan is cut from this one number: {} is your threshold, so tempo sits around it and easy days sit well back from it.",
             fmt_pace(plan.threshold_sec_km as i64)
         ) },
+    });
+
+    lines.push(ReceiptLine {
+        input: if plan.training_method == crate::types::TrainingMethod::RunnaLike { "Runna-like" } else { "Norwegian method" }.into(),
+        sentence: if plan.training_method == crate::types::TrainingMethod::RunnaLike {
+            "Varied intervals, tempo and long runs follow a progressive build with recovery weeks. This is an independent heuristic inspired by Runna's public guidance, not its proprietary algorithm."
+        } else {
+            "Controlled sub-threshold repetitions support consistency, with easy running between quality days and recovery-based limits on intensity."
+        }.into(),
     });
 
     // 4. How many days a week.
@@ -298,6 +309,7 @@ mod tests {
     fn request(days_out: i64) -> PlanRequest {
         let today = Utc::now().date_naive();
         PlanRequest {
+            training_method: TrainingMethod::Norwegian,
             start_date: None,
             distance: RaceDistance::K10,
             kind: PlanKind::Race,

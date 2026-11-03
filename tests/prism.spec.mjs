@@ -4,6 +4,228 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 1440]) {
+    test(`Prism compact health workflow ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/desk.html?theme=${theme}#health`);
+      const navigation = page.getByRole("navigation", { name: "Health view" });
+      const details = page.getByRole("button", { name: "Show health details", exact: true });
+      await expect(details).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator("#health-details")).toBeHidden();
+      await assertLayout(page, `health ${theme} ${width}`);
+      if (width <= 800) {
+        await expect(page.locator(".health-heading")).toBeHidden();
+        await expect(details).toBeInViewport();
+        const geometry = await page.evaluate(() => ({
+          tabs: [...document.querySelectorAll(".health-toolbar a")].map(element => ({ top: element.offsetTop, height: element.getBoundingClientRect().height, width: element.getBoundingClientRect().width })),
+          metrics: [...document.querySelectorAll(".health-verdict .desk-metric")].map(element => ({ top: element.offsetTop, height: element.getBoundingClientRect().height })),
+          detailsBottom: document.querySelector(".health-detail-toggle").getBoundingClientRect().bottom,
+          navigationTop: document.querySelector(".desk-navigation").getBoundingClientRect().top,
+        }));
+        expect(new Set(geometry.tabs.map(tab => tab.top)).size).toBe(1);
+        expect(geometry.tabs.every(tab => tab.width >= 44 && tab.height >= 44)).toBe(true);
+        expect(new Set(geometry.metrics.map(metric => metric.top)).size).toBe(1);
+        expect(geometry.metrics.every(metric => metric.height < 90)).toBe(true);
+        expect(geometry.detailsBottom).toBeLessThan(geometry.navigationTop);
+      } else await expect(page.locator(".health-heading")).toBeVisible();
+      const period = page.getByRole("combobox", { name: "Health period", exact: true });
+      await period.selectOption("1mo");
+      await expect(period).toHaveValue("1mo");
+      await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "dashboard").at(-1)?.args?.range)).toBe("1mo");
+      await page.getByRole("button", { name: "Data for readiness", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Data for readiness", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Data for readiness", exact: true })).toBeFocused();
+      await details.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#health-details")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Daily health history", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Hide health details", exact: true }).click();
+      await expect(page.locator("#health-details")).toBeHidden();
+      await page.screenshot({ path: testInfo.outputPath("health-overview.png") });
+      for (const label of ["Pace insights", "Milestones", "Pain journal"]) {
+        await navigation.getByRole("link", { name: label, exact: true }).click();
+        await expect(navigation.getByRole("link", { name: label, exact: true })).toHaveAttribute("aria-current", "page");
+        await assertLayout(page, `${label} ${theme} ${width}`);
+      }
+      await page.getByRole("button", { name: "Log pain", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Log pain", exact: true });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("combobox", { name: "Body region", exact: true }).selectOption({ index: 1 });
+      await dialog.getByRole("textbox", { name: "Notes", exact: true }).fill("Mobile check");
+      await page.evaluate(() => { window.__deskFail = "save_pain_entry"; });
+      await dialog.getByRole("button", { name: "Save pain entry", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      await expect(dialog.getByRole("textbox", { name: "Notes", exact: true })).toHaveValue("Mobile check");
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Log pain", exact: true })).toBeFocused();
+    });
+  }
+}
+
+for (const width of [320, 390]) {
+  test(`Prism compact health keeps warning and fallback states at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 });
+    await page.addInitScript(() => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        if (command !== "dashboard") return result;
+        return { ...result, scoreHistory: [], trainingStatus: null, recoveryBand: null, activePain: { bodyPart: "knee_left", intensity: 6, startedOn: "2026-11-01" } };
+      };
+    });
+    await page.goto("/desk.html#health");
+    await expect(page.getByRole("heading", { name: "Building your baseline", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Building your readiness history", exact: true })).toBeVisible();
+    await expect(page.locator(".proposal-prompt")).toContainText("6/10 pain");
+    await assertLayout(page, `health warning ${width}`);
+    const period = page.getByRole("combobox", { name: "Health period", exact: true });
+    await page.evaluate(() => { window.__deskFail = "dashboard"; });
+    await period.selectOption("1d");
+    await expect(page.getByRole("alert")).toBeVisible();
+    await page.evaluate(() => { window.__deskFail = ""; });
+    await page.getByRole("button", { name: "Try again", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(period).toHaveValue("1d");
+    await page.getByRole("button", { name: "Review episode", exact: true }).click();
+    await expect(page).toHaveURL(/#health\/journal$/);
+    await expect(page.getByRole("button", { name: "Log pain", exact: true })).toBeVisible();
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 1440]) {
+    test(`Prism compact plan workflow ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/desk.html?theme=${theme}#training/plan`);
+      const current = page.locator(".roadmap-row.is-current");
+      await expect(current).toBeInViewport({ ratio: .9 });
+      await expect(current).toHaveAttribute("aria-current", "date");
+      await expect(page.locator(".training-context h2")).toBeInViewport();
+      await assertLayout(page, `plan ${theme} ${width}`);
+      const details = page.locator(".plan-basis");
+      if (width <= 800) {
+        await expect(details).not.toHaveAttribute("open", "");
+        const geometry = await page.evaluate(() => ({
+          metrics: document.querySelector(".plan-overview .metrics-line").getBoundingClientRect().height,
+          row: document.querySelector(".roadmap-row.is-current").getBoundingClientRect().height,
+          targets: [...document.querySelectorAll(".training-toolbar button, .training-toolbar a")].map(element => element.getBoundingClientRect().height),
+        }));
+        expect(geometry.metrics).toBeLessThan(130);
+        expect(geometry.row).toBeLessThan(110);
+        expect(geometry.targets.every(height => height >= 44)).toBe(true);
+        await details.locator("summary").focus();
+        await page.keyboard.press("Enter");
+      }
+      await expect(details.getByRole("heading", { name: "Plan basis", exact: true })).toBeVisible();
+      await details.getByRole("button", { name: "End current plan", exact: true }).click();
+      const end = page.getByRole("dialog", { name: "End current plan?", exact: true });
+      await expect(end).toBeVisible();
+      await end.getByRole("button", { name: "Keep plan", exact: true }).click();
+      await expect(end).toHaveCount(0);
+      if (width <= 800) await details.locator("summary").click();
+      await page.getByRole("button", { name: "Schedule race or test", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Schedule race or test", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await current.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("plan.png") });
+      await current.click();
+      await expect(page).toHaveURL(/#training\/week$/);
+      if (width <= 800) await expect(page.locator(".day-itinerary h3")).toContainText("Today");
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 375, 390, 768]) {
+    test(`Prism mobile today-first training ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.addInitScript(() => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+          const result = await invoke(command, args);
+          if (command !== "calendar_events") return result;
+          const now = new Date();
+          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+          return [...result.filter(event => event.date !== today), { ...result[0], id: "mobile-today", workoutId: "mobile-today", date: today, title: "Easy run 7 km", kind: "easy", distanceM: 7000, done: false, activityId: null }];
+        };
+      });
+      await page.goto(`/desk.html?theme=${theme}&palette=aurora#training`);
+      const itinerary = page.locator(".day-itinerary");
+      await expect(itinerary.getByRole("heading")).toContainText("Today");
+      const session = itinerary.getByRole("button", { name: /Easy run 7 km/ });
+      await expect(session).toBeInViewport();
+      await page.evaluate(() => document.fonts.ready);
+      const geometry = await page.evaluate(() => {
+        const bounds = selector => document.querySelector(selector).getBoundingClientRect();
+        const horizon = bounds(".horizon-switch");
+        const dates = bounds(".date-controls");
+        const session = bounds(".day-itinerary .session-tile");
+        const navigation = bounds(".desk-navigation");
+        const actions = bounds(".training-secondary-actions");
+        return { alignment: horizon.y - dates.y, sessionBottom: session.bottom, navigationTop: navigation.y, bottomGap: innerHeight - navigation.bottom, actionsTop: actions.y, tintedGlass: getComputedStyle(document.querySelector(".desk-navigation")).getPropertyValue("--glass-navigation") !== getComputedStyle(document.documentElement).getPropertyValue("--glass-navigation"), controls: [...document.querySelectorAll(".training-toolbar a, .training-toolbar button")].map(element => element.getBoundingClientRect().height) };
+      });
+      expect(Math.abs(geometry.alignment)).toBeLessThan(1);
+      expect(geometry.sessionBottom).toBeLessThan(geometry.navigationTop);
+      expect(geometry.actionsTop).toBeGreaterThan(geometry.sessionBottom);
+      expect(geometry.bottomGap).toBe(4);
+      expect(geometry.tintedGlass).toBe(true);
+      expect(geometry.controls.every(height => height >= 44)).toBe(true);
+      await assertLayout(page, `today-first ${theme} ${width}`);
+      await page.screenshot({ path: testInfo.outputPath("today-first.png") });
+      await page.getByRole("button", { name: "Next week", exact: true }).click();
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      await expect(itinerary.getByRole("heading")).toContainText("Today");
+      await page.getByRole("button", { name: "Reset week", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Reset this week", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Schedule race or test", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Schedule race or test", exact: true })).toBeVisible();
+    });
+  }
+}
+
+for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`Prism mobile scroll-aware topbar ${reducedMotion}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 640 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/desk.html#training/month");
+    await expect(page.locator(".month-board")).toBeVisible();
+    await expect(page.locator(".training-context")).toHaveAttribute("data-reveal", "settled");
+    const navigation = page.getByRole("navigation", { name: "Workspaces" });
+    const before = await navigation.boundingBox();
+    await page.mouse.move(8, 400);
+    await page.mouse.wheel(0, 180);
+    await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeHidden();
+    await expect(navigation).toBeVisible();
+    expect(await navigation.boundingBox()).toEqual(before);
+    await page.screenshot({ path: testInfo.outputPath("topbar-hidden.png") });
+    await page.mouse.wheel(0, -8);
+    await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    await page.locator("#workspace").evaluate(element => { element.scrollTop += 100; });
+    await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
+    await navigation.getByRole("link", { name: "Health", exact: true }).click();
+    await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+  });
+}
+
+test("Prism mobile opaque topbar hides its background without hiding navigation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 640 });
+  await page.emulateMedia({ contrast: "more" });
+  await page.goto("/desk.html#training/month");
+  await expect(page.locator(".month-board")).toBeVisible();
+  await page.locator("#workspace").evaluate(element => { element.scrollTop = 180; });
+  await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
+  await expect.poll(() => page.locator(".desk-appbar").evaluate(element => getComputedStyle(element, "::before").visibility)).toBe("hidden");
+  await expect(page.locator(".desk-appbar")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.getByRole("navigation", { name: "Workspaces" })).toBeVisible();
+  await expect(page.locator(".desk-navigation")).toHaveCSS("background-image", "none");
+});
+
 for (const width of [320, 375, 390, 820, 1440]) {
   test(`Prism brand stays centered and follows every accent at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
@@ -394,7 +616,7 @@ for (const width of [320, 820, 1440]) {
   test(`Prism enlarged text ${width}px`, async ({ page }, testInfo) => {
     test.setTimeout(60000);
     await page.setViewportSize({ width, height: 960 });
-    for (const route of ["training", "training/month", "settings/thresholds", "settings/appearance", "help"]) {
+    for (const route of ["training", "training/month", "training/plan", "health", "health/pace", "health/journal", "health/milestones", "settings/thresholds", "settings/appearance", "help"]) {
       await page.goto(`/desk.html#${route}`);
       await page.addStyleTag({ content: ":root { font-size: 200%; }" });
       await assertLayout(page, `200% text ${route} ${width}`);
