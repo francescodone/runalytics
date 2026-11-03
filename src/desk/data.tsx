@@ -55,17 +55,20 @@ type StageOp = { lines: StageLine[]; settled: boolean };
 /// What the runner reads for each mirror. The order the backend opens the
 /// lines in (DB first, then calendar, gist, watch) is kept as-is: it is the
 /// chronological order the work actually happens in.
-const STAGE_LABELS: Record<string, string> = { db: "local DB", calendar: "calendar", gist: "gist", coros: "COROS calendar" };
+const STAGE_LABELS: Record<string, string> = { db: "local DB", calendar: "calendar", gist: "gist", coros: "COROS calendar", strava: "Strava" };
 function stageText(line: StageLine): string {
   const label = STAGE_LABELS[line.target] ?? line.target;
   if (line.state === "working") return `Updating ${label}…`;
+  if (line.target === "strava" && line.detail) return line.state === "error" ? `Updating Strava failed: ${line.detail}` : line.detail;
   return line.state === "done" ? `Updated ${label}` : `Updating ${label} failed`;
 }
-type WorkspaceContext = { revision: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
-const Context = createContext<WorkspaceContext>({ revision: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
+type WorkspaceContext = { revision: number; planCheck: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
+const Context = createContext<WorkspaceContext>({ revision: 0, planCheck: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
 export const useWorkspace = () => useContext(Context);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
+  const [planCheck, setPlanCheck] = useState(0);
+  const planUpdates = useRef(0);
   const [notices, setNotices] = useState<NonNullable<Notice>[]>([]);
   const notice = notices[0] ?? null;
   const setNotice = (next: Notice, immediate = false) => setNotices(previous => {
@@ -94,9 +97,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!result.ok) setNotice({text:"Background sync failed. Check your watch connection and try again."});
     });
     register<PlanSyncProgress>("plan://sync", progress => setPlanProgress(progress));
+    register<{ discarded?: boolean }>("plan://updated", result => {
+      planUpdates.current += 1;
+      setRevision(value => value + 1);
+      if (result?.discarded) setNotice({ text: "The Gist changed on another device. Its latest plan replaced unpublished local changes." });
+    });
+    register("plan://checked", () => setPlanCheck(value => value + 1));
     register<StageEvent>("plan://stage", event => setStageOps(previous => {
       const current = previous[event.op] ?? { lines: [], settled: false };
-      if (event.target === "op") return { ...previous, [event.op]: { ...current, settled: event.state !== "working" } };
+      if (event.target === "op") return { ...previous, [event.op]: { lines: event.state === "working" ? [] : current.lines, settled: event.state !== "working" } };
       const lines = current.lines.slice();
       const index = lines.findIndex(line => line.target === event.target);
       const line: StageLine = { target: event.target, state: event.state, detail: event.detail ?? null };
@@ -105,6 +114,64 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }));
     void tauri.syncStatus().then(value => { if (!disposed && !receivedEvent) setSyncing(value); }).catch(() => undefined);
     return () => { disposed = true; stops.forEach(stop => stop()); };
+  }, []);
+  useEffect(() => {
+    if (!inTauri) return;
+    let disposed = false;
+    let pending = false;
+    let requested = false;
+    let timer = 0;
+    let failures = 0;
+    let retryAt = 0;
+    let lastAttempt = 0;
+    const eligible = () => !disposed && document.visibilityState === "visible" && navigator.onLine;
+    const check = async () => {
+      if (!eligible() || Date.now() < retryAt) return;
+      if (pending) { requested = true; return; }
+      if (Date.now() - lastAttempt < 2000) {
+        timer = window.setTimeout(() => void check(), 2000 - (Date.now() - lastAttempt));
+        return;
+      }
+      pending = true;
+      requested = false;
+      lastAttempt = Date.now();
+      try {
+        const status = await tauri.planSyncStatus();
+        if (!eligible() || !status.config.enabled || !status.config.hasToken || !status.accountLinked) return;
+        const before = planUpdates.current;
+        const changed = await tauri.planSyncRefresh();
+        if (changed && before === planUpdates.current && !disposed) setRevision(value => value + 1);
+        failures = 0;
+      } catch {
+        failures += 1;
+        retryAt = Date.now() + Math.min(300000, 15000 * 2 ** Math.min(failures - 1, 5));
+        timer = window.setTimeout(() => void check(), retryAt - Date.now());
+      } finally {
+        pending = false;
+        if (requested && !disposed) {
+          requested = false;
+          timer = window.setTimeout(() => void check(), Math.max(2000, retryAt - Date.now()));
+        }
+      }
+    };
+    const changed = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void check(), 150); };
+    window.addEventListener("focus", changed);
+    window.addEventListener("pageshow", changed);
+    window.addEventListener("online", changed);
+    window.addEventListener("runalytics:plan-sync-enabled", changed);
+    document.addEventListener("visibilitychange", changed);
+    const interval = window.setInterval(() => void check(), 60000);
+    changed();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", changed);
+      window.removeEventListener("pageshow", changed);
+      window.removeEventListener("online", changed);
+      window.removeEventListener("runalytics:plan-sync-enabled", changed);
+      document.removeEventListener("visibilitychange", changed);
+    };
   }, []);
   useEffect(() => {
     const changed = () => setRevision(value => value + 1);
@@ -150,7 +217,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     timer = window.setTimeout(expire, NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [stagesQuiet, stageOps]);
-  return <Context.Provider value={{ revision, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
+  return <Context.Provider value={{ revision, planCheck, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
     {children}
     <NotificationViewport>
     <Presence>{notice && <Notification key="notice" elementRef={noticeRef} onDismiss={() => setNotice(null)} dismissDisabled={acting} countdown={!acting} countdownKey={notice.text} actions={notice.action && <button type="button" disabled={acting} onClick={async () => {

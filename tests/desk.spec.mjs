@@ -4,6 +4,214 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+test.describe("plan freshness", () => {
+  test("failed checks retry without overwriting the visible plan and remote endings clear it", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => { window.__deskFail = "plan_sync_refresh"; });
+    await page.goto("/desk.html#training/plan");
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+    await page.evaluate(async () => {
+      const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+      window.__deskRemotePlan = [{ ...pair[0], name: "Recovered remote plan" }, pair[1]];
+      window.__deskFail = "";
+    });
+    await page.clock.fastForward(16000);
+    await expect(page.locator("#workspace")).toContainText("Recovered remote plan");
+    await page.evaluate(() => { window.__deskRemotePlan = null; window.dispatchEvent(new Event("online")); });
+    await page.clock.fastForward(2500);
+    await expect.poll(() => page.evaluate(() => window.__TAURI_INTERNALS__.invoke("current_plan"))).toBeNull();
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_push").length)).toBe(0);
+  });
+
+  test("open inspectors refresh evidence and retain drafts when a remote session disappears", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/desk.html");
+    await page.getByRole("button", { name: "Next week", exact: true }).click();
+    const tile = page.locator(".week-board .session-tile.movable").first();
+    const workoutId = await tile.getAttribute("data-workout-id");
+    await tile.click();
+    const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+    const date = inspector.getByLabel("Run on", { exact: true });
+    const draft = "2026-12-01";
+    await date.fill(draft);
+    await page.evaluate(async workoutId => {
+      const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+      window.__deskRemotePlan = [pair[0], pair[1].map(workout => workout.id === workoutId ? { ...workout, title: "Updated remote prescription" } : workout)];
+      await window.__TAURI_INTERNALS__.invoke("plan_sync_refresh");
+    }, workoutId);
+    await expect(inspector.getByRole("heading", { name: "Updated remote prescription" })).toBeVisible();
+    await expect(date).toHaveValue(draft);
+    await page.evaluate(async workoutId => {
+      const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+      window.__deskRemotePlan = [pair[0], pair[1].filter(workout => workout.id !== workoutId)];
+      await window.__TAURI_INTERNALS__.invoke("plan_sync_refresh");
+    }, workoutId);
+    await expect(inspector.getByRole("alert")).toContainText("no longer in the latest plan");
+    await expect(date).toHaveValue(draft);
+    await expect(inspector.getByRole("button", { name: "Move session", exact: true })).toBeDisabled();
+    await expect(inspector.getByRole("button", { name: "Skip session", exact: true })).toBeDisabled();
+  });
+
+  for (const width of [320, 390, 768, 820, 1440]) {
+    for (const theme of ["light", "dark"]) {
+      test(`sync status fits ${width}px ${theme}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/desk.html?theme=${theme}#settings/calendar`);
+        await expect(page.getByRole("button", { name: "Check now", exact: true })).toBeEnabled();
+        await expect(page.getByText("Last checked", { exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        expect((await new AxeBuilder({ page }).include(".settings-editor").analyze()).violations).toEqual([]);
+        await page.screenshot({ path: test.info().outputPath(`plan-sync-${width}-${theme}.png`), fullPage: true });
+      });
+    }
+  }
+
+  for (const width of [390, 1440]) {
+    test(`foreground and polling adopt the Gist plan at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.clock.install();
+      await page.goto("/desk.html#training/plan");
+      await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+      await page.clock.fastForward(2500);
+      await page.evaluate(async () => {
+        const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+        window.__deskRemotePlan = [{ ...pair[0], id: "desktop-new", name: "Desktop replacement" }, pair[1].map(workout => ({ ...workout, planId: "desktop-new" }))];
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("pageshow"));
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.clock.fastForward(250);
+      await expect(page.locator("#workspace")).toContainText("Desktop replacement");
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(2);
+      await page.evaluate(async () => {
+        const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+        window.__deskRemotePlan = [{ ...pair[0], name: "Latest mobile edit" }, pair[1]];
+      });
+      await page.clock.fastForward(60000);
+      await expect(page.locator("#workspace")).toContainText("Latest mobile edit");
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_push").length)).toBe(0);
+    });
+  }
+
+  test("offline and hidden checks wait for reconnection and preserve credential drafts", async ({ page }) => {
+    await page.clock.install();
+    await page.goto("/desk.html#settings/calendar");
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+    const upload = page.getByLabel("Upload URL", { exact: true });
+    await upload.fill("https://example.test/unsaved-calendar.ics");
+    await page.evaluate(async () => {
+      const pair = await window.__TAURI_INTERNALS__.invoke("current_plan");
+      window.__deskRemotePlan = [{ ...pair[0], name: "Remote while offline" }, pair[1]];
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => false });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    });
+    await page.clock.fastForward(60000);
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      window.dispatchEvent(new Event("online"));
+    });
+    await page.clock.fastForward(250);
+    await expect.poll(() => page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[0].name)).toBe("Remote while offline");
+    await expect(upload).toHaveValue("https://example.test/unsaved-calendar.ics");
+    await expect(upload).toBeFocused();
+  });
+
+  test("event bursts do not overlap checks and disabled sync does not poll", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => { window.__deskHoldRefresh = true; });
+    await page.goto("/desk.html");
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+    await page.evaluate(() => { window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online")); });
+    await page.clock.fastForward(60000);
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+    await page.evaluate(async () => {
+      await window.__TAURI_INTERNALS__.invoke("plan_sync_configure", { config: { enabled: false } });
+      window.__deskHoldRefresh = false;
+      window.__deskReleaseRefresh();
+    });
+    await page.clock.fastForward(120000);
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
+  });
+});
+
+test.describe("Strava settings", () => {
+  test("strava credentials, privacy opt-in, pending retries and local disconnect", async ({ page }) => {
+    await page.goto("/desk.html#settings/strava");
+    await expect(page.getByRole("button", { name: "Connect with Strava" })).toBeDisabled();
+    await page.getByLabel("Strava Client ID", { exact: true }).fill("12345");
+    await page.getByLabel("Strava Client Secret", { exact: true }).fill("synthetic-secret");
+    await page.getByRole("button", { name: "Save API credentials" }).click();
+    await expect(page.getByLabel("Strava Client Secret", { exact: true })).toHaveValue("");
+    await page.getByRole("button", { name: "Save API credentials" }).click();
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "strava_configure").at(-1)?.args.clientSecret)).toBeNull();
+    await page.getByRole("button", { name: "Connect with Strava" }).click();
+    await expect(page.getByText("Strava connected: athlete 42", { exact: true })).toBeVisible();
+    const toggle = page.getByRole("checkbox", { name: "Update paired activity descriptions" });
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+    const confirmation = page.getByRole("dialog", { name: "Enable Strava description updates?" });
+    await expect(confirmation).toContainText("injury-risk information");
+    await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+    await confirmation.getByRole("button", { name: "Enable updates", exact: true }).click();
+    await expect(toggle).toBeChecked();
+    await page.getByRole("button", { name: "Retry pending descriptions" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "1 copied, 1 already present" })).toBeVisible();
+    await page.getByRole("button", { name: "Disconnect Strava" }).click();
+    const disconnect = page.getByRole("dialog", { name: "Disconnect Strava?" });
+    await expect(disconnect).toContainText("not revoked");
+    await page.keyboard.press("Escape");
+    await expect(disconnect).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Disconnect Strava" })).toBeFocused();
+    await page.getByRole("button", { name: "Disconnect Strava" }).click();
+    await disconnect.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await expect(page.getByText("Strava not connected", { exact: true })).toBeVisible();
+    await expect(toggle).not.toBeChecked();
+  });
+
+  test("strava failed secure save retains the credential draft", async ({ page }) => {
+    await page.goto("/desk.html#settings/strava");
+    await page.getByLabel("Strava Client ID", { exact: true }).fill("12345");
+    await page.getByLabel("Strava Client Secret", { exact: true }).fill("synthetic-secret");
+    await page.evaluate(() => { window.__deskFail = "strava_configure"; });
+    await page.getByRole("button", { name: "Save API credentials" }).click();
+    await expect(page.getByRole("alert")).toContainText("Unable to save right now");
+    await expect(page.getByLabel("Strava Client Secret", { exact: true })).toHaveValue("synthetic-secret");
+    await expect(page.getByLabel("Strava Client ID", { exact: true })).toHaveValue("12345");
+  });
+
+  test("strava browser sign-in can be cancelled without enabling writes", async ({ page }) => {
+    await page.goto("/desk.html#settings/strava");
+    await page.getByLabel("Strava Client ID", { exact: true }).fill("12345");
+    await page.getByLabel("Strava Client Secret", { exact: true }).fill("synthetic-secret");
+    await page.getByRole("button", { name: "Save API credentials" }).click();
+    await page.evaluate(() => { window.__deskHoldStrava = true; });
+    await page.getByRole("button", { name: "Connect with Strava" }).click();
+    await page.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("Strava sign-in was cancelled.");
+    await expect(page.getByRole("button", { name: "Connect with Strava" })).toBeEnabled();
+    await expect(page.getByRole("checkbox", { name: "Update paired activity descriptions" })).not.toBeChecked();
+  });
+
+  for (const width of [320, 390, 768, 820, 1440]) {
+    for (const theme of ["light", "dark"]) {
+      test(`strava settings fit ${width}px ${theme}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`/desk.html?theme=${theme}#settings/strava`);
+        await expect(page.getByRole("heading", { name: "Strava", exact: true })).toBeVisible();
+        await expect(page.getByLabel("Strava Client ID", { exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const accessibility = await new AxeBuilder({ page }).include(".settings-editor").analyze();
+        expect(accessibility.violations).toEqual([]);
+        await page.screenshot({ path: test.info().outputPath(`strava-${width}-${theme}.png`) });
+      });
+    }
+  }
+});
+
 test.describe("motion system", () => {
   test("all action tones share bounded press feedback without moving their labels", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1103,7 +1311,7 @@ for (const theme of ['light','dark']) {
 
 test("native sync completion refreshes evidence and watch progress is visible", async ({page}) => {
   await page.goto('/desk.html');
-  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='plugin:event|listen').length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='plugin:event|listen').map(call=>call.args.event))).toEqual(expect.arrayContaining(['sync://started','sync://completed','plan://sync','plan://stage','plan://updated']));
   await page.evaluate(() => window.__deskEmit('sync://started', null));
   await expect(page.getByRole('button',{name:'Syncing activities'})).toBeDisabled();
   const before = await page.evaluate(() => window.__deskCalls.filter(call=>call.command==='current_plan').length);
@@ -1452,10 +1660,11 @@ for (const width of [390, 1440]) {
     await expect(dialog.getByLabel("Distance (km)")).toHaveValue("5");
     await expect(dialog.getByLabel("Distance (km)")).toBeDisabled();
     const date = await dialog.getByLabel("Date", { exact: true }).inputValue();
+    const expectedPlanId = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[0].id);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "schedule_benchmark").args)).toEqual({ date, name: "parkrun", distanceM: 5000 });
+    expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "schedule_benchmark").args)).toEqual({ date, name: "parkrun", distanceM: 5000, expectedPlanId });
     await expect(page.locator(".day-itinerary")).toContainText("Benchmark: parkrun");
     await open.click();
     await dialog.getByRole("combobox", { name: "Event", exact: true }).selectOption("trial");
@@ -1941,6 +2150,53 @@ for (const width of [320, 1440]) {
 }
 
 const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
+
+for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
+  test(`strava stage reports pending and failed work without blocking dismissal ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}`);
+    const toast = page.getByRole("status", { name: "Plan sync progress" });
+    await emitStage(page, { op: "sync", target: "op", state: "working" });
+    for (const target of ["db", "calendar", "gist"]) await emitStage(page, { op: "sync", target, state: "done" });
+    await expect(toast).not.toContainText("Strava");
+    await emitStage(page, { op: "sync", target: "strava", state: "working" });
+    await expect(toast.getByText("Updating Strava…", { exact: true })).toBeVisible();
+    await expect(toast.locator(".stage-ring")).toHaveCount(0);
+    const pending = "Strava: 1 copied, 0 already present, 1 pending, 0 need attention. Waiting for the watch activity to arrive in Strava. Next retry in 5 min.";
+    await emitStage(page, { op: "sync", target: "strava", state: "done", detail: pending });
+    await emitStage(page, { op: "sync", target: "op", state: "done" });
+    await expect(toast.locator(".stage-line")).toHaveText(["Updated local DB", "Updated calendar", "Updated gist", pending]);
+    await expect(toast.locator(".stage-working")).toHaveCount(0);
+    await expect(toast.locator(".stage-ring")).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const box = await toast.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect((await new AxeBuilder({ page }).include(".notification-viewport").analyze()).violations).toEqual([]);
+    await page.screenshot({ path: test.info().outputPath(`strava-stage-${width}-${theme}.png`), fullPage: true });
+    await emitStage(page, { op: "sync", target: "op", state: "working" });
+    await emitStage(page, { op: "sync", target: "strava", state: "error", detail: "Strava Keychain is unavailable. Unlock your device and try again." });
+    await emitStage(page, { op: "sync", target: "op", state: "error" });
+    await expect(toast.locator(".stage-line")).toHaveCount(1);
+    await expect(toast.locator(".stage-error")).toContainText("Updating Strava failed: Strava Keychain is unavailable.");
+    await expect(toast.locator(".stage-ring")).toHaveCount(1);
+    await page.mouse.move(0, 0);
+    await expect(toast).toBeHidden({ timeout: 12000 });
+  });
+}
+
+test("strava stage is absent on a later sync without configured Strava", async ({ page }) => {
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "sync", target: "op", state: "working" });
+  await emitStage(page, { op: "sync", target: "strava", state: "done" });
+  await emitStage(page, { op: "sync", target: "op", state: "done" });
+  await expect(toast.getByText("Updated Strava", { exact: true })).toBeVisible();
+  await emitStage(page, { op: "sync", target: "op", state: "working" });
+  await emitStage(page, { op: "sync", target: "db", state: "done" });
+  await emitStage(page, { op: "sync", target: "op", state: "done" });
+  await expect(toast.locator(".stage-line")).toHaveText(["Updated local DB"]);
+});
 
 test("stage toast opens one line per mirror in order and self-dismisses once all settle", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });

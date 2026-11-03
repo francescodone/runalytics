@@ -26,6 +26,7 @@ export function Training() {
   const [create, setCreate] = useState(false);
   const [benchmark, setBenchmark] = useState(false);
   const [cancel, setCancel] = useState(false);
+  const cancelPlanId = useRef<string | null>(null);
   const [reset, setReset] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const horizon: Horizon = ["week", "month", "plan"].includes(route.section) ? route.section as Horizon : "week";
@@ -51,6 +52,7 @@ export function Training() {
   })();
   const days = Array.from({ length: monthWeeks * 7 }, (_, index) => shiftDate(first, index));
   const events = useRemote(() => tauri.calendarEvents(first, days[days.length - 1]), [first, horizon]);
+  const selectedEvent = events.data?.find(event => event.id === selected?.id);
   const plan = current.data?.[0];
   const workouts = current.data?.[1] ?? [];
   const connected = providers.data?.some(provider => provider.connected);
@@ -231,7 +233,7 @@ export function Training() {
         {defaults.data && <Predictions defaults={defaults.data} />}
         <RaceEstimates plan={plan} />
         {remotePlan.data && <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])} <a className="desk-button normal context-link" href="#settings/calendar">Manage device sync</a></td></tr></tbody></table></div>}
-        <Button tone="danger" onClick={() => setCancel(true)}>End current plan</Button>
+        <Button tone="danger" onClick={() => { cancelPlanId.current = plan.id; setCancel(true); }}>End current plan</Button>
       </> : <p className="muted">Your recent mileage and threshold pace establish the starting load. Plan generation remains local.</p>}</div></details>
     </div> : <>
       <ErrorNotice error={events.error} retry={events.retry} />
@@ -252,7 +254,7 @@ export function Training() {
           <Change identity={selectedDay} className="day-itinerary"><h3>{selectedDay === today() ? "Today" : dayName(selectedDay)}, {shortDate(selectedDay)}</h3>{(events.data ?? []).filter(event => event.date === selectedDay).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={() => setSelected(event)} />)}{!(events.data ?? []).some(event => event.date === selectedDay) && <p className="muted">No sessions scheduled. Time to recover.</p>}</Change>
           </Change>
         </div>
-        <Presence>{selected && <Inspector key="session" title="Session" modal onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selected} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
+        <Presence>{selected && <Inspector key="session" title="Session" modal onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selectedEvent ?? selected} stale={events.data !== undefined && !selectedEvent} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
       </div>}
     </>}
     </Change>
@@ -260,10 +262,10 @@ export function Training() {
     {compact && plan && horizon !== "plan" && <div className="training-actions training-secondary-actions"><Button onClick={() => setBenchmark(true)}><IconPlus size={18} />Schedule race or test</Button>{horizon === "week" && <Button onClick={() => setReset(true)}><IconRestore size={18} aria-hidden="true" />Reset week</Button>}</div>}
     <Presence>
     {benchmark && plan && <ScheduleBenchmark key="benchmark" plan={plan} initialDate={selectedDay} onClose={() => setBenchmark(false)} onScheduled={date => { setBenchmark(false); setCursor(date); setSelectedDay(date); setSelected(null); navigate("training", "week"); }} />}
-    {reset && <ResetWeek key="reset" weekStart={first} onClose={() => setReset(false)} />}
+    {reset && <ResetWeek key="reset" planId={plan?.id} weekStart={first} onClose={() => setReset(false)} />}
     {create && <CreatePlan key="create" defaults={defaults.data} onClose={() => setCreate(false)} />}
     {cancel && <Dialog key="cancel" title="End current plan?" onClose={() => setCancel(false)}><p>This removes the current plan and its scheduled sessions. Other saved plans are kept. Recorded activities, health history and pain entries are not deleted.</p><p>Runalytics will attempt to cancel this plan on COROS and update your calendar and connected devices. To remove every saved plan instead, use Training data in Settings.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setCancel(false)}>Keep plan</Button><Button tone="danger" busy={command.busy} onClick={() => void command.run(async () => {
-      try { await tauri.abortPlan(); } catch (error) { refresh(); notify(String(error)); throw error; }
+      try { await tauri.abortPlan(cancelPlanId.current ?? undefined); } catch (error) { refresh(); notify(String(error)); throw error; }
       setCancel(false);
     }, "Current plan ended. Your completed runs are retained.")}>End current plan</Button></div></Dialog>}
     </Presence>
@@ -312,7 +314,7 @@ function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active
   </button>;
 }
 
-export function SessionDetail({ event, plan, proposedDate, onDone }: { event: CalendarEvent; plan?: TrainingPlan; proposedDate?: string; onDone: () => void }) {
+export function SessionDetail({ event, plan, proposedDate, stale = false, onDone }: { event: CalendarEvent; plan?: TrainingPlan; proposedDate?: string; stale?: boolean; onDone: () => void }) {
   const command = useCommand();
   const { notify } = useWorkspace();
   const [date, setDate] = useState(proposedDate ?? event.date);
@@ -321,6 +323,7 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
   const review = useRemote(() => event.activityId != null ? tauri.activityReview(event.activityId) : Promise.resolve(null), [event.activityId]);
   const editable = event.workoutId && event.activityId == null && event.kind !== "race";
   return <div className="session-detail"><span className="session-type">{kindName(event.kind)}</span><h2>{sessionTitle(event.title)}</h2><p className="muted">{fmtDateDMY(event.date)}{event.moved && event.plannedDate ? ` / Originally ${fmtDateDMY(event.plannedDate)}` : ""}</p>
+    {stale && <p role="alert">This session is no longer in the latest plan. Your draft is kept, but this session cannot be changed.</p>}
     {event.adjusted && <p className="context-note">Adjusted for you: {event.adjusted}</p>}
     <dl className="metrics-line"><Metric label="Distance" value={event.distanceM != null ? (event.distanceM / 1000).toFixed(1) : "Not specified"} unit={event.distanceM != null ? "km" : undefined} />{event.activityId != null ? event.durationMin != null && <Metric label="Duration" value={Math.round(event.durationMin)} unit="min" /> : fmtTimeRange(estimatedTimeRange(event)) && <Metric label="Estimated time" value={fmtTimeRange(estimatedTimeRange(event))} />}</dl>
     <div className="prescription">{event.notes.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
@@ -329,11 +332,12 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
     <ErrorNotice error={command.error ?? review.error} />
     {editable && <section className="session-management"><h3>Schedule</h3><form onSubmit={async submit => {
       submit.preventDefault();
+      if (stale) return;
       if (await command.run(() => tauri.moveWorkout(event.workoutId!, date))) {
         notify(`Moved to ${fmtDateDMY(date)}.`, { label: "Undo", run: () => tauri.moveWorkout(event.workoutId!, event.date) }); onDone();
       }
-    }}><label>Run on<input type="date" required min={today()} max={plan?.targetDate} value={date} onChange={change => setDate(change.target.value)} /></label><Button type="submit" busy={command.busy} disabled={date === event.date || event.status === "skipped"}><IconCalendarEvent size={18} />Move session</Button></form>
-      <Button busy={command.busy} onClick={async () => {
+    }}><label>Run on<input type="date" required min={today()} max={plan?.targetDate} value={date} onChange={change => setDate(change.target.value)} /></label><Button type="submit" busy={command.busy} disabled={stale || date === event.date || event.status === "skipped"}><IconCalendarEvent size={18} />Move session</Button></form>
+      <Button disabled={stale} busy={command.busy} onClick={async () => {
         const skipped = event.status !== "skipped";
         if (await command.run(() => tauri.setWorkoutSkipped(event.workoutId!, skipped))) {
           notify(skipped ? "Session skipped. It will not count as missed." : "Session restored.", { label: "Undo", run: () => tauri.setWorkoutSkipped(event.workoutId!, !skipped) }); onDone();
@@ -342,13 +346,16 @@ export function SessionDetail({ event, plan, proposedDate, onDone }: { event: Ca
     </section>}
     {event.workoutId && event.activityId == null && <section className="session-management"><h3>Already ran this session?</h3><ErrorNotice error={candidates.error} retry={candidates.retry} /><form onSubmit={async submit => {
       submit.preventDefault();
+      if (stale) return;
       if (await command.run(() => tauri.matchCalendarActivity(event.workoutId!, Number(match)), "Recorded run matched to this session.")) onDone();
-    }}><label>Recorded activity<select required value={match} onChange={change => setMatch(change.target.value)}><option value="">Choose a nearby run</option>{candidates.data?.filter(candidate => candidate.activityId != null && candidate.workoutId == null).map(candidate => <option key={candidate.id} value={candidate.activityId!}>{fmtDateDMY(candidate.date)} / {fmtKm(candidate.distanceM ?? 0)}</option>)}</select></label><Button type="submit" disabled={!match} busy={command.busy}>Match run</Button></form></section>}
+    }}><label>Recorded activity<select required value={match} onChange={change => setMatch(change.target.value)}><option value="">Choose a nearby run</option>{candidates.data?.filter(candidate => candidate.activityId != null && candidate.workoutId == null).map(candidate => <option key={candidate.id} value={candidate.activityId!}>{fmtDateDMY(candidate.date)} / {fmtKm(candidate.distanceM ?? 0)}</option>)}</select></label><Button type="submit" disabled={stale || !match} busy={command.busy}>Match run</Button></form></section>}
   </div>;
 }
 
 function ScheduleBenchmark({ plan, initialDate, onClose, onScheduled }: { plan: TrainingPlan; initialDate: string; onClose: () => void; onScheduled: (date: string) => void }) {
   const command = useCommand();
+  const [draftPlanId] = useState(plan.id);
+  const stale = draftPlanId !== plan.id;
   const earliest = [shiftDate(today(), 1), shiftDate(plan.createdAt.slice(0, 10), 1)].sort()[1];
   const latest = shiftDate(plan.targetDate, -8);
   const [preset, setPreset] = useState("parkrun");
@@ -357,7 +364,8 @@ function ScheduleBenchmark({ plan, initialDate, onClose, onScheduled }: { plan: 
   const [date, setDate] = useState(initialDate >= earliest && initialDate <= latest ? initialDate : earliest);
   return <Dialog title="Schedule race or test" onClose={onClose}><form className="form-grid" onSubmit={async submit => {
     submit.preventDefault();
-    if (await command.run(() => tauri.scheduleBenchmark(date, name, distance * 1000), "Benchmark scheduled. Nearby hard sessions have been eased.")) onScheduled(date);
+    if (stale) return;
+    if (await command.run(() => tauri.scheduleBenchmark(date, name, distance * 1000, draftPlanId), "Benchmark scheduled. Nearby hard sessions have been eased.")) onScheduled(date);
   }}>
     <label className="full">Event<select value={preset} onChange={change => {
       const value = change.target.value; setPreset(value);
@@ -370,7 +378,8 @@ function ScheduleBenchmark({ plan, initialDate, onClose, onScheduled }: { plan: 
     <p className="context-note full">Replaces that day's session and eases adjacent hard or long runs. Your target race stays unchanged. Run this as a hard effort; match the race-only recording afterwards for a pace review.</p>
     {earliest > latest && <p className="context-note full">There is no room for a benchmark before the final week of this plan.</p>}
     <div className="full"><ErrorNotice error={command.error} /></div>
-    <div className="form-actions full"><Button onClick={onClose}>Cancel</Button><Button type="submit" tone="primary" busy={command.busy} disabled={earliest > latest || !name.trim()}><IconCalendarEvent size={18} />Schedule benchmark</Button></div>
+    {stale && <p role="alert" className="full">The plan changed on another device. Close this draft and review the latest plan before scheduling.</p>}
+    <div className="form-actions full"><Button onClick={onClose}>Cancel</Button><Button type="submit" tone="primary" busy={command.busy} disabled={stale || earliest > latest || !name.trim()}><IconCalendarEvent size={18} />Schedule benchmark</Button></div>
   </form></Dialog>;
 }
 
@@ -379,8 +388,10 @@ function ScheduleBenchmark({ plan, initialDate, onClose, onScheduled }: { plan: 
 /// scheduled over a planned session gives that session back (or disappears if
 /// the plan had a rest day there). The list is the backend's own drift read, so
 /// the dialog cannot promise a change the reset is going to refuse.
-function ResetWeek({ weekStart, onClose }: { weekStart: string; onClose: () => void }) {
+function ResetWeek({ weekStart, planId, onClose }: { weekStart: string; planId?: string; onClose: () => void }) {
   const command = useCommand();
+  const [draftPlanId] = useState(planId);
+  const stale = draftPlanId !== planId;
   const deviations = useRemote(() => tauri.weekDeviations(weekStart), [weekStart]);
   const restorable = (deviations.data ?? []).filter(deviation => deviation.restorable);
   const label = (deviation: WeekDeviation) => deviation.removes
@@ -400,9 +411,10 @@ function ResetWeek({ weekStart, onClose }: { weekStart: string; onClose: () => v
       </li>)}</ul>}
     <p className="context-note">Race day written by your plan, runs you have already done and sessions you skipped stay where they are.</p>
     <div className="full"><ErrorNotice error={command.error} /></div>
+    {stale && <p role="alert">The plan changed on another device. Close this preview and review the latest plan.</p>}
     <div className="form-actions full">
       <Button onClick={onClose}>Keep as it is</Button>
-      <Button tone="primary" busy={command.busy} disabled={restorable.length === 0} onClick={() => void command.run(() => tauri.resetWeek(weekStart), restorable.length === 1 ? "One session is back on the plan." : `${restorable.length} sessions are back on the plan.`).then(ok => { if (ok) onClose(); })}>
+      <Button tone="primary" busy={command.busy} disabled={stale || restorable.length === 0} onClick={() => void command.run(() => tauri.resetWeek(weekStart, draftPlanId), restorable.length === 1 ? "One session is back on the plan." : `${restorable.length} sessions are back on the plan.`).then(ok => { if (ok) onClose(); })}>
         {restorable.length === 0 ? "Nothing to reset" : `Reset ${restorable.length}`}
       </Button>
     </div>

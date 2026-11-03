@@ -90,14 +90,79 @@ distributed.
   can be cleared separately from the pain record.
 - **Watch connection**: Settings shows the next setup step or a direct Sync now
   action for connected accounts. Connection diagnostics open in a dialog.
+- **Strava descriptions**: optional, client-only connection using your own
+  Strava API credentials. New plan-paired runs receive the completed session's
+  copied description during watch sync, with durable local tracking and checks
+  for copies already present from another device. Existing notes stay intact.
 - **Heatmap**: MapLibre GL JS with a heatmap layer over OSM raster tiles, or
   fully offline from a [PMTiles] archive (path configurable in Settings).
-- **Plan sync**: the desktop app publishes the active plan to a private GitHub
-  gist that the phone finds and imports, keyed to your COROS account. Enable it
-  with the **Plan sync** toggle in Settings. One-way, desktop to phone;
-  completed workouts stay local.
+- **Plan sync**: desktop and phone share an encrypted private GitHub Gist,
+  keyed to the same COROS account. Enable plan sync and save a GitHub token
+  with gist scope on both devices. Both devices can edit, but the Gist wins
+  when unpublished local plan changes conflict with a changed remote copy.
+  Foreground, reconnect and visible-app checks keep the local plan current;
+  session completions and plan endings travel between devices too.
 - **Garmin**: feature-gated (`--features garmin`); no official public API
   exists, so it ships as a stub.
+
+## Strava Setup
+
+1. Create a personal API application at
+  [Strava API settings](https://www.strava.com/settings/api). Each user supplies
+  their own Client ID and Client Secret; Runalytics has no OAuth server and
+  does not bundle shared API credentials. Follow Strava's current API terms and
+  application-capacity requirements.
+2. For iPhone, set the application's **Authorization Callback Domain** to
+  `strava`. The app uses the callback
+  `com.fradone.runalytics://strava/callback` with Apple's native browser
+  authentication session. macOS opens the system browser and uses a temporary
+  `http://127.0.0.1:<port>/strava/callback`; Strava whitelists the loopback host.
+3. In **Settings > Strava**, save the Client ID and Client Secret, then select
+  **Connect with Strava**. Allow both activity read access, including private
+  activities, and activity write access. Configure and authorize each device
+  separately. The secret and rotating tokens remain in that device's Keychain;
+  they are never sent through plan sync, calendar publishing or diagnostics.
+4. Enable **Update paired activity descriptions** and confirm the privacy
+  notice. The payload is the same completed-session text as **Copy
+  prescription**, including results and any training-load or injury-risk lines.
+  It inherits the activity's Strava visibility and may therefore be public.
+
+Only activities recorded from the first activation time on that device/account
+are eligible. Downloading an older activity or pairing it later does not bypass
+this cutoff. Manual pairing is picked up by the next watch sync. Pause/resume
+and reconnect retain the original cutoff and completion receipts.
+
+Watch sync, including launch sync, queues eligible pairs and attempts a bounded
+batch. Delayed watch uploads to Strava remain pending, including on syncs with
+zero new watch activities. **Retry pending descriptions** respects persisted
+cooldowns; it is not historical backfill. Nothing runs while the app is closed.
+Ambiguous or inconsistent matches are not updated automatically. Reconnect when
+Strava reports missing permissions or expired authorization; automation remains
+paused after reconnection until explicitly enabled again.
+
+Existing descriptions are preserved and a single Runalytics block is appended
+with a stable sync reference. A matching reference or exact clipboard copy is
+adopted without rewriting. Later edits to a confirmed description are not
+automatically restored. Two devices running simultaneously, or other apps
+editing the same description, can still race: this is not a distributed lock or
+an exactly-once HTTP guarantee.
+
+Disconnecting stops local updates and removes local OAuth tokens, without
+revoking another device or modifying any Strava activity. **Remove API
+credentials** also removes the locally saved Client ID and Client Secret.
+Local completion receipts remain to prevent accidental recopying. To revoke
+the API application's access everywhere, use Strava's connected-app settings.
+Strava may invalidate another device's token chain when the same personal API
+application is reauthorized; reconnect that device if needed, rather than
+copying tokens between devices.
+
+Queued copied text is discarded after a confirmed update or adoption. Pending
+text expires after 90 days and is cleared during subsequent sync housekeeping;
+expired items require attention rather than being rewritten automatically.
+Compact receipts follow the lifetime of the local activity history and are
+removed on sync when their source activity no longer exists. Original calendar
+notes remain part of the existing local training history. Remote descriptions
+are read transiently and are not stored as an additional Strava activity feed.
 
 ## UI Verification
 
@@ -301,8 +366,24 @@ counterpart of the ad-hoc-signed DMG: both are sealed by the person who
 installs them, and both need one manual override on first launch.
 
 To get an existing plan onto the phone rather than recreating it there, see
-**Plan sync** in Settings: the desktop app publishes the active plan to a
-private GitHub gist that the phone finds and imports.
+**Plan sync** in Settings. Both devices must use the same COROS account and
+the same GitHub account's Gist channel. The Gist is authoritative: returning
+to the app checks it independently of COROS activity downloads, and an open,
+online app checks every minute. **Check now** requests a refresh immediately.
+
+Local plan edits remain pending while offline. Before uploading, the app
+checks their acknowledged remote base. If the Gist changed meanwhile, its
+snapshot replaces the conflicting local plan changes automatically. Unrelated
+activities, health records, pain entries and form drafts are retained. Ended
+plans publish an explicit empty state so another device cannot resurrect them.
+
+Update both apps before relying on this policy: old versions can still upload
+stale snapshots, and cannot read the new plan-ending format. On the first check
+after upgrading, an existing Gist wins over an untracked local plan. Missing pinned,
+unauthorized, unreadable or ambiguous channels block uploads rather than silently
+creating a replacement. GitHub Gist does not document atomic conditional writes;
+pre-upload checks and read-back verification cannot eliminate every simultaneous
+write race. Offline or suspended apps cannot stay continuously current.
 
 ## Development
 

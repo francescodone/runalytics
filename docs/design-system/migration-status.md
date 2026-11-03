@@ -1,5 +1,127 @@
 # Project Prism Verification Ledger
 
+## Strava Sync Notifications, 2026-11-03
+
+Configured Strava connections now report working and settled states alongside
+the local database, calendar, Gist and COROS stages. The existing notification
+shows Strava's queue summary and error details directly, including paused or
+disconnected connections. New operations clear previous stage rows, so a removed
+Strava configuration cannot leave a stale result in a later sync.
+
+Queue checks refresh the stored summary even when every pending description is
+on cooldown. Waiting, permission and review reasons are surfaced with a retry
+delay where applicable. Matching safeguards, opt-in, request limits and retry
+deadlines are unchanged; pending work does not hold the notification open.
+
+Verification: production build, 13 focused Rust tests and 18 synthetic-IPC
+Strava browser checks passed. The browser cases include light/dark 320px and
+1440px notification wrapping, axe checks, failures and automatic dismissal.
+The shared-toast regression run also encountered an unrelated existing test
+that looks for Log pain on Health Overview before emitting any notifications;
+that test was left unchanged. Live Keychain/OAuth and actual Strava activity
+delivery were not exercised.
+
+## Gist-Authoritative Plan Freshness, 2026-11-03
+
+Plan sync checks run on launch, foreground/focus, reconnect and a one-minute
+visible/online timer without requiring COROS activity downloads. Native plan
+updates refresh evidence in place. A separate checked-status signal updates
+Settings without reloading all workspace queries. Existing controls, dialogs,
+tokens and notifications are reused; Settings adds Last checked and Check now.
+Open session inspectors resolve refreshed evidence, retain date/matching drafts
+and disable actions on removed sessions. Plan-wide dialogs carry the reviewed
+plan identity so delayed actions cannot target a replacement plan.
+
+Both devices can publish edits against their acknowledged Gist snapshot. A
+changed Gist automatically replaces conflicting local plan changes, including
+different plan IDs and equal/lower legacy revisions. SQLite checkpoints are
+committed with remote imports/clears; explicit empty snapshots propagate plan
+endings. Conditional reads, retry deadlines, no-op upload suppression and
+read-back verification bound background traffic and stale overwrites.
+
+### Verification
+
+- 32 focused Rust sync tests passed, including real worker requests against a
+  local fake Gist: stale mobile replacement, same-plan revision/clock conflicts,
+  failed reads, local edit publication, empty-state propagation, restart recovery,
+  conditional 304 reads, rate limits, credential invalidation and concurrent
+  read-back adoption. No real credentials or user Gists were accessed.
+- Production build and 23 focused browser checks passed with synthetic IPC:
+  foreground/polling adoption at 390 and 1440px, reconnect, hidden/offline gating,
+  event coalescing, failed-check recovery, imported endings, draft retention,
+  inspector invalidation, guarded end-plan/benchmark requests, clear-plan history
+  retention and existing native completion/manual-import guards.
+- Settings geometry and axe checks passed at 320, 390, 768, 820 and 1440px in
+  both light and dark themes; screenshots were captured by these checks.
+- The iOS library target compiled with `cargo check --lib --target aarch64-apple-ios`.
+
+### Limitations
+
+Physical iPhone/macOS resume, real Keychain/network recovery and live two-device
+convergence remain device acceptance items. Browser checks use synthetic IPC,
+not native integration tests. Both apps need updating; older binaries still
+perform unsafe unconditional uploads. Gist PATCH has no documented atomic
+conditional-write guarantee, so simultaneous writes can still race. Offline
+or suspended apps cannot remain continuously current.
+
+The broader Rust run reported 218 passes, two ignored tests and the existing
+calendar `quality_sessions_are_named_and_easy_steps_have_no_upper_bound`
+formatting failure. The broader 331-case browser run reported 297 passes and
+34 failures in motion/material, brand, legacy selectors and plan workflows.
+Three plan-workflow failures were subsequently repaired and passed in the
+23-case focused run: benchmark assertions now require the reviewed plan ID,
+and the end-plan test opens the existing compact Plan details disclosure.
+The full browser suite was not rerun after those test updates; unrelated
+failures were left unchanged. The referenced foundations, components and
+motion documents remain absent from this checkout.
+
+## Local Strava Connection, 2026-11-03
+
+Settings has a dedicated Strava task using the existing directory, form,
+Button, Dialog, Presence and notification contracts. Personal API credentials
+stay in Keychain. Connection, cancellation, reconnection and the description
+automation opt-in are separate actions; failed saves retain drafts. Activation
+requires confirmation that copied results and load/injury-risk lines inherit
+the Strava activity's visibility. Existing notes are preserved, and local
+receipts plus live remote checks prevent sequential duplicate copies.
+
+### Verification
+
+- Production build and TypeScript passed with `npm run build`.
+- Eleven focused Rust tests passed, including real-worker requests against a
+  local fake HTTP server: description-only writes, existing notes, cross-device
+  marker and clipboard adoption, response-loss recovery, delayed/ambiguous
+  activities, auth/rate limits, callback state/scopes, activation cutoff,
+  calendar-copy parity, plan deletion and pending-text retention.
+- Thirteen focused browser checks passed with synthetic IPC: credential save
+  and blank-keeps-secret, privacy confirmation/cancellation, pending retry,
+  disconnect focus return, failed draft retention, sign-in cancellation and
+  light/dark geometry plus axe checks at 320, 390, 768, 820 and 1440px.
+- Inspected focused 320px light and 1440px dark Settings screenshots. No shared
+  type, palette, material or interaction primitives were changed.
+- `cargo check --lib --target aarch64-apple-ios` passed. The unsigned debug
+  iPhone build through `npx tauri ios build --debug --no-sign --target aarch64`
+  passed and produced an IPA containing the native Strava authentication bridge.
+- Callback plist validation and `git diff --check` passed.
+
+### Limitations
+
+Live OAuth, token rotation, Keychain persistence across device restarts and
+actual Strava updates were not exercised with a user's API credentials. Native
+browser sign-in on physical macOS/iPhone devices remains an acceptance item.
+There is no server, closed-app automation or distributed lock; simultaneous
+device/third-party description edits can race.
+
+The broader Rust run reported 205 passes, two ignored tests and the existing
+calendar `quality_sessions_are_named_and_easy_steps_have_no_upper_bound`
+formatting failure. The broader 315-case browser run reported 281 passes and
+34 failures in motion/material, brand alignment, training workflow and legacy
+selectors; none were the new Strava cases. Those unrelated areas were left
+unchanged. Direct Xcode GUI build initially failed because its shell could not
+find npm; the configured Tauri CLI build succeeded instead. The local Xcode
+installation also reports an outdated CoreSimulator runtime, although the
+device-targeted IPA build completed.
+
 ## Compact Plan View, 2026-11-03
 
 The plan uses a two-column metric grid on compact screens and shorter week date

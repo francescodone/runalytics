@@ -44,6 +44,9 @@ targets:
     info:
       path: runalytics_iOS/Info.plist
       properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: com.fradone.runalytics.strava
+            CFBundleURLSchemes: [com.fradone.runalytics]
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
@@ -84,6 +87,7 @@ targets:
       - framework: libapp.a
         embed: false
       - sdk: CoreGraphics.framework
+      - sdk: AuthenticationServices.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework
       - sdk: QuartzCore.framework

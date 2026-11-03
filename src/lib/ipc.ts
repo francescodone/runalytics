@@ -70,6 +70,13 @@ const call: Command = async <T>(cmd: string, args?: Record<string, unknown>): Pr
 };
 
 export const tauri = {
+  stravaStatus: () => call<import("./types").StravaStatus>("strava_status"),
+  stravaConfigure: (clientId: string, clientSecret: string | null) => call<import("./types").StravaStatus>("strava_configure", { clientId, clientSecret }),
+  stravaConnect: () => call<import("./types").StravaStatus>("strava_connect"),
+  stravaCancelConnect: () => call<void>("strava_cancel_connect"),
+  stravaSetEnabled: (enabled: boolean) => call<import("./types").StravaStatus>("strava_set_enabled", { enabled }),
+  stravaDisconnect: (forget = false) => call<import("./types").StravaStatus>("strava_disconnect", { forget }),
+  stravaRetry: () => call<import("./types").StravaStatus>("strava_retry"),
   providerStatus: () => call<ProviderStatus[]>("provider_status"),
   checkProviderApi: (provider: ProviderKind) =>
     call<string[]>("check_provider_api", { provider }),
@@ -102,7 +109,7 @@ export const tauri = {
     call<[TrainingPlan, PlanWorkout[]] | null>("current_plan"),
   pushPlan: (provider: ProviderKind) =>
     call<string>("push_plan_to_provider", { provider }),
-  abortPlan: () => call<void>("abort_plan"),
+  abortPlan: (expectedPlanId?: string) => call<void>("abort_plan", { expectedPlanId: expectedPlanId ?? null }),
   /// Wipe every plan, session and plan offer from this device — the watch
   /// slot is blanked and the sync channel told, but activity and health
   /// history stay. The error it can return carries a COROS caveat the
@@ -126,10 +133,11 @@ export const tauri = {
   planSyncPush: () => call<PlanSync>("plan_sync_push"),
   planSyncPull: (force: boolean) => call<PullOutcome>("plan_sync_pull", { force }),
   planSyncCheck: () => call<RemotePlan | null>("plan_sync_check"),
+  planSyncRefresh: () => call<boolean>("plan_sync_refresh"),
   moveWorkout: (workoutId: string, date: string) =>
     call<void>("move_workout", { workoutId, date }),
-  scheduleBenchmark: (date: string, name: string, distanceM: number) =>
-    call<void>("schedule_benchmark", { date, name, distanceM }),
+  scheduleBenchmark: (date: string, name: string, distanceM: number, expectedPlanId?: string) =>
+    call<void>("schedule_benchmark", { date, name, distanceM, expectedPlanId: expectedPlanId ?? null }),
   // What a "reset this week" would put back, so the confirm sheet can name the
   // sessions before any of them moves.
   weekDeviations: (weekStart: string) =>
@@ -137,7 +145,7 @@ export const tauri = {
   /// Per-week planned vs ran mileage of the current plan, oldest week first —
   /// what lets the roadmap mark weeks done/current/upcoming with real numbers.
   planWeekProgress: () => call<WeekProgress[]>("plan_week_progress"),
-  resetWeek: (weekStart: string) => call<number>("reset_week", { weekStart }),
+  resetWeek: (weekStart: string, expectedPlanId?: string) => call<number>("reset_week", { weekStart, expectedPlanId: expectedPlanId ?? null }),
   setWorkoutSkipped: (workoutId: string, skipped: boolean) =>
     call<void>("set_workout_skipped", { workoutId, skipped }),
   /// Mondays of the current plan's recovery weeks. The plan's cycle is

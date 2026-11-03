@@ -17,6 +17,8 @@ pub enum AppError {
     NotConnected(String),
     #[error("{0}")]
     Other(String),
+    #[error("GitHub plan sync is temporarily limited. Retry after {retry_at} (UTC epoch seconds).")]
+    PlanSyncRateLimited { retry_at: i64 },
 }
 
 impl Serialize for AppError {

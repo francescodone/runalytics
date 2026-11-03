@@ -2,6 +2,21 @@
 
 export type ProviderKind = "coros" | "garmin";
 
+export interface StravaStatus {
+  configured: boolean;
+  clientId: string;
+  connected: boolean;
+  athleteId: number | null;
+  enabled: boolean;
+  enabledAt: number | null;
+  updated: number;
+  alreadyPresent: number;
+  pending: number;
+  needsReview: number;
+  lastMessage: string | null;
+  lastAttemptAt: number | null;
+}
+
 export interface ProviderStatus {
   provider: ProviderKind;
   connected: boolean;
@@ -379,6 +394,7 @@ export interface PlanSync {
   canPublish: boolean;
   lastPushed: string | null;
   lastPulled: string | null;
+  lastChecked?: string | null;
   installedRev: number | null;
   lastError: string | null;
 }

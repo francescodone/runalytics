@@ -13,6 +13,7 @@ mod providers;
 mod secure_store;
 mod state;
 mod store;
+mod strava;
 mod types;
 
 use std::sync::Mutex;
@@ -119,6 +120,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            strava::strava_status,
+            strava::strava_configure,
+            strava::strava_connect,
+            strava::strava_cancel_connect,
+            strava::strava_disconnect,
+            strava::strava_set_enabled,
+            strava::strava_retry,
             commands::provider_status,
             commands::coros_signin_notice,
             commands::check_provider_api,
@@ -152,6 +160,7 @@ pub fn run() {
             commands::plan_sync_push,
             commands::plan_sync_pull,
             commands::plan_sync_check,
+            commands::plan_sync_refresh,
             commands::match_calendar_activity,
             commands::move_workout,
             commands::schedule_benchmark,
@@ -187,6 +196,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Runalytics")
         .run(|app, event| match event {
+            RunEvent::Resumed | RunEvent::WindowEvent { event: WindowEvent::Focused(true), .. } => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    let _ = commands::refresh_plan_channel(&handle, &state).await;
+                });
+            }
             RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { .. },

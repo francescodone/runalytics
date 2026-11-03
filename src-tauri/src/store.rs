@@ -670,6 +670,7 @@ impl Store {
 
     fn migrate(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        conn.execute_batch(crate::strava::SCHEMA)?;
         let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         for (v, sql) in MIGRATIONS {
             if version < *v {
@@ -1795,11 +1796,27 @@ impl Store {
     /// fail on apply. One transaction so a half-clear cannot strand an offer
     /// beside a missing plan or vice versa.
     pub fn clear_plan_data(&self) -> Result<()> {
+        self.clear_synced_plan_data(None)
+    }
+
+    pub(crate) fn clear_synced_plan_data(&self, checkpoint: Option<&str>) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM plan_proposals", [])?;
         tx.execute("DELETE FROM training_plans", [])?;
+        if let Some(checkpoint) = checkpoint {
+            tx.execute("INSERT INTO app_state(key,value) VALUES('plan_sync_checkpoint',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [checkpoint])?;
+        }
         tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn plan_sync_checkpoint(&self) -> Result<Option<String>> {
+        Ok(self.conn.lock().unwrap().query_row("SELECT value FROM app_state WHERE key='plan_sync_checkpoint'", [], |row| row.get(0)).optional()?)
+    }
+
+    pub(crate) fn save_plan_sync_checkpoint(&self, checkpoint: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("INSERT INTO app_state(key,value) VALUES('plan_sync_checkpoint',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [checkpoint])?;
         Ok(())
     }
 
@@ -1900,8 +1917,13 @@ impl Store {
         workouts: &[PlanWorkout],
         rev: i64,
     ) -> Result<()> {
+        self.replace_synced_plan(plan, workouts, rev, None)
+    }
+
+    pub(crate) fn replace_synced_plan(&self, plan: &TrainingPlan, workouts: &[PlanWorkout], rev: i64, checkpoint: Option<&str>) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        tx.execute("DELETE FROM plan_proposals", [])?;
         tx.execute("DELETE FROM training_plans", [])?;
         tx.execute(
             "INSERT INTO training_plans (id, distance, target_date, status, weekly_frequency,
@@ -1933,6 +1955,9 @@ impl Store {
         )?;
         for w in workouts {
             tx.execute(WORKOUT_INSERT_COLS, rusqlite::params_from_iter(workout_params(w)))?;
+        }
+        if let Some(checkpoint) = checkpoint {
+            tx.execute("INSERT INTO app_state(key,value) VALUES('plan_sync_checkpoint',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [checkpoint])?;
         }
         tx.commit()?;
         Ok(())

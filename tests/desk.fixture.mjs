@@ -15,6 +15,7 @@ export const deskFixture = `(function () {
   let deskSync = {config:{enabled:true,gistId:'synthetic-gist',hasToken:true,canPublish:false,lastPushed:'2026-10-29T12:00:00Z',lastPulled:null,installedRev:7,lastError:null},accountLinked:true,code:'synthetic-account-channel'};
   let deskKey = true;
   let deskConnected = true;
+  let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,lastMessage:null,lastAttemptAt:null};
   // Stands in for the backend's original_json snapshot: what a session was
   // before a benchmark overwrote it ('created' when the plan had a rest day).
   const deskBenchmarks = new Map();
@@ -37,6 +38,13 @@ export const deskFixture = `(function () {
   window.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
     window.__deskCalls.push({command:cmd, args});
     if (cmd === window.__deskFail) throw new Error('Unable to save right now');
+    if (cmd === 'strava_status') return {...deskStrava};
+    if (cmd === 'strava_configure') { deskStrava={...deskStrava,configured:true,clientId:args.clientId}; return {...deskStrava}; }
+    if (cmd === 'strava_connect') { if (window.__deskHoldStrava) await new Promise((resolve,reject) => { window.__deskCancelStrava=() => reject(new Error('Strava sign-in was cancelled.')); }); deskStrava={...deskStrava,connected:true,athleteId:42,enabled:false,pending:2}; return {...deskStrava}; }
+    if (cmd === 'strava_cancel_connect') { window.__deskCancelStrava?.(); return null; }
+    if (cmd === 'strava_set_enabled') { deskStrava={...deskStrava,enabled:args.enabled,enabledAt:deskStrava.enabledAt ?? Math.floor(Date.now()/1000)}; return {...deskStrava}; }
+    if (cmd === 'strava_disconnect') { deskStrava={...deskStrava,connected:false,enabled:false,athleteId:null,...(args.forget ? {configured:false,clientId:''} : {})}; return {...deskStrava}; }
+    if (cmd === 'strava_retry') { deskStrava={...deskStrava,updated:1,alreadyPresent:1,pending:0,lastMessage:'Strava: 1 copied, 1 already present, 0 pending, 0 need attention.'}; return {...deskStrava}; }
     if (cmd === 'current_plan') {
       if (deskCurrent !== undefined) return deskCurrent;
       if (new URLSearchParams(location.search).has('noPlan')) return null;
@@ -91,6 +99,17 @@ export const deskFixture = `(function () {
       if (workout.date !== workout.plannedDate && pending && workout.plannedDate >= new Date().toISOString().slice(0,10)) { workout.date = workout.plannedDate; workout.movedAt = null; count += 1; }
     } return count; }
     if (cmd === 'plan_sync_status') return deskSync;
+    if (cmd === 'plan_sync_refresh') {
+      if (window.__deskHoldRefresh) await new Promise(resolve => { window.__deskReleaseRefresh=resolve; });
+      deskSync.config.lastChecked=new Date().toISOString();
+      window.__deskEmit('plan://checked',null);
+      if (window.__deskRemotePlan === undefined) return false;
+      deskCurrent=structuredClone(window.__deskRemotePlan);
+      delete window.__deskRemotePlan;
+      deskSync.config.lastPulled=new Date().toISOString();
+      window.__deskEmit('plan://updated',null);
+      return true;
+    }
     if (cmd === 'plan_sync_configure') { deskSync.config.enabled = args.config.enabled; if (args.token) deskSync.config.hasToken=true; return deskSync; }
     if (cmd === 'plan_sync_check') return {status:'upToDate',planName:'Synthetic plan',workouts:33,syncedAt:Math.floor(Date.now()/1000)};
     if (cmd === 'plan_sync_push') return deskSync.config;

@@ -34,14 +34,11 @@
 //!
 //! # Direction
 //!
-//! Both directions, last-edit-wins. Either device may edit the plan — move a
-//! session, skip it, mark it done against a run — and the edit is stamped with
-//! a revision (the wall-clock second of the change, kept monotonic per device).
-//! Every device pushes what it holds and pulls anything newer, so the gist is
-//! the single point of truth the two devices converge on. Two devices edited
-//! between syncs is resolved by revision: the later edit stands, which for one
-//! runner's own two devices is the honest rule — the alternative is a merge
-//! the runner would only ever resolve by picking one side anyway.
+//! Both devices may edit. An edit can publish only against its acknowledged
+//! Gist snapshot; a changed Gist replaces conflicting local plan changes.
+//! Device clocks do not determine authority. Gist PATCH has no documented
+//! compare-and-swap guarantee, so a read-back detects intervening writes but
+//! cannot prevent all simultaneous-write races.
 //!
 //! Completion travels too, but not as a bare `done` flag: a completion is a
 //! pair (planned session, activity), and the activity is identified by the
@@ -60,7 +57,7 @@ use crate::types::{PlanWorkout, TrainingPlan};
 
 /// Version of the on-disk/on-gist wire format. Bump when the DTO shape changes
 /// in a way older apps cannot read.
-const WIRE_VERSION: u32 = 2;
+const WIRE_VERSION: u32 = 3;
 /// Domain separation for both the sync code and the encryption key, so neither
 /// can collide with any other hash or KDF this app might do with the same `sub`.
 const PROTOCOL: &[u8] = b"runalytics.plan.sync.v1";
@@ -86,8 +83,14 @@ pub struct PlanSync {
     pub can_publish: bool,
     pub last_pushed: Option<String>,
     pub last_pulled: Option<String>,
-    /// Revision currently installed on this device, so a pull never downgrades.
+    /// Local mutation baseline for the acknowledged snapshot, not a global clock.
     pub installed_rev: Option<i64>,
+    pub acknowledged_blob: Option<String>,
+    pub published_plan_id: Option<String>,
+    pub channel_code: Option<String>,
+    pub remote_etag: Option<String>,
+    pub retry_after: Option<i64>,
+    pub last_checked: Option<String>,
     pub last_error: Option<String>,
     /// Plans this device has explicitly ended ("End plan"). An automatic pull
     /// must never reimport one of these — not even while the local store is
@@ -120,6 +123,36 @@ impl PlanSync {
             }
         }
     }
+}
+
+fn load_device(state: &AppState) -> Result<PlanSync> {
+    let mut config = load(&state.data_dir)?;
+    if let Some(checkpoint) = state.store.plan_sync_checkpoint()? {
+        let acknowledged: PlanSync = serde_json::from_str(&checkpoint)?;
+        config.acknowledged_blob = acknowledged.acknowledged_blob;
+        config.published_plan_id = acknowledged.published_plan_id;
+        config.installed_rev = acknowledged.installed_rev;
+        config.channel_code = acknowledged.channel_code;
+        config.gist_id = acknowledged.gist_id;
+    }
+    Ok(config)
+}
+
+fn save_device(state: &AppState, config: &PlanSync) -> Result<()> {
+    state.store.save_plan_sync_checkpoint(&serde_json::to_string(config)?)?;
+    save(&state.data_dir, config)
+}
+
+pub(crate) fn invalidate_channel(state: &AppState) -> Result<()> {
+    let mut config = load_device(state)?;
+    config.gist_id = None;
+    config.acknowledged_blob = None;
+    config.published_plan_id = None;
+    config.installed_rev = None;
+    config.remote_etag = None;
+    config.channel_code = None;
+    config.retry_after = None;
+    save_device(state, &config)
 }
 
 // ---- wire format -----------------------------------------------------------
@@ -559,18 +592,36 @@ fn github_headers(request: reqwest::RequestBuilder, token: &str) -> reqwest::Req
         .bearer_auth(token)
 }
 
+fn check_github_status(response: &reqwest::Response) -> Result<()> {
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (response.status() == reqwest::StatusCode::FORBIDDEN
+            && (response.headers().contains_key("retry-after")
+                || response.headers().get("x-ratelimit-remaining").is_some_and(|value| value == "0"))) {
+        let now = Utc::now().timestamp();
+        let retry_at = response.headers().get("retry-after").and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok().map(|seconds| now + seconds)
+                .or_else(|| DateTime::parse_from_rfc2822(value).ok().map(|date| date.timestamp())))
+            .or_else(|| response.headers().get("x-ratelimit-reset").and_then(|value| value.to_str().ok()?.parse::<i64>().ok()))
+            .unwrap_or(now + 60).max(now + 1);
+        return Err(AppError::PlanSyncRateLimited { retry_at });
+    }
+    Ok(())
+}
+
 /// The gist we are looking for, among the ones this token can see. Matching on
 /// the description rather than the name means neither device stores a URL.
-async fn find_gist(client: &reqwest::Client, token: &str, code: &str) -> Result<Option<String>> {
+async fn find_gist(client: &reqwest::Client, token: &str, code: &str, api: &str) -> Result<Option<String>> {
     let want = format!("{MARKER}{code}");
+    let mut found = None;
     for page in 1..=3u32 {
         // Plain /gists is "the authenticated user's gists" when sent with a
         // token — there is no /user/gists route, and GitHub answers 404.
-        let url = format!("https://api.github.com/gists?per_page=100&page={page}");
+        let url = format!("{api}/gists?per_page=100&page={page}");
         let response = github_headers(client.get(&url), token)
             .send()
             .await
             .map_err(|_| AppError::Other("Could not reach GitHub".into()))?;
+        check_github_status(&response)?;
         if !response.status().is_success() {
             return Err(AppError::Other(format!(
                 "GitHub returned HTTP {} while looking for the synced plan",
@@ -582,21 +633,24 @@ async fn find_gist(client: &reqwest::Client, token: &str, code: &str) -> Result<
             .await
             .map_err(|_| AppError::Other("GitHub returned an unreadable response".into()))?;
         let Some(list) = gists.as_array() else {
-            return Ok(None);
+            return Err(AppError::Other("GitHub returned an unreadable gist list".into()));
         };
         for gist in list {
             if gist.get("description").and_then(|d| d.as_str()) == Some(want.as_str()) {
                 if let Some(id) = gist.get("id").and_then(|i| i.as_str()) {
-                    return Ok(Some(id.to_string()));
+                    if found.is_some() {
+                        return Err(AppError::Other("Multiple plan sync gists match this account. Keep one channel before syncing.".into()));
+                    }
+                    found = Some(id.to_string());
                 }
             }
         }
         // Fewer than a full page means there is no next page.
         if list.len() < 100 {
-            return Ok(None);
+            return Ok(found);
         }
     }
-    Ok(None)
+    Err(AppError::Other("Could not finish discovering the plan sync channel".into()))
 }
 
 async fn create_gist(
@@ -604,11 +658,12 @@ async fn create_gist(
     token: &str,
     code: &str,
     body: &str,
+    api: &str,
 ) -> Result<String> {
     let mut files = serde_json::Map::new();
     files.insert(BLOB_FILE.into(), serde_json::json!({ "content": body }));
     let response = github_headers(
-        client.post("https://api.github.com/gists").json(&serde_json::json!({
+        client.post(format!("{api}/gists")).json(&serde_json::json!({
             "description": format!("{MARKER}{code}"),
             // Secret, not public: the payload is encrypted, but there is no
             // reason for a plan to be world-readable even so.
@@ -620,6 +675,7 @@ async fn create_gist(
     .send()
     .await
     .map_err(|_| AppError::Other("Could not create the plan gist on GitHub".into()))?;
+    check_github_status(&response)?;
     if !response.status().is_success() {
         return Err(AppError::Other(format!(
             "GitHub refused to create the plan gist (HTTP {})",
@@ -642,18 +698,20 @@ async fn patch_gist(
     token: &str,
     gist_id: &str,
     body: &str,
+    api: &str,
 ) -> Result<()> {
     let mut files = serde_json::Map::new();
     files.insert(BLOB_FILE.into(), serde_json::json!({ "content": body }));
     let response = github_headers(
         client
-            .patch(format!("https://api.github.com/gists/{gist_id}"))
+            .patch(format!("{api}/gists/{gist_id}"))
             .json(&serde_json::json!({ "files": files })),
         token,
     )
     .send()
     .await
     .map_err(|_| AppError::Other("Could not update the plan gist on GitHub".into()))?;
+    check_github_status(&response)?;
     if !response.status().is_success() {
         return Err(AppError::Other(format!(
             "GitHub refused to update the plan gist (HTTP {})",
@@ -665,12 +723,25 @@ async fn patch_gist(
 
 /// The sealed text stored in the gist. The gist API returns small files inline,
 /// which avoids a second request and the CDN cache the raw URL sits behind.
-async fn fetch_blob(client: &reqwest::Client, token: &str, gist_id: &str) -> Result<String> {
-    let url = format!("https://api.github.com/gists/{gist_id}");
-    let response = github_headers(client.get(&url), token)
+async fn fetch_blob(client: &reqwest::Client, token: &str, gist_id: &str, api: &str) -> Result<String> {
+    fetch_remote(client, token, gist_id, api, None).await?.0
+        .ok_or_else(|| AppError::Other("GitHub returned no plan snapshot".into()))
+}
+
+async fn fetch_remote(client: &reqwest::Client, token: &str, gist_id: &str, api: &str, etag: Option<&str>) -> Result<(Option<String>, Option<String>)> {
+    let url = format!("{api}/gists/{gist_id}");
+    let request = github_headers(client.get(&url), token);
+    let request = if let Some(etag) = etag { request.header("If-None-Match", etag) } else { request };
+    let response = request
         .send()
         .await
         .map_err(|_| AppError::Other("Could not reach GitHub".into()))?;
+    check_github_status(&response)?;
+    let remote_etag = response.headers().get("etag").and_then(|value| value.to_str().ok()).map(str::to_owned);
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        if etag.is_none() { return Err(AppError::Other("GitHub returned no plan snapshot".into())); }
+        return Ok((None, remote_etag.or_else(|| etag.map(str::to_owned))));
+    }
     if !response.status().is_success() {
         return Err(AppError::Other(format!(
             "GitHub returned HTTP {} for the synced plan",
@@ -695,39 +766,65 @@ async fn fetch_blob(client: &reqwest::Client, token: &str, gist_id: &str) -> Res
             .text()
             .await
             .map_err(|_| AppError::Other("Could not download the synced plan".into()))?;
-        return Ok(body);
+        return Ok((Some(body), remote_etag));
     }
     file["content"]
         .as_str()
-        .map(str::to_string)
+        .map(|content| (Some(content.to_string()), remote_etag))
         .ok_or_else(|| AppError::Other("The synced plan gist has no plan file".into()))
 }
 
 // ---- publish / pull --------------------------------------------------------
 
-/// Build, seal and upload the active plan. Called automatically after any plan
-/// change on the desktop, and by the explicit button in Settings.
-///
-/// Silent by design when sync is not configured: the plan-change call sites are
-/// on the hot path of creating a plan, and a runner who has never opened this
-/// setting must never see an error from it.
-pub async fn push_if_enabled(state: &AppState) {
-    let _ = try_push_if_enabled(state).await;
+fn blob_fingerprint(sealed: &str) -> String {
+    use aws_lc_rs::digest::{digest, SHA256};
+    base64url_encode(digest(&SHA256, sealed.as_bytes()).as_ref())
 }
 
-/// [`push_if_enabled`] with the outcome reported: `None` when the channel is
+fn remote_changed(config: &PlanSync, sealed: &str) -> bool {
+    config.acknowledged_blob.as_deref() != Some(blob_fingerprint(sealed).as_str())
+}
+
+fn decode_snapshot(sub: &str, sealed: &str) -> Result<Option<PlanBlob>> {
+    let value: serde_json::Value = serde_json::from_slice(&open(sub, sealed)?)?;
+    let version = value["v"].as_u64().ok_or_else(|| AppError::Other("The synced plan has no format version".into()))?;
+    if version > u64::from(WIRE_VERSION) {
+        return Err(AppError::Other("The synced plan was written by a newer version of Runalytics".into()));
+    }
+    if version == 3 && value["state"] == "empty" {
+        return Ok(None);
+    }
+    let blob: PlanBlob = serde_json::from_value(value)?;
+    if blob.workouts.is_empty() || blob.workouts.iter().any(|workout| workout.plan_id != blob.plan.id) {
+        return Err(AppError::Other("The synced plan has invalid workouts".into()));
+    }
+    Ok(Some(blob))
+}
+
+fn local_changed(state: &AppState, config: &PlanSync) -> Result<bool> {
+    let current = state.store.current_plan()?;
+    Ok(current.as_ref().map(|(plan, _)| plan.id.as_str()) != config.published_plan_id.as_deref()
+        || state.store.current_plan_rev()? != config.installed_rev)
+}
+
+pub fn pending_changes(state: &AppState) -> Result<bool> {
+    let config = load_device(state)?;
+    Ok(config.acknowledged_blob.is_some() && local_changed(state, &config)?)
+}
+
+/// `None` when the channel is
 /// not configured (nothing was attempted, so nothing to show), `Some` when a
 /// push actually ran. The staged toast in the commands layer uses this to
 /// decide whether to draw a gist line at all.
 pub async fn try_push_if_enabled(state: &AppState) -> Option<Result<PlanSync>> {
-    let config = load(&state.data_dir).unwrap_or_default();
-    if !config.enabled || !config.can_publish {
+    let config = match load_device(state) { Ok(config) => config, Err(error) => return Some(Err(error)) };
+    if !config.enabled {
         return None;
     }
     let result = push(state, false).await;
     if let Err(error) = &result {
         eprintln!("[plan-sync] automatic push failed: {error}");
-        let mut retry = config;
+        let mut retry = load_device(state).unwrap_or(config);
         retry.last_error = Some(error.to_string());
         let _ = save(&state.data_dir, &retry);
     }
@@ -741,19 +838,21 @@ pub async fn push(state: &AppState, explicit: bool) -> Result<PlanSync> {
     let result = push_inner(state, explicit).await;
     match result {
         Ok(config) => {
-            save(&state.data_dir, &config)?;
+            save_device(state, &config)?;
             Ok(config)
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            let mut config = load_device(state)?;
+            config.last_error = Some(error.to_string());
+            if let AppError::PlanSyncRateLimited { retry_at } = &error { config.retry_after = Some(*retry_at); }
+            save(&state.data_dir, &config)?;
+            Err(error)
+        }
     }
 }
 
 async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
-    let mut config = load(&state.data_dir)?;
-    // Both devices write: the phone's edits (a skip, a move, a session marked
-    // done against the morning run) have to reach the gist or the desktop
-    // never sees them. Which copy wins is decided by revision at pull time,
-    // not by which platform pressed the button.
+    let mut config = load_device(state)?;
     config.can_publish = true;
     if !config.enabled {
         if explicit {
@@ -769,14 +868,13 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
     let sub = account_id().ok_or_else(|| {
         AppError::Other("Connect COROS on both devices first — it is how they find each other".into())
     })?;
+    sync_channel(state, config, &token, &sub, "https://api.github.com").await
+}
 
-    let Some((plan, workouts)) = state.store.current_plan()? else {
-        if explicit {
-            return Err(AppError::Other("There is no active plan to sync".into()));
-        }
-        // Nothing to publish is not an error; leave the previous blob alone.
-        return Ok(config);
-    };
+async fn sync_channel(state: &AppState, mut config: PlanSync, token: &str, sub: &str, api: &str) -> Result<PlanSync> {
+    if let Some(retry_at) = config.retry_after.filter(|retry_at| *retry_at > Utc::now().timestamp()) {
+        return Err(AppError::PlanSyncRateLimited { retry_at });
+    }
 
     // Pair each done session with the run that completed it, named by the
     // provider's record id so the other device can resolve the same activity.
@@ -791,38 +889,85 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
             })
     };
 
-    let code = sync_code(&sub);
+    let code = sync_code(sub);
+    if config.channel_code.as_ref().is_some_and(|previous| previous != &code) {
+        config.gist_id = None;
+        config.acknowledged_blob = None;
+        config.published_plan_id = None;
+        config.installed_rev = None;
+        config.remote_etag = None;
+    }
+    config.channel_code = Some(code.clone());
     let client = github_client()?;
     let gist_id = match config.gist_id.clone() {
         Some(id) => Some(id),
-        None => find_gist(&client, &token, &code).await?,
+        None => find_gist(&client, token, &code, api).await?,
     };
 
-    let blob = PlanBlob {
+    if let Some(id) = gist_id.as_deref() {
+        config.gist_id = Some(id.to_owned());
+        let etag = config.acknowledged_blob.as_ref().and(config.remote_etag.as_deref());
+        let (remote, etag) = fetch_remote(&client, token, id, api, etag).await?;
+        config.remote_etag = etag;
+        config.last_checked = Some(Utc::now().to_rfc3339());
+        if let Some(remote) = remote {
+            decode_snapshot(sub, &remote)?;
+            if remote_changed(&config, &remote) {
+            let (config, outcome) = install_snapshot(state, config, sub, &remote, true, false).await?;
+            if outcome.conflict.is_some() {
+                return Err(AppError::Other("The legacy Gist contains an ended plan. Import it explicitly to restore it.".into()));
+            }
+            return Ok(config);
+            }
+        }
+        if !local_changed(state, &config)? {
+            config.last_error = None;
+            return Ok(config);
+        }
+    }
+
+    let current = state.store.current_plan()?;
+    if current.is_none() && gist_id.is_none() {
+        return Ok(config);
+    }
+
+    let payload = if let Some((plan, workouts)) = current.as_ref() {
+        serde_json::to_vec(&PlanBlob {
         v: WIRE_VERSION,
-        // The plan's own last-edit revision, not its creation time: two
-        // devices decide which copy is newer by comparing when they were last
-        // edited, and creation time cannot express an edit at all.
         rev: state
             .store
             .current_plan_rev()?
             .unwrap_or_else(|| plan.created_at.timestamp()),
         synced_at: Utc::now().timestamp(),
-        plan: PlanWire::from_plan(&plan),
+        plan: PlanWire::from_plan(plan),
         workouts: workouts
             .iter()
             .map(|w| WorkoutWire::from_workout(w, completion_of(w)))
             .collect(),
         calendar: calendar_target(&state.data_dir),
+        })?
+    } else {
+        serde_json::to_vec(&serde_json::json!({"v": WIRE_VERSION, "state": "empty"}))?
     };
-    let sealed = seal(&sub, &serde_json::to_vec(&blob)?)?;
+    let sealed = seal(sub, &payload)?;
 
     match gist_id.as_deref() {
-        Some(id) => patch_gist(&client, &token, id, &sealed).await?,
-        None => config.gist_id = Some(create_gist(&client, &token, &code, &sealed).await?),
+        Some(id) => patch_gist(&client, token, id, &sealed, api).await?,
+        None => config.gist_id = Some(create_gist(&client, token, &code, &sealed, api).await?),
     }
+    config.gist_id = config.gist_id.or(gist_id);
+    save(&state.data_dir, &config)?;
+    let accepted = fetch_blob(&client, token, config.gist_id.as_deref().unwrap(), api).await?;
+    if accepted != sealed {
+        let (config, _) = install_snapshot(state, config, sub, &accepted, true, false).await?;
+        return Ok(config);
+    }
+    config.acknowledged_blob = Some(blob_fingerprint(&sealed));
+    config.published_plan_id = current.as_ref().map(|(plan, _)| plan.id.clone());
+    config.installed_rev = state.store.current_plan_rev()?;
     config.last_pushed = Some(Utc::now().to_rfc3339());
     config.last_error = None;
+    config.retry_after = None;
     Ok(config)
 }
 
@@ -863,7 +1008,7 @@ pub struct PullOutcome {
 /// phone may have its own plan the runner just made, and silently replacing it
 /// is the worst thing a sync could do.
 pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcome)> {
-    let mut config = load(&state.data_dir)?;
+    let mut config = load_device(state)?;
     let token = stored_token().ok_or_else(|| {
         AppError::Other(
             "Add your GitHub token in Settings → Calendar subscription to fetch a plan".into(),
@@ -876,7 +1021,7 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     let client = github_client()?;
     let gist_id = match config.gist_id.clone() {
         Some(id) => id,
-        None => find_gist(&client, &token, &code).await?.ok_or_else(|| {
+        None => find_gist(&client, &token, &code, "https://api.github.com").await?.ok_or_else(|| {
             AppError::Other(
                 "No synced plan found for this COROS account. Publish one from your computer."
                     .into(),
@@ -886,19 +1031,38 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
     config.gist_id = Some(gist_id.clone());
     save(&state.data_dir, &config)?;
 
-    let sealed = fetch_blob(&client, &token, &gist_id).await?;
-    let blob: PlanBlob = serde_json::from_slice(&open(&sub, &sealed)?)?;
-    if blob.v > WIRE_VERSION {
-        return Err(AppError::Other(
-            "The synced plan was written by a newer version of Runalytics".into(),
-        ));
-    }
-    if blob.workouts.is_empty() {
-        return Err(AppError::Other("The synced plan has no workouts".into()));
+    let sealed = fetch_blob(&client, &token, &gist_id, "https://api.github.com").await?;
+    install_snapshot(state, config, &sub, &sealed, false, force).await
+}
+
+async fn install_snapshot(
+    state: &AppState,
+    mut config: PlanSync,
+    sub: &str,
+    sealed: &str,
+    authoritative: bool,
+    force: bool,
+) -> Result<(PlanSync, PullOutcome)> {
+    let snapshot = decode_snapshot(sub, sealed)?;
+    config.last_checked = Some(Utc::now().to_rfc3339());
+    let Some(blob) = snapshot else {
+        let installed = state.store.current_plan()?.is_some();
+        config.acknowledged_blob = Some(blob_fingerprint(sealed));
+        config.published_plan_id = None;
+        config.installed_rev = None;
+        state.store.clear_synced_plan_data(Some(&serde_json::to_string(&config)?))?;
+        config.last_pulled = Some(Utc::now().to_rfc3339());
+        config.last_error = None;
+        save_device(state, &config)?;
+        return Ok((config, PullOutcome { installed, plan_name: "No active plan".into(), workouts: 0, conflict: None }));
+    };
+    if authoritative && !remote_changed(&config, sealed) {
+        save(&state.data_dir, &config)?;
+        return Ok((config, PullOutcome { installed: false, plan_name: String::new(), workouts: 0, conflict: None }));
     }
 
     let incoming = blob.plan.to_plan();
-    if is_reset_plan(&config, &incoming.id, force) {
+    if is_reset_plan(&config, &incoming.id, force) && !(authoritative && blob.v >= 3) {
         return Ok((config, PullOutcome {
             installed: false,
             plan_name: String::new(),
@@ -911,7 +1075,7 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
         .current_plan_rev()?
         .unwrap_or(i64::MIN);
     if let Some((existing, _)) = state.store.current_plan()? {
-        if existing.id != incoming.id && !force {
+        if existing.id != incoming.id && !force && !authoritative {
             config.last_error = None;
             return Ok((
                 config,
@@ -923,12 +1087,7 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
                 },
             ));
         }
-        // Same plan arriving again is only worth installing when it is a
-        // strictly newer revision — the last-edit stamp, not the creation
-        // time, is what says so. An equal or older copy is the channel
-        // holding what we already have (or published ourselves), and
-        // re-installing it would only churn.
-        if existing.id == incoming.id && blob.rev <= local_rev {
+        if existing.id == incoming.id && blob.rev <= local_rev && !authoritative && !force {
             return Ok((
                 config,
                 PullOutcome {
@@ -941,26 +1100,16 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
         }
     }
 
-    // A session counts as done if either copy says so: the wire's answer, or
-    // this device's own completion the matcher produced from its own sync.
-    // Un-ticking a session the runner has already run would be worse than any
-    // conflict the revision rule could produce.
-    let done_here: std::collections::HashSet<String> = state
-        .store
-        .current_plan()?
-        .map(|(_, ws)| ws.into_iter().filter(|w| w.done).map(|w| w.id).collect())
-        .unwrap_or_default();
     let workouts: Vec<PlanWorkout> = blob
         .workouts
         .iter()
-        .map(|w| {
-            let mut workout = w.to_workout();
-            workout.done = workout.done || done_here.contains(&w.id);
-            workout
-        })
+        .map(WorkoutWire::to_workout)
         .collect();
 
-    state.store.replace_plan(&incoming, &workouts, blob.rev)?;
+    config.acknowledged_blob = Some(blob_fingerprint(sealed));
+    config.published_plan_id = Some(incoming.id.clone());
+    config.installed_rev = Some(blob.rev);
+    state.store.replace_synced_plan(&incoming, &workouts, blob.rev, Some(&serde_json::to_string(&config)?))?;
 
     // Re-attach the completions that travelled with the plan. Each names its
     // run by the provider's record id, which both devices hold after syncing
@@ -1019,10 +1168,12 @@ pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcom
             .reset_plan_ids
             .retain(|id| id != incoming.id.as_str());
     }
-    config.installed_rev = Some(blob.rev);
+    config.installed_rev = state.store.current_plan_rev()?;
+    config.acknowledged_blob = Some(blob_fingerprint(sealed));
+    config.published_plan_id = Some(incoming.id.clone());
     config.last_pulled = Some(Utc::now().to_rfc3339());
     config.last_error = None;
-    save(&state.data_dir, &config)?;
+    save_device(state, &config)?;
 
     Ok((
         config,
@@ -1078,31 +1229,20 @@ pub enum PillStatus {
     ImportAvailable,
 }
 
-/// The relation between the published blob and this device's plan, computed
-/// from the same revision rule [`pull`] enforces — the pill must never
-/// promise an import that the monotonic guard would then refuse. One rule
-/// for both devices now that both can write: the higher revision is the
-/// current copy, and the other end's action is to take it.
 fn pill_status(
-    local: Option<(&TrainingPlan, i64)>,
+    local: Option<&TrainingPlan>,
     blob_plan_id: &str,
-    blob_rev: i64,
+    changed: bool,
+    dirty: bool,
 ) -> PillStatus {
-    let Some((plan, local_rev)) = local else {
-        return PillStatus::ImportAvailable;
-    };
-    if blob_rev > local_rev {
-        // The channel is ahead: same plan means an update to take, a
-        // different plan means the other device moved on to something else.
-        return if plan.id == blob_plan_id {
-            PillStatus::UpdateAvailable
-        } else {
-            PillStatus::OtherPlan
+    if changed {
+        return match local {
+            None => PillStatus::ImportAvailable,
+            Some(plan) if plan.id != blob_plan_id => PillStatus::OtherPlan,
+            _ => PillStatus::UpdateAvailable,
         };
     }
-    if plan.id != blob_plan_id || blob_rev < local_rev {
-        // Either a different (older) plan is all the channel has, or ours is
-        // simply not published yet. Both read as "publish this one".
+    if dirty {
         return PillStatus::Unpublished;
     }
     PillStatus::UpToDate
@@ -1115,7 +1255,7 @@ fn pill_status(
 /// channel that does not exist. A real failure (GitHub unreachable) is an
 /// error the caller hides quietly: a status pill is never worth an alert.
 pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
-    let config = load(&state.data_dir)?;
+    let config = load_device(state)?;
     if !config.enabled {
         return Ok(None);
     }
@@ -1125,54 +1265,41 @@ pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
     let client = github_client()?;
     let gist_id = match config.gist_id.clone() {
         Some(id) => id,
-        None => match find_gist(&client, &token, &sync_code(&sub)).await? {
+            None => match find_gist(&client, &token, &sync_code(&sub), "https://api.github.com").await? {
             Some(id) => id,
             None => return Ok(None),
         },
     };
-    let sealed = fetch_blob(&client, &token, &gist_id).await?;
-    let blob: PlanBlob = serde_json::from_slice(&open(&sub, &sealed)?)?;
+    let sealed = fetch_blob(&client, &token, &gist_id, "https://api.github.com").await?;
+    let Some(blob) = decode_snapshot(&sub, &sealed)? else { return Ok(None); };
     // Same refusals as `pull`, reported as "nothing to say" rather than an
     // error: a pill cannot act on an unreadable blob any better than on none.
     if blob.v > WIRE_VERSION || blob.workouts.is_empty() {
         return Ok(None);
     }
     let current = state.store.current_plan()?;
-    let local_rev = state
-        .store
-        .current_plan_rev()?
-        .unwrap_or_else(|| current.as_ref().map_or(0, |(plan, _)| plan.created_at.timestamp()));
-    let local = current.as_ref().map(|(plan, _)| (plan, local_rev));
     Ok(Some(RemotePlan {
-        status: pill_status(local, &blob.plan.id, blob.rev),
+        status: pill_status(current.as_ref().map(|(plan, _)| plan), &blob.plan.id, remote_changed(&config, &sealed), local_changed(state, &config)?),
         plan_name: plan_summary(&blob.plan.to_plan()),
         workouts: blob.workouts.len(),
         synced_at: blob.synced_at,
     }))
 }
 
-/// Called on every device after a sync completes: take the channel's copy if
-/// it is newer than what is here. Both directions now — the phone's edits
-/// reach the desktop this way, and the desktop's reach the phone — and the
-/// guards inside [`pull`] decide: an equal or older revision is a no-op, a
-/// *different* newer plan is reported as a conflict rather than installed, so
-/// the automatic path can never replace a plan the runner made locally.
-pub async fn pull_if_newer(state: &AppState) {
-    let config = load(&state.data_dir).unwrap_or_default();
-    if !config.enabled {
-        return;
+pub async fn refresh(state: &AppState) -> Result<bool> {
+    let before = load_device(state)?;
+    if !before.enabled || stored_token().is_none() || account_id().is_none() {
+        return Ok(false);
     }
-    match pull(state, false).await {
-        Ok((_, outcome)) => {
-            if outcome.installed {
-                // The plan view is gated on having a plan, so say what landed.
-                eprintln!(
-                    "[plan-sync] installed {} workouts from {}",
-                    outcome.workouts, outcome.plan_name
-                );
-            }
+    match push(state, false).await {
+        Ok(after) => Ok(before.last_pulled != after.last_pulled),
+        Err(error) => {
+            let mut config = load(&state.data_dir)?;
+            config.last_checked = Some(Utc::now().to_rfc3339());
+            config.last_error = Some(error.to_string());
+            save(&state.data_dir, &config)?;
+            Err(error)
         }
-        Err(error) => eprintln!("[plan-sync] automatic pull failed: {error}"),
     }
 }
 
@@ -1191,7 +1318,7 @@ pub struct PlanSyncStatus {
 }
 
 pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
-    let mut config = load(&state.data_dir)?;
+    let mut config = load_device(state)?;
     // Both devices publish and both pull; the field stays on the shape
     // because the UI still reads it, but the platform no longer gates it.
     config.can_publish = true;
@@ -1207,7 +1334,7 @@ pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
 /// Save the pane's settings. `token` follows the same convention as calendar
 /// publishing: `None` leaves the stored token alone, `Some("")` removes it.
 pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) -> Result<PlanSyncStatus> {
-    let mut config = load(&state.data_dir)?;
+    let mut config = load_device(state)?;
     config.enabled = patch.enabled;
     config.can_publish = true;
     // A token change invalidates a discovered gist: the new account may have a
@@ -1240,9 +1367,15 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
     }
     if token_changed {
         config.gist_id = None;
+        config.acknowledged_blob = None;
+        config.published_plan_id = None;
+        config.installed_rev = None;
+        config.remote_etag = None;
+        config.channel_code = None;
+        config.retry_after = None;
     }
     config.last_error = None;
-    save(&state.data_dir, &config)?;
+    save_device(state, &config)?;
     status(state)
 }
 
@@ -1309,6 +1442,271 @@ fn b64_index(c: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_credential_change_invalidates_the_persisted_channel_checkpoint() {
+        let state = device();
+        let config = PlanSync {
+            enabled: true,
+            gist_id: Some("previous-account-gist".into()),
+            acknowledged_blob: Some("previous-snapshot".into()),
+            remote_etag: Some("previous-etag".into()),
+            installed_rev: Some(42),
+            ..Default::default()
+        };
+        save_device(&state, &config).unwrap();
+        invalidate_channel(&state).unwrap();
+        let changed = load_device(&state).unwrap();
+        assert!(changed.enabled);
+        assert!(changed.gist_id.is_none());
+        assert!(changed.acknowledged_blob.is_none());
+        assert!(changed.remote_etag.is_none());
+        assert!(changed.installed_rev.is_none());
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    fn device() -> AppState {
+        let data_dir = std::env::temp_dir().join(format!("plan-sync-device-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        AppState {
+            store: crate::store::Store::open(&data_dir.join("store.sqlite")).unwrap(),
+            settings: std::sync::Mutex::new(Default::default()),
+            providers: Vec::new(),
+            data_dir,
+            syncing: std::sync::atomic::AtomicBool::new(false),
+            sync_lock: tokio::sync::Mutex::new(()),
+            calendar_lock: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    async fn fake_gist(
+        remote: String,
+        status: u16,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<String>>, std::sync::Arc<std::sync::Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        fake_gist_with_race(remote, status, None).await
+    }
+
+    async fn fake_gist_with_race(
+        remote: String,
+        status: u16,
+        concurrent: Option<String>,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<String>>, std::sync::Arc<std::sync::Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = format!("http://{}", listener.local_addr().unwrap());
+        let snapshot = std::sync::Arc::new(std::sync::Mutex::new(remote));
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let content = snapshot.clone();
+        let captured = requests.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let header_end = loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    if count == 0 { return; }
+                    request.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") { break end + 4; }
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let line = headers.lines().next().unwrap().to_string();
+                let conditional = headers.lines().find_map(|header| {
+                    let (name, value) = header.split_once(':')?;
+                    name.eq_ignore_ascii_case("if-none-match").then(|| value.trim().to_owned())
+                });
+                let length = headers.lines().find_map(|header| header.to_ascii_lowercase().strip_prefix("content-length:").and_then(|value| value.trim().parse::<usize>().ok())).unwrap_or(0);
+                while request.len() < header_end + length {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    if count == 0 { return; }
+                    request.extend_from_slice(&chunk[..count]);
+                }
+                captured.lock().unwrap().push(line.clone());
+                if line.starts_with("PATCH ") {
+                    let payload: serde_json::Value = serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
+                    *content.lock().unwrap() = concurrent.clone().unwrap_or_else(|| payload["files"][BLOB_FILE]["content"].as_str().unwrap().to_string());
+                }
+                let etag = format!("\"{}\"", blob_fingerprint(&content.lock().unwrap()));
+                if status == 200 && conditional.as_deref() == Some(&etag) {
+                    socket.write_all(format!("HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                    continue;
+                }
+                let body = serde_json::json!({"files": {BLOB_FILE: {"content": content.lock().unwrap().clone()}}}).to_string();
+                let reply = format!("HTTP/1.1 {status} Response\r\nETag: {etag}\r\nRetry-After: 90\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        (api, snapshot, requests, server)
+    }
+
+    #[tokio::test]
+    async fn stale_mobile_installs_desktop_replacement_without_patching_even_with_clock_skew() {
+        let mobile = device();
+        let desktop = device();
+        let mut old = wire();
+        old.rev = i64::MAX / 2;
+        mobile.store.replace_plan(&old.plan.to_plan(), &old.workouts.iter().map(WorkoutWire::to_workout).collect::<Vec<_>>(), old.rev).unwrap();
+        let mut latest = wire();
+        latest.plan.id = "desktop-plan-b".into();
+        latest.plan.name = Some("Desktop replacement".into());
+        latest.workouts[0].plan_id = latest.plan.id.clone();
+        let remote = seal("synthetic-account", &serde_json::to_vec(&latest).unwrap()).unwrap();
+        let (api, _, requests, server) = fake_gist(remote.clone(), 200).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let installed = sync_channel(&mobile, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert_eq!(mobile.store.current_plan().unwrap().unwrap().0.id, "desktop-plan-b");
+        assert_eq!(installed.acknowledged_blob, Some(blob_fingerprint(&remote)));
+        let unchanged = sync_channel(&mobile, installed, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert!(!local_changed(&mobile, &unchanged).unwrap());
+        assert!(requests.lock().unwrap().iter().all(|request| request.starts_with("GET ")));
+        assert!(desktop.store.current_plan().unwrap().is_none());
+        server.abort();
+        std::fs::remove_dir_all(mobile.data_dir).unwrap();
+        std::fs::remove_dir_all(desktop.data_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unchanged_base_publishes_an_edit_and_tombstone_propagates_to_another_device() {
+        let desktop = device();
+        let mobile = device();
+        let blob = wire();
+        let sealed = seal("synthetic-account", &serde_json::to_vec(&blob).unwrap()).unwrap();
+        let (api, content, requests, server) = fake_gist(sealed.clone(), 200).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let installed = sync_channel(&desktop, config.clone(), "synthetic-token", "synthetic-account", &api).await.unwrap();
+        sync_channel(&mobile, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let mut workout = desktop.store.current_plan().unwrap().unwrap().1.remove(0);
+        workout.title = "Desktop edited session".into();
+        desktop.store.update_workout(&workout).unwrap();
+        let published = sync_channel(&desktop, installed, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let accepted = decode_snapshot("synthetic-account", &content.lock().unwrap()).unwrap().unwrap();
+        assert_eq!(accepted.workouts[0].title, "Desktop edited session");
+        assert_eq!(requests.lock().unwrap().iter().filter(|request| request.starts_with("PATCH ")).count(), 1);
+        desktop.store.clear_plan_data().unwrap();
+        sync_channel(&desktop, published, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let stale = load(&mobile.data_dir).unwrap();
+        sync_channel(&mobile, stale, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert!(mobile.store.current_plan().unwrap().is_none());
+        assert!(decode_snapshot("synthetic-account", &content.lock().unwrap()).unwrap().is_none());
+        server.abort();
+        std::fs::remove_dir_all(desktop.data_dir).unwrap();
+        std::fs::remove_dir_all(mobile.data_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_or_unreadable_remote_never_authorizes_a_write() {
+        for (status, content) in [(503, "unavailable"), (200, "malformed")] {
+            let state = device();
+            let blob = wire();
+            state.store.replace_plan(&blob.plan.to_plan(), &blob.workouts.iter().map(WorkoutWire::to_workout).collect::<Vec<_>>(), blob.rev).unwrap();
+            let (api, _, requests, server) = fake_gist(content.into(), status).await;
+            let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+            assert!(sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.is_err());
+            assert_eq!(requests.lock().unwrap().len(), 1);
+            assert!(requests.lock().unwrap()[0].starts_with("GET "));
+            assert_eq!(state.store.current_plan().unwrap().unwrap().0.id, blob.plan.id);
+            server.abort();
+            std::fs::remove_dir_all(state.data_dir).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn same_plan_remote_change_overrides_equal_revisions_and_pending_local_edits() {
+        let state = device();
+        let blob = wire();
+        let base = seal("synthetic-account", &serde_json::to_vec(&blob).unwrap()).unwrap();
+        let (api, remote, requests, server) = fake_gist(base, 200).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let config = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let mut workout = state.store.current_plan().unwrap().unwrap().1.remove(0);
+        workout.title = "Unpublished local edit".into();
+        state.store.update_workout(&workout).unwrap();
+        let mut changed = wire();
+        changed.workouts[0].title = "Authoritative same-revision remote edit".into();
+        *remote.lock().unwrap() = seal("synthetic-account", &serde_json::to_vec(&changed).unwrap()).unwrap();
+        sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert_eq!(state.store.current_plan().unwrap().unwrap().1[0].title, changed.workouts[0].title);
+        assert!(requests.lock().unwrap().iter().all(|request| request.starts_with("GET ")));
+        server.abort();
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn conditional_cache_hit_does_not_reinstall_or_publish_and_pending_edits_survive_restart() {
+        let mut state = device();
+        let blob = wire();
+        let remote = seal("synthetic-account", &serde_json::to_vec(&blob).unwrap()).unwrap();
+        let (api, _, requests, server) = fake_gist(remote, 200).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let config = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let unchanged = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert!(unchanged.remote_etag.is_some());
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert!(fetch_remote(&github_client().unwrap(), "synthetic-token", "channel", &api, unchanged.remote_etag.as_deref()).await.unwrap().0.is_none());
+        let mut workout = state.store.current_plan().unwrap().unwrap().1.remove(0);
+        workout.title = "Offline edit retained after restart".into();
+        state.store.update_workout(&workout).unwrap();
+        save_device(&state, &unchanged).unwrap();
+        state.store = crate::store::Store::open(&state.data_dir.join("store.sqlite")).unwrap();
+        let loaded = load_device(&state).unwrap();
+        assert!(local_changed(&state, &loaded).unwrap());
+        sync_channel(&state, loaded, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert_eq!(requests.lock().unwrap().iter().filter(|request| request.starts_with("PATCH ")).count(), 1);
+        server.abort();
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rate_limits_and_unsupported_snapshots_block_publication() {
+        let state = device();
+        let (api, _, requests, server) = fake_gist("unused".into(), 429).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let result = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await;
+        assert!(matches!(result, Err(AppError::PlanSyncRateLimited { retry_at }) if retry_at >= Utc::now().timestamp() + 85));
+        assert_eq!(requests.lock().unwrap().len(), 1);
+        let future = seal("synthetic-account", br#"{"v":999,"state":"empty"}"#).unwrap();
+        assert!(decode_snapshot("synthetic-account", &future).is_err());
+        server.abort();
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn readback_adopts_a_concurrent_gist_write_instead_of_retrying_the_local_snapshot() {
+        let state = device();
+        let base = seal("synthetic-account", &serde_json::to_vec(&wire()).unwrap()).unwrap();
+        let mut concurrent = wire();
+        concurrent.plan.name = Some("Concurrent Gist winner".into());
+        let concurrent = seal("synthetic-account", &serde_json::to_vec(&concurrent).unwrap()).unwrap();
+        let (api, _, requests, server) = fake_gist_with_race(base, 200, Some(concurrent)).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let config = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let mut workout = state.store.current_plan().unwrap().unwrap().1.remove(0);
+        workout.title = "Losing local edit".into();
+        state.store.update_workout(&workout).unwrap();
+        sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        assert_eq!(state.store.current_plan().unwrap().unwrap().0.name.as_deref(), Some("Concurrent Gist winner"));
+        assert_eq!(requests.lock().unwrap().iter().filter(|request| request.starts_with("PATCH ")).count(), 1);
+        server.abort();
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    #[test]
+    fn changed_gist_wins_over_stale_mobile_and_untracked_legacy_cache() {
+        let mut config = super::PlanSync::default();
+        assert!(super::remote_changed(&config, "desktop-plan-b"));
+        config.acknowledged_blob = Some(super::blob_fingerprint("mobile-plan-a"));
+        assert!(super::remote_changed(&config, "desktop-plan-b"));
+    }
+
+    #[test]
+    fn unchanged_gist_allows_a_local_edit_against_its_acknowledged_base() {
+        let config = super::PlanSync {
+            acknowledged_blob: Some(super::blob_fingerprint("shared-base")),
+            ..Default::default()
+        };
+        assert!(!super::remote_changed(&config, "shared-base"));
+    }
+
     #[test]
     fn reset_plan_is_not_automatically_reimported() {
         let directory = std::env::temp_dir().join(format!("plan-reset-{}", uuid::Uuid::new_v4()));
@@ -1441,57 +1839,44 @@ mod tests {
     }
 
     #[test]
-    fn pill_reports_up_to_date_only_when_the_channel_matches_our_revision() {
+    fn pill_reports_up_to_date_only_when_the_acknowledged_gist_matches() {
         let plan = shipped_plan();
-        // Same plan, same revision: the channel holds exactly what is here.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_700_000_000),
+            pill_status(Some(&plan), "plan-1", false, false),
             PillStatus::UpToDate
         );
-        // Ours is newer than the channel's: what is here is not published
-        // yet — including when the channel holds an *older* revision of the
-        // same plan, which the newer device must not be told to import.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_699_000_000),
+            pill_status(Some(&plan), "plan-1", false, true),
             PillStatus::Unpublished
         );
     }
 
     #[test]
-    fn pill_only_offers_an_import_for_a_strictly_newer_revision() {
+    fn changed_gist_takes_precedence_over_pending_local_edits() {
         let plan = shipped_plan();
-        // A newer revision of the same plan is the update the pill is for —
-        // on either device, since either may hold the older copy.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_700_000_001),
+            pill_status(Some(&plan), "plan-1", true, true),
             PillStatus::UpdateAvailable
         );
-        // An older remote is never an update; the honest reading is that ours
-        // is the copy that still needs publishing.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-1", 1_699_999_999),
-            PillStatus::Unpublished
+            pill_status(Some(&plan), "plan-2", true, true),
+            PillStatus::OtherPlan
         );
     }
 
     #[test]
     fn pill_distinguishes_a_foreign_plan_from_a_waiting_import() {
         let plan = shipped_plan();
-        // Nothing installed here: the channel has something to take.
         assert_eq!(
-            pill_status(None, "plan-1", 1_700_000_000),
+            pill_status(None, "plan-1", true, false),
             PillStatus::ImportAvailable
         );
-        // A different plan on the channel, newer than ours: importing it
-        // replaces the local plan, which needs a confirmation.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-2", 1_700_000_001),
+            pill_status(Some(&plan), "plan-2", true, false),
             PillStatus::OtherPlan
         );
-        // A different plan that is *older* than ours: ours is the current
-        // copy, so the verdict is to publish it over the stale one.
         assert_eq!(
-            pill_status(Some((&plan, 1_700_000_000)), "plan-2", 1_699_999_999),
+            pill_status(Some(&plan), "plan-2", false, true),
             PillStatus::Unpublished
         );
     }

@@ -16,9 +16,26 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.8.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.fradone.runalytics.strava</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.fradone.runalytics</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>0.8.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.sports</string>
 	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
@@ -40,11 +57,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.sports</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSSupportsAutomaticGraphicsSwitching</key>
-	<true/>
 </dict>
 </plist>

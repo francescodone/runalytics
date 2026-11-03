@@ -32,7 +32,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 # 0.13 is required: rmcp 3.5 depends on reqwest ^0.13.2. rustls is the
 # default TLS backend in 0.13 (the old "rustls-tls" feature no longer exists).
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "form"] }
 rmcp = { version = "3.5", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "auth"] }
 keyring = { version = "4.2", features = ["apple-native-keyring-store"] }
 # The Entry type `keyring` wraps. Needed directly because on iOS the entry has
@@ -53,6 +53,11 @@ thiserror = "2"
 # directly — `keyring::Entry` reports `NoDefaultStore` on iOS.
 [target.'cfg(target_os = "ios")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["protected"] }
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSURL", "NSError", "NSArray"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIApplication", "UIWindow", "UIResponder", "UIView"] }
+objc2-authentication-services = { version = "0.3.2", default-features = false, features = ["std", "ASWebAuthenticationSession", "ASFoundation", "block2"] }
 
 [profile.release]
 codegen-units = 1

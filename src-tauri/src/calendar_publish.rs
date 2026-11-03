@@ -159,6 +159,9 @@ pub async fn configure(
     }
     save(&state.data_dir, &config)?;
     sync_github_token(&config, password.as_deref());
+    if password.as_ref().is_some_and(|password| password.is_empty() || gist_file(&config).is_some()) {
+        crate::plan_sync::invalidate_channel(state)?;
+    }
     refresh_locked(state).await?;
     load(&state.data_dir)
 }

@@ -97,6 +97,70 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify Strava",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline strava::tests",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Check Strava iOS",
+			"type": "shell",
+			"command": "cargo check --manifest-path src-tauri/Cargo.toml --lib --target aarch64-apple-ios",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Strava UI",
+			"type": "shell",
+			"command": "npm run build && npx playwright test tests/desk.spec.mjs --grep strava --workers=1 --output=/tmp/runalytics-strava-ui",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Strava regressions",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline > /tmp/runalytics-strava-rust-regressions.log 2>&1; result=$?; tail -45 /tmp/runalytics-strava-rust-regressions.log; exit \"$result\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Strava UI regressions",
+			"type": "shell",
+			"command": "npm run test:ui -- --reporter=dot --output=/tmp/runalytics-strava-full-ui > /tmp/runalytics-strava-full-ui.log 2>&1; result=$?; tail -100 /tmp/runalytics-strava-full-ui.log; exit \"$result\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Build Strava iOS",
+			"type": "shell",
+			"command": "npx tauri ios build --debug --no-sign --target aarch64 > /tmp/runalytics-strava-ios-build.log 2>&1; result=$?; tail -65 /tmp/runalytics-strava-ios-build.log; exit \"$result\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Verify plan freshness",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline plan_sync::tests && npm run build && npx playwright test tests/desk.spec.mjs --grep 'plan freshness|native sync completion|calendar settings never publish|plan import only overwrites' --workers=1 --output=/tmp/runalytics-plan-freshness",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify plan freshness workflows",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline plan_sync::tests > /tmp/runalytics-sync-final-rust.log 2>&1 && npm run build > /tmp/runalytics-sync-final-build.log 2>&1 && npx playwright test tests/desk.spec.mjs --grep 'plan freshness|native sync completion|calendar settings never publish|plan import only overwrites|ending a plan requires|benchmark scheduling submits|reset previews|clearing training data' --workers=1 --output=/tmp/runalytics-sync-final-ui > /tmp/runalytics-sync-final-ui.log 2>&1; result=$?; tail -8 /tmp/runalytics-sync-final-rust.log; tail -4 /tmp/runalytics-sync-final-build.log; tail -30 /tmp/runalytics-sync-final-ui.log; exit \"$result\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

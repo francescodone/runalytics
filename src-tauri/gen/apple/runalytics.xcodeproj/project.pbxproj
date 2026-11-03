@@ -23,46 +23,46 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0458A0E9D4684C1C0D419081 /* engine.rs */ = {isa = PBXFileReference; path = engine.rs; sourceTree = "<group>"; };
-		0975AA2717A82B0D13B47DA3 /* metrics.rs */ = {isa = PBXFileReference; path = metrics.rs; sourceTree = "<group>"; };
-		1772137F4F5780AC7A4D52E2 /* calendar_publish.rs */ = {isa = PBXFileReference; path = calendar_publish.rs; sourceTree = "<group>"; };
+		0458A0E9D4684C1C0D419081 /* engine.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = engine.rs; sourceTree = "<group>"; };
+		0975AA2717A82B0D13B47DA3 /* metrics.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = metrics.rs; sourceTree = "<group>"; };
+		1772137F4F5780AC7A4D52E2 /* calendar_publish.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = calendar_publish.rs; sourceTree = "<group>"; };
 		1AAB20A6E24F32F9A1E2F069 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
-		1D2324C7CB18CBC63640407E /* assistant.rs */ = {isa = PBXFileReference; path = assistant.rs; sourceTree = "<group>"; };
+		1D2324C7CB18CBC63640407E /* assistant.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = assistant.rs; sourceTree = "<group>"; };
 		1EC4CD46FF9B162B7500584C /* libPods-runalytics_iOS.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-runalytics_iOS.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2E4342FDD0B500FD049F3518 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		370DF86C592E1FC372AC26F0 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
-		3A77AD651CAE158BA554F741 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		3A77AD651CAE158BA554F741 /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
 		3F46EBF92B129DE487D582BC /* Pods-runalytics_iOS.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-runalytics_iOS.release.xcconfig"; path = "Target Support Files/Pods-runalytics_iOS/Pods-runalytics_iOS.release.xcconfig"; sourceTree = "<group>"; };
-		3FC46CD18EAC5E003B03C9E3 /* fit.rs */ = {isa = PBXFileReference; path = fit.rs; sourceTree = "<group>"; };
-		455D46F1CF14D6D2CDBB6C5E /* adaptive.rs */ = {isa = PBXFileReference; path = adaptive.rs; sourceTree = "<group>"; };
-		4D12577A58AEABDBF5CA8C93 /* types.rs */ = {isa = PBXFileReference; path = types.rs; sourceTree = "<group>"; };
+		3FC46CD18EAC5E003B03C9E3 /* fit.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = fit.rs; sourceTree = "<group>"; };
+		455D46F1CF14D6D2CDBB6C5E /* adaptive.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = adaptive.rs; sourceTree = "<group>"; };
+		4D12577A58AEABDBF5CA8C93 /* types.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = types.rs; sourceTree = "<group>"; };
 		540F5B5452D758A0CB707597 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		55995CC379E520D71E758221 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
-		581852DA7B933DC29BADE164 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
-		58D22CEED87C9022A14C6B0B /* store.rs */ = {isa = PBXFileReference; path = store.rs; sourceTree = "<group>"; };
+		581852DA7B933DC29BADE164 /* mod.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = mod.rs; sourceTree = "<group>"; };
+		58D22CEED87C9022A14C6B0B /* store.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = store.rs; sourceTree = "<group>"; };
 		6407AFD126105DE57B1C27C8 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
-		659C26DF7923B29D4DB080AE /* garmin.rs */ = {isa = PBXFileReference; path = garmin.rs; sourceTree = "<group>"; };
+		659C26DF7923B29D4DB080AE /* garmin.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = garmin.rs; sourceTree = "<group>"; };
 		661E9952FF95FF7C12371375 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
-		67398619C16D57E66D54C74D /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
-		761A94CD142FC8DB217E7D10 /* calendar.rs */ = {isa = PBXFileReference; path = calendar.rs; sourceTree = "<group>"; };
+		67398619C16D57E66D54C74D /* error.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = error.rs; sourceTree = "<group>"; };
+		761A94CD142FC8DB217E7D10 /* calendar.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = calendar.rs; sourceTree = "<group>"; };
 		7A859BEEEE62501FD8BAA068 /* runalytics_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = runalytics_iOS.entitlements; sourceTree = "<group>"; };
-		7E3202805265EB04DF4C1100 /* coros.rs */ = {isa = PBXFileReference; path = coros.rs; sourceTree = "<group>"; };
-		80683E8433BBF12AAC641E4F /* proposal.rs */ = {isa = PBXFileReference; path = proposal.rs; sourceTree = "<group>"; };
+		7E3202805265EB04DF4C1100 /* coros.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = coros.rs; sourceTree = "<group>"; };
+		80683E8433BBF12AAC641E4F /* proposal.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = proposal.rs; sourceTree = "<group>"; };
 		834825D42A04891373031423 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		8CF222361F2DA996B7D4A6D3 /* commands.rs */ = {isa = PBXFileReference; path = commands.rs; sourceTree = "<group>"; };
+		8CF222361F2DA996B7D4A6D3 /* commands.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = commands.rs; sourceTree = "<group>"; };
 		98FB5EA82A81F5841A9E4582 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
-		A1CB39025CA87FE25DA3B255 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		A1CB39025CA87FE25DA3B255 /* lib.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = lib.rs; sourceTree = "<group>"; };
 		A1CC5AAAB9BD95EA80F49673 /* Pods-runalytics_iOS.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-runalytics_iOS.debug.xcconfig"; path = "Target Support Files/Pods-runalytics_iOS/Pods-runalytics_iOS.debug.xcconfig"; sourceTree = "<group>"; };
-		A4E5064DC8DECE276288CD73 /* state.rs */ = {isa = PBXFileReference; path = state.rs; sourceTree = "<group>"; };
+		A4E5064DC8DECE276288CD73 /* state.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = state.rs; sourceTree = "<group>"; };
 		B04797CF092EF818D923F19C /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
-		B60033CE76214E28B597688F /* runalytics_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = runalytics_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C8A38F42D04863823443BA44 /* session.rs */ = {isa = PBXFileReference; path = session.rs; sourceTree = "<group>"; };
+		B60033CE76214E28B597688F /* Runalytics.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runalytics.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8A38F42D04863823443BA44 /* session.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = session.rs; sourceTree = "<group>"; };
 		D565B33A3B0EED30B3F4EB10 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		DF215545770DB4D92C8BE89D /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		E3ADF7D733A7E909C8C89776 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		E3F2CB93584CACF1D64D1028 /* pacing.rs */ = {isa = PBXFileReference; path = pacing.rs; sourceTree = "<group>"; };
+		E3F2CB93584CACF1D64D1028 /* pacing.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = pacing.rs; sourceTree = "<group>"; };
 		E5A7A946FB4CA308C8E1A307 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
-		EDB17383F6207341C435104E /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		EDB17383F6207341C435104E /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,14 +130,13 @@
 				A1CC5AAAB9BD95EA80F49673 /* Pods-runalytics_iOS.debug.xcconfig */,
 				3F46EBF92B129DE487D582BC /* Pods-runalytics_iOS.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
 		1118008B3FBEC69EA9C2920D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B60033CE76214E28B597688F /* runalytics_iOS.app */,
+				B60033CE76214E28B597688F /* Runalytics.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -240,7 +239,7 @@
 			);
 			name = runalytics_iOS;
 			productName = runalytics_iOS;
-			productReference = B60033CE76214E28B597688F /* runalytics_iOS.app */;
+			productReference = B60033CE76214E28B597688F /* Runalytics.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -384,8 +383,13 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					AuthenticationServices,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fradone.runalytics;
-				PRODUCT_NAME = "Runalytics";
+				PRODUCT_NAME = Runalytics;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
@@ -547,8 +551,13 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					AuthenticationServices,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fradone.runalytics;
-				PRODUCT_NAME = "Runalytics";
+				PRODUCT_NAME = Runalytics;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
