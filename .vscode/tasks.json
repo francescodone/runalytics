@@ -193,6 +193,38 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify compact mobile navigation",
+			"type": "shell",
+			"command": "npm run build && npx playwright test tests/prism.spec.mjs --grep 'compact navigation island|flat mobile surfaces|mobile scroll-aware topbar|mobile opaque topbar|route matrix|intermediate and short viewport|Prism enlarged text|mobile today-first training' --workers=2 --reporter=line --output=/tmp/runalytics-mobile-island-verified && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify compact mobile navigation current",
+			"type": "shell",
+			"command": "npm run build && npx playwright test tests/prism.spec.mjs --grep 'compact navigation island|flat mobile surfaces|route matrix|intermediate and short viewport|Prism enlarged text' --workers=2 --reporter=dot --output=/tmp/runalytics-island-current-task && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify overlay polish",
+			"type": "shell",
+			"command": "npm run build && node -e 'const fs=require(\"fs\"); for (const name of [\"final\",\"workflows\"]) { const report=JSON.parse(fs.readFileSync(`/tmp/runalytics-overlay-${name}.json`,\"utf8\")); console.log(name, JSON.stringify(report.stats)); const visit=suites=>{for(const suite of suites??[]){for(const spec of suite.specs??[])for(const test of spec.tests??[])for(const result of test.results??[])if(result.status!==\"passed\")console.log(spec.title,result.error?.message);visit(suite.suites)}};visit(report.suites); }' && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify modal notification focus",
+			"type": "shell",
+			"command": "npx playwright test tests/desk.spec.mjs --grep 'unified notifications remain dismissible' --workers=1 --reporter=line --output=/tmp/runalytics-modal-notification-focus && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

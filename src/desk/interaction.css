@@ -41,59 +41,12 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .pace-session-picker .selection-marker { inset: auto 0 -2px; height: 2px; background: var(--desk-action); }
 .pace-session-picker button[aria-pressed="true"]:has(.selection-marker) { border-color: transparent; }
 .pace-session-picker button:active, .lap-pace-column:active { background: var(--desk-soft); }
-/* Scroll-edge cues: the shadow must stay pinned to the visible edge while
-   content scrolls beneath it, whatever the surface underneath is — these
-   panels are glass, solid, or transparent depending on theme. The attribute
-   only appears while there is slack left in that direction. */
 .data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .plan-roadmap, .activity-library {
-  --scroll-edge: color-mix(in srgb, var(--desk-ink) 12%, transparent);
-  border-radius: var(--radius-card);
+  border-radius: 0;
 }
-/* Vertical lists pin the cue to the scrollport with sticky strips: a sticky
-   ::before rides the visible top edge and a sticky ::after the visible
-   bottom edge, so the shadow never travels with the rows. The gradient lives
-   on the strip's own background — an element's inset box-shadow would sit
-   *below* its content, and an opaque selected row scrolling under an edge
-   would punch a hole in it — while the negative margin keeps the 14px strip
-   from shifting the rows, and the positioned z-index paints it above every
-   row, selected included. */
-.plan-roadmap::before, .activity-library::before,
-.plan-roadmap::after, .activity-library::after {
-  content: "";
-  display: block;
-  position: sticky;
-  height: 24px;
-  z-index: var(--layer-raised);
-  pointer-events: none;
-  transition: opacity var(--motion-feedback) var(--motion-settle);
-}
-.plan-roadmap::before, .activity-library::before { top: 0; margin-bottom: -24px; border-radius: var(--radius-card) var(--radius-card) 0 0; background: linear-gradient(to bottom, var(--scroll-edge), transparent); opacity: var(--scroll-top-opacity, 0); }
-.plan-roadmap::after, .activity-library::after { bottom: 0; margin-top: -24px; border-radius: 0 0 var(--radius-card) var(--radius-card); background: linear-gradient(to top, var(--scroll-edge), transparent); opacity: var(--scroll-bottom-opacity, 0); }
-/* Horizontal scrollers pin the cue with background layers instead: a
-   background with attachment `scroll` is fixed to the element's own box and
-   does not ride the scrolled content, unlike `local`. The layers are absent
-   until the matching edge has slack. */
-.data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch {
-  --edge-left-image: none;
-  --edge-left-size: 0 0;
-  --edge-left-pos: 0 0;
-  --edge-right-image: none;
-  --edge-right-size: 0 0;
-  --edge-right-pos: 0 0;
-  background-image: var(--edge-left-image), var(--edge-right-image);
-  background-size: var(--edge-left-size), var(--edge-right-size);
-  background-position: var(--edge-left-pos), var(--edge-right-pos);
-  background-repeat: no-repeat, no-repeat;
-}
-.data-table-scroll[data-scroll-left="1"], .lap-chart-scroll[data-scroll-left="1"], .review-tabs[data-scroll-left="1"], .horizon-switch[data-scroll-left="1"] {
-  --edge-left-image: linear-gradient(to right, var(--scroll-edge), transparent);
-  --edge-left-size: 14px 100%;
-  --edge-left-pos: left top;
-}
-.data-table-scroll[data-scroll-right="1"], .lap-chart-scroll[data-scroll-right="1"], .review-tabs[data-scroll-right="1"], .horizon-switch[data-scroll-right="1"] {
-  --edge-right-image: linear-gradient(to left, var(--scroll-edge), transparent);
-  --edge-right-size: 14px 100%;
-  --edge-right-pos: right top;
+.plan-roadmap, .activity-library { border-radius: 0; mask-image: linear-gradient(to bottom, rgb(0 0 0 / calc(1 - var(--scroll-top-opacity, 0))), #000 24px, #000 calc(100% - 24px), rgb(0 0 0 / calc(1 - var(--scroll-bottom-opacity, 0)))); }
+.data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .pace-session-picker {
+  mask-image: linear-gradient(to right, rgb(0 0 0 / calc(1 - var(--scroll-left-opacity, 0))), #000 14px, #000 calc(100% - 14px), rgb(0 0 0 / calc(1 - var(--scroll-right-opacity, 0))));
 }
 /* The splits bar reads as a chart, not as decoration: the cell is the track,
    the span inside it is the bar, and the width comes from the row's own pace
@@ -102,8 +55,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .splits-chart .split-bar { width: 34%; min-width: 84px; }
 .splits-chart .split-bar > span { display: block; height: 10px; min-width: 6%; border-radius: var(--radius-small); background: var(--desk-action); }
 @media (prefers-contrast: more), (forced-colors: active) {
-  .plan-roadmap::before, .plan-roadmap::after, .activity-library::before, .activity-library::after { background: none; }
-  .data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch { background-image: none; }
+  .plan-roadmap, .activity-library, .data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .pace-session-picker { mask-image: none; }
 }
 .pace-point-session circle, .pace-point-range { transition: opacity var(--motion-feedback) var(--motion-settle), stroke var(--motion-feedback) var(--motion-settle); }
 .pace-point-session:not(.selected) .pace-point-range { opacity: .35; }
@@ -122,8 +74,8 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 :is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current, .mobile-date-ribbon button[aria-pressed="true"], .lap-row-button[aria-pressed="true"], .choice-row label:has(:checked), .palette-options label:has(:checked)) { background-color: var(--state-selected); }
 .mobile-date-ribbon button[aria-pressed="true"] { color: var(--button-primary-ink); border-color: var(--desk-action); }
 .horizon-switch, .review-tabs { padding: var(--space-2); scroll-padding-inline: var(--space-2); }
-.pace-session-picker { grid-auto-flow: initial; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); padding: var(--space-2); }
-.pace-session-picker button { padding: var(--space-2); }
+.pace-session-picker { display: flex; min-width: 0; gap: var(--space-2); overflow-x: auto; margin: 0; padding: var(--space-2); scroll-padding-inline: var(--space-2); }
+.pace-session-picker button { flex: 0 0 auto; min-width: 104px; padding: var(--space-2) var(--space-3); font-size: var(--text-detail); }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root { --control-surface: var(--glass-control); }
 }
@@ -132,6 +84,11 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 :is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker) .selection-marker { inset: 0; height: auto; background: var(--state-selected); transition: background-color var(--motion-feedback) var(--motion-settle); box-shadow: none; }
 .horizon-switch a, .pace-mode button { font-weight: var(--weight-semibold); }
 .desk-navigation a { font-weight: var(--weight-semibold); }
+.navigation-icon { display: grid; place-items: center; flex: none; width: 21px; height: 21px; }
+@media (max-width: 800px) {
+  .desk-navigation a { border-radius: var(--radius-pill); }
+  .desk-navigation a[aria-current]:has(.selection-marker) { background: transparent; }
+}
 .desk-inspector { overflow-x: clip; }
 .desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"], .inspector-backdrop[data-state="closing"] { pointer-events: none; }
 .dialog-grip { display: none; }
@@ -144,12 +101,12 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .notification-viewport:empty { visibility: hidden; }
 .notification-viewport .desk-notice { position: relative; inset: auto; width: 100%; max-width: none; margin: 0; translate: none; transform: none; pointer-events: auto; flex-wrap: nowrap; }
 .desk-notice button { --state-hover: color-mix(in srgb, currentColor 10%, transparent); --state-pressed: color-mix(in srgb, currentColor 18%, transparent); }
-.notice-content { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.notice-content { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: var(--text-detail); line-height: var(--leading-control); }
 .notice-close { flex: none; position: relative; }
 .desk-notice .notice-close { display: grid; place-items: center; width: var(--control-size); height: var(--control-size); border: 0; border-radius: var(--radius-button); margin: -6px -8px -6px 0; }
-.desk-stages { align-items: flex-start; gap: var(--space-3); }
+.desk-stages { gap: var(--space-3); }
 .stage-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.stage-line { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-detail); min-height: 22px; }
+.stage-line { display: flex; align-items: flex-start; gap: var(--space-2); min-height: 22px; }
 .stage-line > svg { flex: none; }
 .stage-done > svg { color: var(--desk-canvas); opacity: .75; }
 .stage-error > span { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--desk-danger) 80%, var(--desk-canvas)); text-underline-offset: 3px; }
@@ -170,7 +127,7 @@ progress { accent-color: var(--desk-action); }
 .motion-change { min-width: 0; }
 .motion-disclosure { display: grid; grid-template-rows: 0fr; min-width: 0; flex: none; visibility: hidden; transition: grid-template-rows var(--motion-exit) var(--motion-leave), visibility 0s linear var(--motion-exit); }
 .motion-disclosure[data-state="open"] { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows var(--motion-change) var(--motion-settle), visibility 0s; }
-.motion-disclosure-clip { min-height: 0; overflow: clip; }
+.motion-disclosure-clip { min-width: 0; min-height: 0; overflow: clip; }
 .motion-disclosure-content { display: flow-root; min-width: 0; }
 .motion-disclosure-content > * { opacity: 0; transition: opacity var(--motion-exit) var(--motion-leave); }
 .motion-disclosure[data-state="open"] > .motion-disclosure-clip > .motion-disclosure-content > * { opacity: 1; transition: opacity var(--motion-change) var(--motion-settle) var(--disclosure-delay, 0ms); }
@@ -231,8 +188,7 @@ progress { accent-color: var(--desk-action); }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { box-shadow: none; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 @media (min-width: 801px) {
-  .notification-viewport { left: auto; right: var(--shell-inset); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap))); }
-  .desk-dialog .notification-viewport { inset-inline: 0; margin-inline: auto; width: min(520px, calc(100% - 2 * var(--page-gutter))); }
+  .notification-viewport { left: auto; right: max(calc(var(--shell-inset) + var(--space-4)), calc((100vw - var(--content-max)) / 2 + var(--shell-inset) + var(--space-4))); bottom: calc(var(--shell-inset) + var(--space-4)); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap) - 2 * var(--space-4))); }
 }
 @media (max-width: 800px) {
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
@@ -241,6 +197,7 @@ progress { accent-color: var(--desk-action); }
   .dialog-grip > span { width: 36px; height: 4px; background: var(--desk-muted); border-radius: var(--radius-small); opacity: .5; }
   .inspector-bar { touch-action: pan-y; }
   .inspector-bar > span { flex: 1; padding-block: var(--space-3); text-align: right; }
+  .inspector-bar.modal-bar > span { text-align: left; }
   .notification-viewport { top: calc(var(--compact-appbar-height) + var(--space-3) + env(safe-area-inset-top)); bottom: auto; max-height: min(32dvh, 280px); }
   .desk-dialog .notification-viewport { top: calc(var(--space-4) + env(safe-area-inset-top)); }
   .desk-notice { align-items: flex-start; }

@@ -51,6 +51,9 @@ thiserror = "2"
 # compile on iOS unless the `protected` feature is on. Scoped to iOS so macOS
 # dependency resolution is untouched. iOS code must talk to this store
 # directly — `keyring::Entry` reports `NoDefaultStore` on iOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["protected"] }
 objc2 = "0.6"

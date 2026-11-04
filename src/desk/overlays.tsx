@@ -54,7 +54,7 @@ export function NotificationViewport({ children }: { children: ReactNode }) {
       } else if (!element.childElementCount && open) {
         element.hidePopover();
         if (target instanceof HTMLDialogElement && target.open) {
-          const focus = previousFocus?.isConnected && target.contains(previousFocus) ? previousFocus : target.querySelector<HTMLElement>("input,select,textarea,button");
+          const focus = previousFocus?.isConnected && target.contains(previousFocus) ? previousFocus : target.querySelector<HTMLElement>(".dialog-surface > header h2");
           focus?.focus({ preventScroll: true });
         }
       }

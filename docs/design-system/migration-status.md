@@ -1,4 +1,254 @@
+## Transparent macOS Title Strip, 2026-11-04
+
+Removed the native-only opaque background band so the title strip shares the
+page's atmospheric background. The 32px control clearance and title remain.
+
+Verification: production build, three synthetic-IPC macOS titlebar browser
+checks at 1180x780 (light, dark, system), and whitespace checks passed. Inspected
+the light-theme screenshot. Native traffic-light rendering still requires
+macOS device verification. Mobile styles and behavior are unchanged.
+
 # Project Prism Verification Ledger
+
+## Theme-Tinted Notification Glass, 2026-11-04
+
+Notifications share navigation's 80% surface glass, palette-driven aura and
+floating elevation, with normal theme foreground text. Unsupported blur,
+reduced transparency, increased contrast and forced colors retain an opaque
+surface. Queueing, placement, countdown, dismissal and Undo are unchanged.
+
+Verification: production build, whitespace validation and 11 synthetic-IPC
+notification checks passed. Material checks cover light/dark at 390 and 1440px,
+palette changes, alpha, blur, foreground and increased-contrast fallback;
+workflow checks cover 320, 390, 768 and 1440px, modal dismissal and Undo.
+Inspected light-mobile and dark-desktop captures. Native rendering and the
+complete UI suite were not exercised.
+
+## Notification Typography, 2026-11-04
+
+Message and progress notifications share the detail text size and control
+line height. Multiline progress rows align their icons with the first line,
+and dismiss controls use the same desktop alignment across notification types.
+
+Verification: production build and 49 selected synthetic-IPC notification and
+responsive checks passed. Coverage includes 320, 390, 768 and 1440px notification
+layouts, long status wrapping, light/dark Strava progress, the route matrix,
+short viewports and enlarged text. Inspected the dark desktop progress capture.
+Native rendering and the full UI suite were not exercised.
+
+## Activity Inspector Hover Clearance, 2026-11-04
+
+The desktop activity inspector reserves top clearance for its Back control's
+hover and focus treatments, including when the browser scrolls it into view.
+Leading inspector tooltips align with their controls instead of extending left.
+
+Verification: production build and 42 selected synthetic-IPC browser checks
+passed, including light/dark activity Back hover and focus at 1440x900, scroll
+control clearance, the route/width matrix, short viewports and enlarged text.
+Inspected the dark activity inspector capture. Native app rendering and the
+full UI suite were not exercised.
+
+## macOS Outer Background Dragging, 2026-11-04
+
+Primary mouse presses on the empty document background, root padding and shell
+gap request native window dragging. Shell content, controls and secondary mouse
+buttons do not. The handler is macOS-only and uses the scoped Tauri window drag
+permission; browser and mobile behavior remain unchanged.
+
+Verification: TypeScript, production build, one focused synthetic-IPC browser
+regression at 1440x900 and the native macOS debug app build passed. Actual native
+window movement was not exercised. No visual geometry or styling changed.
+
+## macOS Title Contrast and Control Inset, 2026-11-04
+
+Native traffic lights use a 24px left inset. The native title is hidden in
+favor of a noninteractive 13px header label at 104px, explicitly black in light
+appearance and white in dark appearance. The 32px header clearance is unchanged.
+
+Verification: TypeScript and both focused synthetic-IPC macOS header checks
+passed at 1180x780, covering title contrast/position, palette tint and the native
+theme command. Inspected the dark header capture. Native traffic-light position,
+dragging and fullscreen transitions require a macOS runtime visual check.
+
+## Overlay Controls and Notification Alignment, 2026-11-04
+
+Modal Session inspectors now use the shared icon-only Close control at the
+trailing edge, matching information dialogs. Non-modal inspectors retain an
+icon-only Back control. Information dialogs initially focus their heading;
+forms focus their first available field. Keyboard focus outlines, Escape,
+focus return, scroll locking and notification draft retention remain intact.
+Desktop notifications follow the centered, width-capped workspace with 24px
+clearance from its right and bottom edges, including above native dialogs.
+The adjustment empty state is a compact checked "No pending adjustments" row
+using the existing detail typography, and is hidden when its request fails.
+
+Verification: production build and whitespace validation passed. Ten focused
+synthetic-IPC overlay checks passed in light/dark at 320, 390, 768, 1440 and
+2560px. Another 38 responsive route, short-viewport and enlarged-text checks
+passed, plus 19 notification, modal, inspector and proposal workflow checks.
+Inspected light desktop dialog, dark 2560px notification and dark 390px
+inspector captures. Physical devices, native integration, all palettes and the
+complete UI suite were not exercised. The referenced foundations, components
+and motion documents are absent from this checkout.
+
+## Health Information Note, 2026-11-04
+
+The overview medical disclaimer uses a neutral information icon, soft surface,
+8px corners and consistent 14px text instead of the generic amber warning stripe
+and compact caption size. The medical guidance is unchanged; other context and
+warning notices retain their existing styling.
+
+Verification: production build and eight synthetic-IPC Health workflows passed
+in light/dark at 320, 390, 768 and 1440px, including note styling, text wrapping
+and scoped axe accessibility checks. Inspected the 320px light and 390px dark
+note captures. Physical devices and the complete UI suite were not exercised.
+
+## Compact Island Motion, 2026-11-04
+
+Mobile workspace navigation is content-sized rather than stretched across the
+viewport. Selection uses an opt-in shared spring highlight and a subtle icon
+lift; existing press feedback, accessible link names and keyboard focus remain.
+Reduced motion keeps static selection feedback without spatial animation.
+Later workspace adjustments to button width and safe-area clearance are retained.
+
+Verification: production build, whitespace validation and 46 selected browser
+checks passed on the current checkout. Coverage includes light/dark route-width
+layouts from 320px through 2560px, intermediate/short viewports, enlarged text,
+keyboard selection, rapid retargeting, measured spring travel and synthetic
+touch cancellation/activation. Inspected 320px dark and 390px light screenshots.
+An earlier broader run reported eight training-toolbar alignment failures;
+that separate layout was not changed for this request. Browser checks use
+synthetic IPC; physical iPhone safe areas and VoiceOver were not verified.
+
+## Bounded Pace History, 2026-11-04
+
+Pace on point now explicitly limits the chart and date selector to the five
+newest eligible sessions, ordered chronologically, regardless of outdated status.
+The summary and default selection use the same visible set. Outdated sessions
+retain their labels and remain excluded from the current-status count.
+
+Verification: four focused synthetic-IPC Pace tests passed. Oversized, unsorted
+histories cover Speed and Long at 320px and 1440px in light/dark, including an
+empty-rep entry, mixed outdated status, selection and document overflow. Existing
+rep geometry, accessibility, activity navigation and empty/error recovery checks
+also passed. Physical devices and the full UI suite were not exercised.
+
+## Scrollable Health Tabs and Unified Pace View, 2026-11-04
+
+Compact Health navigation uses a horizontally scrollable flex row with full
+labels instead of squeezing four equal-width columns. Health and Training
+selectors retain 8px interior clearance for shared hover/focus effects.
+The mobile island's buttons are 64px wide (previously 56px), retaining their
+44px height and the existing shell clearance.
+
+Pace uses one 20px section rhythm, consistent section headings and metadata,
+a responsive chart capped at 240px high, and a horizontal dated-session
+selector with shared transparent fades. Selected session metadata and its
+review action share a wrapping header above the repetitions table. Removed
+stacked margins and redundant section dividers; pace calculations, eligibility,
+outdated status, actions and error/empty states are unchanged.
+
+Verification: production build passed. Eight focused light/dark layout checks
+passed at 320, 390, 768 and 1440px, including actual Health horizontal scrolling,
+keyboard selection, Pace spacing/type and chart dimensions. Two normal-motion
+checks verified first/last hover and focus clearance on Training, Health, Pace
+session selectors and activity tabs. Ten existing Health/navigation checks
+passed, including pointer, keyboard and synthetic touch; three Pace behavioral
+checks passed for session/mode selection and empty/error recovery. Twenty shell,
+fade and text-audit checks passed, including the 130-combination route matrix.
+Inspected 390px dark Pace overview/session and 1440px light Pace captures.
+Browser tests use synthetic IPC. Physical devices, all palettes, native scrolling
+and the full UI suite were not exercised.
+
+## Consistent Scroll Fades and Plan Details, 2026-11-04
+
+Horizontal tabs, tables, horizon controls and lap scrollers now use transparent
+edge masks rather than painted ink-gradient strips, matching the vertical
+lists. Fade strength follows scroll position and clears at either end;
+high-contrast and forced-color modes remove masks. All tracked scrollers are
+resize-observed so newly revealed regions receive current fade state.
+
+Plan details no longer uses native details/summary. Desktop shows the section
+inline; compact layouts use an explicit Show details / Hide details button with
+aria-expanded, aria-controls, a chevron and the shared Disclosure animation and
+focus contract. Wide tables stay inside their local scroller: the disclosure's
+grid child now has min-width:0 instead of expanding to its min-content width.
+
+Verification: TypeScript and the production build passed. Twenty focused
+synthetic-IPC checks passed: horizontal tab/table fades in both themes,
+keyboard tab activation, high-contrast mask removal, plan workflows at 320,
+390, 768 and 1440px in light/dark, and the 130-combination text-layout matrix.
+Shared filter/health disclosure and adaptive-plan-height regressions passed,
+including normal/reduced motion and draft/focus preservation. Inspected the
+dark tab fades, 390px dark plan details and 1440px light plan details captures.
+Physical devices, all palettes and the complete UI suite were not exercised.
+
+## Contained Mobile Shell and Control Spacing, 2026-11-04
+
+The bottom navigation island sits inside the rounded workspace with at least
+8px of bottom clearance, including the existing safe-area allowance. Mobile
+header content no longer translates or hides during scrolling; only the
+workspace content scrolls, preserving frame and header bounds. Removed the
+obsolete header scroll listener and state. Utility and date controls retain
+8px gaps even on narrow screens, and mobile action groups use 12px gaps.
+
+Activity filters explicitly retain their flex layout inside Disclosure: the
+shared flow-root rule previously disabled field wrapping and gap spacing.
+Filters now wrap with 12px separation, including the Reset filters action.
+
+Verification: production build and TypeScript passed. Eight light/dark shell
+checks at 320x640, 390x844, 768x844 and 740x390 measured stationary shell,
+header and island geometry, filter/action separation and dialog Escape focus
+return. Eight navigation/surface checks and eleven plan/header checks passed,
+including pointer, keyboard, synthetic touch, normal/reduced motion and
+high-contrast fallback. The 130-combination text clipping matrix passed again.
+Inspected 390px dark scrolled and 320px light open-filter screenshots. Browser
+checks use synthetic IPC; physical iPhone safe areas, keyboard resizing and
+native scrolling remain device acceptance items. The full UI suite was not run.
+
+## Text Clipping Audit, 2026-11-04
+
+Removed rounded clipping from the plan and activity scroll boundaries so
+flush-aligned headings such as Most recent first remain intact. Individual
+row corners and transparent scroll-edge fades are retained. Activity purpose
+text now wraps fully instead of being truncated after two lines.
+
+Verification: the production build and six compact surface checks passed.
+Ten synthetic-IPC clipping checks covered 13 routes each in light/dark at
+320, 390, 768, 820 and 1440px with reduced motion (130 combinations). Checks
+cover rendered text bounds, page/control overflow, unrounded activity scroll
+boundaries and unclamped descriptions. Intentional screen-reader-only captions
+and content reachable through local scrolling are excluded. Lazy activity maps
+are awaited before measurement. Inspected the 320px light and 1440px dark
+journal screenshots and confirmed the heading geometry in the live preview.
+Physical devices, enlarged text, all palettes and every dialog/error state
+were not audited; these checks are not native integration tests.
+
+## Flat Mobile Surfaces, 2026-11-04
+
+Compact controls use flat selection fills without glossy sheens or raised
+control shadows. The rounded shell remains visible; the compact header and
+navigation no longer cast floating shadows. Activity history uses continuous
+rows with small selected corners and no final divider. Plan-row horizontal
+spacing accommodates the inset shell at 320px without reducing text size.
+Desktop materials and shared interaction timing are unchanged.
+
+Verification: six focused synthetic-IPC surface checks passed in light/dark at
+320, 390 and 768px, including rounded shell/header alignment, keyboard focus,
+row separators and navigation. Health and plan workflows passed in both themes
+at 320, 390, 768 and 1440px; the two initial 320px plan failures passed after the
+row-spacing correction. Seven scroll/current-week checks passed at 320x640,
+390x844, 844x390, 1440x844 and 1440x900 with normal/reduced motion cases.
+Inspected the 320px light journal and 390px dark training screenshots. Physical
+devices, the full palette matrix and the complete UI suite were not exercised.
+
+## Adaptive Plan Roadmap, 2026-11-04
+
+The plan roadmap can use additional height beside taller plan details on wide
+layouts. Focused synthetic-IPC browser checks passed at 1440x844 for overflowing
+lists and at 390x844 and 1440x844 for current-week centering with normal and
+reduced motion. The full width/theme matrix, screenshots and native devices were
+not verified for this change.
 
 ## Strava Sync Notifications, 2026-11-03
 

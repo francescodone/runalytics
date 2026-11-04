@@ -133,7 +133,6 @@ function Appearance() {
   const palettes: {id: PaletteId; name: string; colour: string}[] = [
     {id:"cobalt",name:"Blue Steel Sprint",colour:"linear-gradient(135deg, #17375f, #3978bd)"},
     {id:"ember",name:"Burnt Toast Tempo",colour:"#9b4925"},
-    {id:"garnet",name:"Dashing Blueberry",colour:"linear-gradient(135deg, #15386c, #3263a0)"},
     {id:"ochre",name:"Golden Hour Hustle",colour:"linear-gradient(135deg, #493719, #ad8124)"},
     {id:"midnight",name:"Graphite Gallop",colour:"#525866"},
     {id:"glacier",name:"Ice Ice Pacey",colour:"#1d647b"},
@@ -147,9 +146,15 @@ function Appearance() {
     {id:"aurora",name:"Kaleidoscope Cadence",colour:"conic-gradient(#166b68 0 33%, #6d4aa4 33% 66%, #c55b52 66%)"},
     {id:"wildflower",name:"Miles of Mischief",colour:"conic-gradient(#963e6c 0 33%, #31715a 33% 66%, #a46912 66%)"},
     {id:"summit",name:"Sunrise Shenanigans",colour:"conic-gradient(#a84a2e 0 33%, #285fa5 33% 66%, #317756 66%)"},
-    {id:"coastline",name:"The Coastal Chaos",colour:"conic-gradient(#225f9a 0 33%, #187465 33% 66%, #bd594b 66%)"},
+    {id:"carnival",name:"Raspberry Relay",colour:"conic-gradient(#aa2858 0 33%, #08758a 33% 66%, #cf8a18 66%)"},
+    {id:"electric",name:"Electric Stride",colour:"conic-gradient(#6541a5 0 33%, #688026 33% 66%, #167bac 66%)"},
+    {id:"sorbet",name:"Sorbet Sprint",colour:"conic-gradient(#b34c16 0 33%, #a32d80 33% 66%, #157d88 66%)"},
+    {id:"regatta",name:"Regatta Ready",colour:"conic-gradient(#24456f 0 33%, #a07800 33% 66%, #8c4f91 66%)"},
+    {id:"meadow",name:"Meadow Medley",colour:"conic-gradient(#32713c 0 33%, #8561af 33% 66%, #b54a6a 66%)"},
   ];
-  return <><ErrorNotice error={settings.error ?? command.error} retry={settings.retry} />{settings.loading ? <Loading /> : <><fieldset disabled={command.busy}><legend>Theme</legend><div className="choice-row">{["system", "light", "dark"].map(theme => <label key={theme}><input type="radio" name="theme" value={theme} checked={(settings.data?.theme ?? "system") === theme} onChange={() => void command.run(() => patchSettings({theme: theme as Settings["theme"]}), "Theme saved.")} />{theme[0].toUpperCase() + theme.slice(1)}</label>)}</div></fieldset><fieldset disabled={command.busy}><legend>Colour palette</legend><div className="palette-options">{palettes.map(palette => <label key={palette.id}><input type="radio" name="palette" checked={(settings.data?.palette ?? "reference") === palette.id} onChange={() => void command.run(() => patchSettings({palette:palette.id}), "Palette saved.")} /><span className="palette-swatch" style={{background:palette.colour}} /><span className="palette-name">{palette.name}</span></label>)}</div></fieldset></>}</>;
+  const savedPalette = settings.data?.palette ?? "reference";
+  const selectedPalette = savedPalette === "garnet" ? "cobalt" : savedPalette === "coastline" ? "summit" : savedPalette;
+  return <><ErrorNotice error={settings.error ?? command.error} retry={settings.retry} />{settings.loading ? <Loading /> : <><fieldset disabled={command.busy}><legend>Theme</legend><div className="choice-row">{["system", "light", "dark"].map(theme => <label key={theme}><input type="radio" name="theme" value={theme} checked={(settings.data?.theme ?? "system") === theme} onChange={() => void command.run(() => patchSettings({theme: theme as Settings["theme"]}), "Theme saved.")} />{theme[0].toUpperCase() + theme.slice(1)}</label>)}</div></fieldset><fieldset disabled={command.busy}><legend>Colour palette</legend><div className="palette-options">{palettes.map(palette => <label key={palette.id}><input type="radio" name="palette" checked={selectedPalette === palette.id} onChange={() => void command.run(() => patchSettings({palette:palette.id}), "Palette saved.")} /><span className="palette-swatch" style={{background:palette.colour}} /><span className="palette-name">{palette.name}</span></label>)}</div></fieldset></>}</>;
 }
 
 const thresholdFields: {key: keyof Thresholds; label: string; min: number; max: number; step: number}[] = [

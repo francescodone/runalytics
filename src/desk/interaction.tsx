@@ -114,7 +114,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
   // scroll. Attributes rather than classes because the marks are pure
   // presentation and must never collide with a component's own class logic.
   useEffect(() => {
-    const selector = ".data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .plan-roadmap, .activity-library";
+    const selector = ".data-table-scroll, .lap-chart-scroll, .review-tabs, .horizon-switch, .pace-session-picker, .plan-roadmap, .activity-library";
     const mark = (element: HTMLElement) => {
       const slackX = element.scrollWidth - element.clientWidth;
       const slackY = element.scrollHeight - element.clientHeight;
@@ -122,6 +122,8 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       element.dataset.scrollRight = element.scrollLeft < slackX - 2 ? "1" : "";
       element.dataset.scrollTop = element.scrollTop > 2 ? "1" : "";
       element.dataset.scrollBottom = element.scrollTop < slackY - 2 ? "1" : "";
+      element.style.setProperty("--scroll-left-opacity", String(Math.min(1, Math.max(0, element.scrollLeft) / 14)));
+      element.style.setProperty("--scroll-right-opacity", String(Math.min(1, Math.max(0, slackX - element.scrollLeft) / 14)));
       element.style.setProperty("--scroll-top-opacity", String(Math.min(1, Math.max(0, element.scrollTop) / 32)));
       element.style.setProperty("--scroll-bottom-opacity", String(Math.min(1, Math.max(0, slackY - element.scrollTop) / 32)));
     };
@@ -130,12 +132,22 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     const refresh = () => {
       for (const element of observed) if (!element.isConnected) { resize.unobserve(element); observed.delete(element); }
       document.querySelectorAll<HTMLElement>(selector).forEach(element => {
+        if (!observed.has(element)) { observed.add(element); resize.observe(element); }
         if (element.matches(".plan-roadmap, .activity-library")) {
           const workspace = element.closest<HTMLElement>(".desk-workspace");
           if (workspace) {
             const navigation = document.querySelector(".desk-navigation")?.getBoundingClientRect();
             const bottom = Math.min(workspace.getBoundingClientRect().bottom - 24, matchMedia("(max-width: 800px)").matches && navigation ? navigation.top - 12 : innerHeight);
-            const available = Math.max(Math.min(240, workspace.clientHeight / 2), bottom - element.getBoundingClientRect().top - workspace.scrollTop);
+            let available = Math.max(Math.min(240, workspace.clientHeight / 2), bottom - element.getBoundingClientRect().top - workspace.scrollTop);
+            const studio = element.closest<HTMLElement>(".plan-studio");
+            const basis = studio?.querySelector<HTMLElement>(".plan-basis");
+            const evidence = studio?.querySelector<HTMLElement>(".adjustment-evidence");
+            if (studio && basis && evidence && matchMedia("(min-width: 1200px)").matches) {
+              const overhead = element.getBoundingClientRect().top - studio.getBoundingClientRect().top;
+              const gap = parseFloat(getComputedStyle(studio).rowGap) || 0;
+              available = Math.max(available, basis.offsetHeight - overhead - evidence.offsetHeight - gap);
+              for (const target of [basis, evidence]) if (!observed.has(target)) { observed.add(target); resize.observe(target); }
+            }
             element.style.setProperty("--list-available-height", `${Math.round(available)}px`);
             for (const target of [workspace, element.parentElement!]) if (!observed.has(target)) { observed.add(target); resize.observe(target); }
           }
@@ -187,8 +199,8 @@ export function SelectionGroup({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-export function SelectionMarker() {
-  return <span className="selection-marker" aria-hidden="true" />;
+export function SelectionMarker({ identity }: { identity?: string }) {
+  return identity ? <motion.span className="selection-marker" aria-hidden="true" layoutId={identity} initial={false} transition={tempo.spring} /> : <span className="selection-marker" aria-hidden="true" />;
 }
 
 function ChangeContents({ children, className, stagger }: { children: ReactNode; className: string; stagger: boolean }) {

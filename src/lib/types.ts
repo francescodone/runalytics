@@ -533,7 +533,7 @@ export interface SyncReport {
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember" | "midnight" | "tide" | "aurora" | "summit" | "coastline" | "wildflower" | "citrus" | "cobalt" | "moss" | "garnet" | "ochre";
+export type PaletteId = "reference" | "amethyst" | "glacier" | "evergreen" | "sakura" | "ember" | "midnight" | "tide" | "aurora" | "summit" | "coastline" | "wildflower" | "citrus" | "cobalt" | "moss" | "garnet" | "ochre" | "carnival" | "electric" | "sorbet" | "regatta" | "meadow";
 
 export interface Settings {
   pmtilesPath: string | null;

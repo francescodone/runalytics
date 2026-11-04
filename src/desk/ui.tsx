@@ -64,6 +64,8 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     const element = dialog.current!;
     const unlock = lockPageScroll();
     element.showModal();
+    const initialFocus = element.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? element.querySelector<HTMLElement>(".dialog-surface > header h2");
+    initialFocus?.focus({ preventScroll: true });
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current(); };
     element.addEventListener("cancel", cancel);
     return () => { element.removeEventListener("cancel", cancel); element.close(); unlock(); const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.querySelector<HTMLElement>(".workspace-heading h1"); target?.focus({ preventScroll: true }); };
@@ -74,7 +76,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     onDragEnd={(_, info) => { if (info.offset.y > 96 || info.offset.y > 24 && info.velocity.y > 650) onClose(); }}
     onClick={event => { if (present && event.target === dialog.current) onClose(); }}>
     <div className="dialog-grip" aria-hidden="true" onPointerDown={event => { if (surface.compact && !surface.reduced) drag.start(event); }}><span /></div>
-    <div className="dialog-surface"><header><h2>{title}</h2><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} /></IconButton></header>{children}</div>
+    <div className="dialog-surface"><header><h2 tabIndex={-1}>{title}</h2><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
   </motion.dialog>;
 }
 export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {
@@ -122,7 +124,7 @@ export function Inspector({ title, children, onClose, modal = false }: { title: 
     initial={surface.initial} animate={surface.animate} exit={surface.exit}
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
-    <div className="inspector-bar" onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}><Button onClick={onClose}><IconArrowLeft size={18} />Back</Button><span>{title}</span></div>{children}
+    <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label="Back" onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
   </motion.aside></>;
 }
 export function Metric({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {

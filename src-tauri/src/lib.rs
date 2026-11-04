@@ -82,6 +82,13 @@ pub fn run() {
             let window = window
                 .inner_size(1180.0, 780.0)
                 .min_inner_size(900.0, 600.0);
+            #[cfg(target_os = "macos")]
+            let window = window
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(32.0, 18.0))
+                .background_color(tauri::webview::Color(0, 0, 0, 0))
+                .initialization_script("document.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.nativeWindow = 'macos'; });");
             // On mobile the COROS sign-in happens in this webview rather than an
             // external browser, so the redirect back to the loopback redirect URI
             // has to be caught here — see `providers::coros::on_webview_navigation`.
@@ -92,6 +99,18 @@ pub fn run() {
                 // the calendar uses to reschedule sessions.
                 .disable_drag_drop_handler()
                 .build()?;
+            #[cfg(target_os = "macos")]
+            unsafe {
+                use objc2::{msg_send, runtime::AnyObject};
+                let native_window = _win.ns_window()? as *mut AnyObject;
+                let content: *mut AnyObject = msg_send![native_window, contentView];
+                let frame: *mut AnyObject = msg_send![content, superview];
+                let _: () = msg_send![frame, setWantsLayer: true];
+                let layer: *mut AnyObject = msg_send![frame, layer];
+                let _: () = msg_send![layer, setCornerRadius: 32.0_f64];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+                let _: () = msg_send![native_window, setOpaque: false];
+            }
 
             // Auto-sync on launch: pull fresh COROS data in the background
             // as soon as the app opens. The nav-bar spinner (driven by the

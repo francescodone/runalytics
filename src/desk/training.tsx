@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { IconArrowLeft, IconArrowRight, IconPlus, IconCopy, IconCalendarEvent, IconCheck, IconX, IconRestore } from "@tabler/icons-react";
+import { IconArrowLeft, IconArrowRight, IconPlus, IconCopy, IconCalendarEvent, IconCheck, IconX, IconRestore, IconChevronDown } from "@tabler/icons-react";
 import { tauri, fmtDateDMY, fmtDuration, fmtKm, fmtPace, parsePace, estimatedTimeRange, fmtTimeRange } from "../lib/ipc";
 import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, WeekDeviation } from "../lib/types";
 import { displayPlanName } from "../lib/types";
@@ -7,7 +7,7 @@ import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessio
 import { Button, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
 import { PlanAdjustments } from "./proposals";
 import { RaceEstimates } from "./race-estimates";
-import { Change, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
+import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
 
 type Horizon = "week" | "month" | "plan";
 
@@ -26,6 +26,7 @@ export function Training() {
   const [create, setCreate] = useState(false);
   const [benchmark, setBenchmark] = useState(false);
   const [cancel, setCancel] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const cancelPlanId = useRef<string | null>(null);
   const [reset, setReset] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -208,7 +209,7 @@ export function Training() {
     {!compact && scheduleSummary}
     <Change identity={horizon}>
     {horizon === "plan" ? <div className="plan-studio">
-      <section className="plan-overview"><h3>Training horizon</h3>{current.loading ? <Loading /> : !plan ? <Empty title="Give your training a direction" action={<Button tone="primary" disabled={!connected || !synced || Boolean(current.error)} onClick={() => setCreate(true)}>Create plan</Button>}>Prepare for a race, build fitness or maintain your routine.</Empty> : <>
+      <div className="plan-main"><section className="plan-overview"><h3>Training horizon</h3>{current.loading ? <Loading /> : !plan ? <Empty title="Give your training a direction" action={<Button tone="primary" disabled={!connected || !synced || Boolean(current.error)} onClick={() => setCreate(true)}>Create plan</Button>}>Prepare for a race, build fitness or maintain your routine.</Empty> : <>
         <dl className="metrics-line"><Metric label="Training method" value={plan.trainingMethod === "runna_like" ? "Runna-like" : "Norwegian method"} /><Metric label="Sessions complete" value={`${completed}/${workouts.length}`} /><Metric label="Runs per week" value={plan.weeklyFrequency} /><Metric label="Threshold pace" value={fmtPace(plan.thresholdSecKm)} unit="/km" /></dl>
         <PlanRoadmap identity={weekKeys.join("|")}>{weekKeys.map((week, index) => {
           const sessions = workouts.filter(workout => monday(workout.date) === week);
@@ -226,15 +227,15 @@ export function Training() {
           return <button key={week} className={`roadmap-row is-${state}`} aria-current={state === "current" ? "date" : undefined} onClick={() => { setCursor(week); setSelectedDay(state === "current" ? today() : week); navigate("training", "week"); }}><span><span className="roadmap-week">Week {index + 1}<em>{state === "past" ? "Done" : state === "current" ? "This week" : "Upcoming"}</em></span><small><time dateTime={week}>{weekDate(week)}</time> - <time dateTime={shiftDate(week, 6)}>{weekDate(shiftDate(week, 6))}</time>{downWeeks.data?.includes(week) ? " / Recovery" : ""}</small></span><span className="roadmap-track" role="img" aria-label={`${fmtKm(ran)} run of ${fmtKm(planned)} planned`}><i style={{ width: `${planned > 0 ? Math.min(100, ran / planned * 100) : 0}%` }} /></span><strong>{fmtKm(planned)}<small>planned</small></strong><strong>{fmtKm(ran)}<small>done</small></strong><IconArrowRight size={18} /></button>;
         })}</PlanRoadmap>
       </>}</section>
-      {plan && <PlanAdjustments source="pacing" />}
-      <details className="plan-basis" open={!compact}><summary>Plan details</summary><div className="plan-basis-content"><h3>Plan basis</h3>{plan ? <>
+      {plan && <PlanAdjustments source="pacing" />}</div>
+      <section className="plan-basis" aria-labelledby="plan-details-heading"><header className="plan-basis-heading"><h3 id="plan-details-heading">Plan details</h3>{compact && <Button aria-expanded={detailsOpen} aria-controls="plan-details" onClick={() => setDetailsOpen(open => !open)}>{detailsOpen ? "Hide details" : "Show details"}<IconChevronDown className="disclosure-indicator" size={18} aria-hidden="true" /></Button>}</header><Disclosure id="plan-details" className="plan-basis-content" open={!compact || detailsOpen}><h3>Plan basis</h3>{plan ? <>
         <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Plan basis"><table><caption className="sr-only">What the plan was built from</caption><tbody><tr><th scope="row">Target date</th><td>{fmtDateDMY(plan.targetDate)}</td></tr><tr><th scope="row">Starting volume</th><td>{plan.baselineWeeklyKm == null ? "From training history" : `${plan.baselineWeeklyKm.toFixed(1)} km/week`}</td></tr><tr><th scope="row">Progression</th><td>{capitalizeFirst(plan.increase)}</td></tr><tr><th scope="row">Watch</th><td>{plan.pushedId ? "Published" : "Not sent yet"}</td></tr></tbody></table></div>
         {receipt.data?.length ? <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Plan receipt"><table><caption className="sr-only">How your answers shaped the plan</caption><thead><tr><th>Your input</th><th>What it did</th></tr></thead><tbody>{receipt.data.map((line, index) => <tr key={index}><th scope="row">{line.input}</th><td>{line.sentence}</td></tr>)}</tbody></table></div> : null}
         {defaults.data && <Predictions defaults={defaults.data} />}
         <RaceEstimates plan={plan} />
-        {remotePlan.data && <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])} <a className="desk-button normal context-link" href="#settings/calendar">Manage device sync</a></td></tr></tbody></table></div>}
+        {remotePlan.data && <><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])}</td></tr></tbody></table></div><a className="desk-button normal context-link" href="#settings/calendar">Manage device sync</a></>}
         <Button tone="danger" onClick={() => { cancelPlanId.current = plan.id; setCancel(true); }}>End current plan</Button>
-      </> : <p className="muted">Your recent mileage and threshold pace establish the starting load. Plan generation remains local.</p>}</div></details>
+      </> : <p className="muted">Your recent mileage and threshold pace establish the starting load. Plan generation remains local.</p>}</Disclosure></section>
     </div> : <>
       <ErrorNotice error={events.error} retry={events.retry} />
       {events.loading ? <Loading label="Loading schedule" /> : <div className={`schedule-workspace ${selected ? "has-inspector" : ""}`}>

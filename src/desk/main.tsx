@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IconCalendarWeek, IconRun, IconHeart, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
+import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
 import { ErrorNotice, IconButton } from "./ui";
@@ -9,7 +11,7 @@ import { Training } from "./training";
 import { Journal } from "./journal";
 import { Health } from "./health";
 import { SettingsWorkspace, Help } from "./settings";
-import { Change, MotionSystem, SelectionGroup, SelectionMarker } from "./interaction";
+import { Change, MotionSystem, SelectionGroup, SelectionMarker, tempo, useCompactLayout } from "./interaction";
 import "./interaction.css";
 
 const workspaces = [
@@ -20,39 +22,24 @@ const workspaces = [
 
 function App() {
   const route = useRoute();
+  const compact = useCompactLayout();
+  const reduced = useReducedMotion();
   const heading = useRef<HTMLHeadingElement>(null);
-  const appbar = useRef<HTMLElement>(null);
-  const appbarOffset = useRef(0);
   const initial = useRef(true);
-  const [appbarHidden, setAppbarHidden] = useState(false);
   const settings = useRemote(tauri.getSettings);
   const providers = useRemote(tauri.providerStatus);
   const command = useCommand();
   const { syncing, notify } = useWorkspace();
   useEffect(() => {
-    const workspace = document.getElementById("workspace");
-    const compact = matchMedia("(max-width: 800px)");
-    if (!workspace) return;
-    let previous = workspace.scrollTop;
-    const reveal = () => { appbarOffset.current = 0; appbar.current?.style.setProperty("--appbar-offset", "0px"); setAppbarHidden(false); };
-    reveal();
-    const onScroll = () => {
-      const position = Math.max(0, Math.min(workspace.scrollTop, workspace.scrollHeight - workspace.clientHeight));
-      const delta = position - previous;
-      previous = position;
-      if (!compact.matches || position <= 0) { reveal(); return; }
-      const height = appbar.current?.offsetHeight ?? 0;
-      appbarOffset.current = Math.max(0, Math.min(height, appbarOffset.current + delta));
-      appbar.current?.style.setProperty("--appbar-offset", `${appbarOffset.current}px`);
-      setAppbarHidden(height > 0 && appbarOffset.current >= height);
+    const dragBackground = (event: MouseEvent) => {
+      if (document.documentElement.dataset.nativeWindow !== "macos" || event.button !== 0 || event.defaultPrevented) return;
+      if (event.target !== document.documentElement && event.target !== document.body && event.target !== document.getElementById("desk-root")) return;
+      event.preventDefault();
+      void getCurrentWindow().startDragging().catch(() => {});
     };
-    workspace.addEventListener("scroll", onScroll, { passive: true });
-    compact.addEventListener("change", reveal);
-    return () => {
-      workspace.removeEventListener("scroll", onScroll);
-      compact.removeEventListener("change", reveal);
-    };
-  }, [route.workspace, route.section]);
+    document.addEventListener("mousedown", dragBackground);
+    return () => document.removeEventListener("mousedown", dragBackground);
+  }, []);
   useEffect(() => {
     if (initial.current) { initial.current = false; return; }
     document.getElementById("workspace")?.scrollTo({ top: 0, behavior: "instant" });
@@ -60,6 +47,7 @@ function App() {
   }, [route.workspace]);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
+    let nativeTheme: string | undefined;
     const paint = () => {
       let cachedTheme = "system";
       let cachedPalette = "reference";
@@ -75,6 +63,10 @@ function App() {
       document.documentElement.dataset.deskTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
       document.documentElement.style.colorScheme = document.documentElement.dataset.deskTheme;
       document.documentElement.dataset.deskPalette = settings.data?.palette ?? cachedPalette;
+      if (document.documentElement.dataset.nativeWindow === "macos" && nativeTheme !== theme) {
+        nativeTheme = theme;
+        void getCurrentWindow().setTheme(theme === "system" ? null : theme as "light" | "dark").catch(() => { nativeTheme = undefined; });
+      }
       document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--desk-canvas").trim());
     };
     paint(); media.addEventListener("change", paint);
@@ -82,8 +74,9 @@ function App() {
   }, [settings.data]);
   const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? route.workspace[0].toUpperCase() + route.workspace.slice(1);
   return <>
+    <span className="native-window-title" aria-hidden="true">Runalytics</span>
     <a className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>Skip to workspace</a>
-    <header ref={appbar} style={{ "--appbar-offset": "0px" } as CSSProperties} className={`desk-appbar${appbarHidden ? " is-scrolled-away" : ""}`} onFocusCapture={() => { appbarOffset.current = 0; appbar.current?.style.setProperty("--appbar-offset", "0px"); setAppbarHidden(false); }}>
+    <header className="desk-appbar">
       <a href="#training" className="desk-brand" aria-label="Runalytics training">
         <span className="desk-brand-icon" data-entrance aria-hidden="true"><svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor" focusable="false">
           <path d="M32 4C8 4 4 8 4 32s4 28 28 28 28-4 28-28S56 4 32 4Z" />
@@ -92,7 +85,7 @@ function App() {
         </svg></span>
         <span className="desk-brand-name" data-entrance>Runalytics</span>
       </a>
-      <SelectionGroup><nav aria-label="Workspaces" className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker />}<Icon size={21} aria-hidden="true" /><span>{label}</span></a>)}</nav></SelectionGroup>
+      <SelectionGroup><nav aria-label="Workspaces" className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}><Icon size={21} /></motion.div><span>{label}</span></a>)}</nav></SelectionGroup>
       <div className="desk-utilities">
         <IconButton label={syncing ? "Syncing activities" : "Sync activities"} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");

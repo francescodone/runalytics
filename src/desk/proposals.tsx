@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { IconCheck } from "@tabler/icons-react";
 import { tauri, fmtDateDMY, fmtKm, fmtPace, estimatedTimeRange, fmtTimeRange } from "../lib/ipc";
 import type { PlanProposal } from "../lib/types";
 import { useCommand, useRemote } from "./data";
@@ -14,7 +15,7 @@ export function PlanAdjustments({ source }: { source: "pain" | "pacing" }) {
   return <section className="adjustment-evidence"><h3>{source === "pain" ? "Recovery adjustments" : "Pacing evidence"}</h3>
     <ErrorNotice error={pending.error ?? pacing.error ?? history.error} retry={pending.retry} />
     {pacing.data && <><p className="muted">{pacing.data.streak} of {pacing.data.needed} consecutive quality sessions {pacing.data.direction ? `in the ${pacing.data.direction} band` : "reviewed"}.</p><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Quality session pacing evidence"><table><caption className="sr-only">Quality session pacing evidence</caption><thead><tr><th>Session</th><th>Target /km</th><th>Held /km</th><th>Result</th></tr></thead><tbody>{pacing.data.reviews.map(review => <tr key={review.workoutId}><th>{review.title}<small className="table-date">{fmtDateDMY(review.date)}</small></th><td>{fmtPace(review.bandLoSKm)} - {fmtPace(review.bandHiSKm)}</td><td>{fmtPace(review.actualSKm)}</td><td>{review.execution === "in" ? "On target" : review.execution}</td></tr>)}</tbody></table></div></>}
-    {pending.loading ? <Loading label="Checking plan adjustments" /> : pending.data ? <div className="proposal-prompt"><div><strong>{pending.data.summary}</strong><p>{pending.data.reason}</p></div><Button tone="primary" onClick={() => setSelected(pending.data!)}>Review changes</Button></div> : <p className="muted">No changes awaiting your review.</p>}
+    {pending.loading ? <Loading label="Checking plan adjustments" /> : pending.data ? <div className="proposal-prompt"><div><strong>{pending.data.summary}</strong><p>{pending.data.reason}</p></div><Button tone="primary" onClick={() => setSelected(pending.data!)}>Review changes</Button></div> : !pending.error && <div className="adjustment-status" role="status"><IconCheck size={18} aria-hidden="true" /><span>No pending adjustments</span></div>}
     {(history.data ?? []).some(proposal => proposal.source === source && proposal.status !== "pending") && <InfoDialog title="Adjustment history"><ul className="plain-list">{history.data?.filter(proposal => proposal.source === source && proposal.status !== "pending").map(proposal => <li key={proposal.id}><Button onClick={() => setSelected(proposal)}>{proposal.summary}</Button><span>{proposal.status} / {fmtDateDMY(proposal.createdAt)}</span></li>)}</ul></InfoDialog>}
     <Presence>{selected && <ProposalReview proposal={selected} onClose={() => setSelected(null)} />}</Presence>
   </section>;

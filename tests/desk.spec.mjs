@@ -4,6 +4,31 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+test("macOS window dragging is limited to empty outer-shell background", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => { document.documentElement.dataset.nativeWindow = "macos"; });
+  });
+  await page.goto("/desk.html#health/pace");
+  await expect(page.locator(".workspace-heading h1")).toHaveText("Health");
+  const dragCount = () => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plugin:window|start_dragging").length);
+  await page.locator("#desk-root").dispatchEvent("mousedown", { button: 0 });
+  await expect.poll(dragCount).toBe(1);
+  await page.locator("body").dispatchEvent("mousedown", { button: 0 });
+  await expect.poll(dragCount).toBe(2);
+  await page.locator("html").dispatchEvent("mousedown", { button: 0 });
+  await expect.poll(dragCount).toBe(3);
+  await page.locator("#desk-root").dispatchEvent("mousedown", { button: 2 });
+  await page.locator(".desk-appbar").dispatchEvent("mousedown", { button: 0 });
+  await page.locator("#workspace").dispatchEvent("mousedown", { button: 0 });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.locator(".workspace-heading h1")).toHaveText("Settings");
+  expect(await dragCount()).toBe(3);
+  await page.evaluate(() => { delete document.documentElement.dataset.nativeWindow; });
+  await page.locator("#desk-root").dispatchEvent("mousedown", { button: 0 });
+  expect(await dragCount()).toBe(3);
+});
+
 for (const width of [320, 820, 1440]) for (const theme of ["light", "dark"]) {
   test(`desktop updater keeps progress and feedback spaced ${width}px ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1131,6 +1156,45 @@ for (const width of [320, 1440]) {
   });
 }
 
+test('pace insights cap chart and inspection at five recent sessions regardless of outdated status', async ({page}) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      if (command !== 'pace_insights') return result;
+      const sessions = Array.from({length: 9}, (_, index) => ({
+        ...result.speed[0],
+        workoutId: `recent-${index}`,
+        title: `Recent session ${index}`,
+        date: `2026-10-${String(index + 1).padStart(2, '0')}`,
+        outdated: index === 6,
+        reps: index === 8 ? [] : result.speed[0].reps,
+      })).reverse();
+      return {...result, speed: sessions, long: sessions.map(session => ({...session, outdated: false}))};
+    };
+  });
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({width, height: 1000});
+    for (const theme of ['light', 'dark']) {
+      await page.goto(`/desk.html?theme=${theme}#health/pace`);
+      for (const mode of ['Speed', 'Long']) {
+        await page.getByRole('button', {name: mode, exact: true}).click();
+        const points = page.locator('.pace-point-session');
+        await expect(points).toHaveCount(5);
+        expect(await points.evaluateAll(elements => elements.map(element => element.dataset.workout)))
+          .toEqual(['recent-3', 'recent-4', 'recent-5', 'recent-6', 'recent-7']);
+        const picker = page.getByRole('group', {name: 'Inspect pace session'});
+        await expect(picker.getByRole('button')).toHaveCount(5);
+        await expect(page.getByRole('region', {name: 'Selected pace session'})).toContainText('Recent session 7');
+        await expect(page.locator('.pace-summary')).toContainText(mode === 'Speed' ? '/4 sessions' : '/5 sessions');
+        await picker.getByRole('button').first().click();
+        await expect(page.getByRole('region', {name: 'Selected pace session'})).toContainText('Recent session 3');
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+    }
+  }
+});
+
 test('pace insights handle no plan, empty history and retry without changing the plan', async ({page}) => {
   await page.goto('/desk.html?noPlan=1#health/pace');
   await expect(page.getByText('Create a training plan and link completed runs to see pace insights.')).toBeVisible();
@@ -1560,6 +1624,27 @@ for (const width of [390,1440]) {
   });
 }
 
+test("plan weeks use available space beside plan details", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await page.goto("/desk.html#training/plan");
+  const list = page.getByRole("region", { name: "Plan weeks", exact: true });
+  await expect(list).toBeVisible();
+  await list.evaluate(element => {
+    const rows = [...element.querySelectorAll(".roadmap-row")];
+    for (const row of rows) element.appendChild(row.cloneNode(true));
+  });
+  await expect.poll(() => list.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  const before = await list.evaluate(element => element.clientHeight);
+  await page.locator(".plan-basis").evaluate(element => { element.style.minHeight = "1400px"; });
+  await expect.poll(() => list.evaluate(element => element.clientHeight)).toBeGreaterThan(before);
+  const gap = await page.locator(".plan-main").evaluate(element => {
+    const overview = element.querySelector(".plan-overview").getBoundingClientRect();
+    const evidence = element.querySelector(".adjustment-evidence").getBoundingClientRect();
+    return evidence.top - overview.bottom;
+  });
+  expect(gap).toBeLessThanOrEqual(24);
+});
+
 for (const width of [390, 1440]) {
   for (const reducedMotion of ["no-preference", "reduce"]) {
     test(`plan centers the current week on every visit ${width}px ${reducedMotion}`, async ({ page }) => {
@@ -1633,7 +1718,7 @@ test("floating session details blur and lock their background without changing i
   await expect(backdrop).toHaveCSS("backdrop-filter", "blur(12px)");
   await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
   expect(await page.locator(".desk-appbar").evaluate(element => element.inert)).toBe(true);
-  await inspector.getByRole("button", { name: "Back", exact: true }).focus();
+  await inspector.getByRole("button", { name: "Close Session", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
   expect(await inspector.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await backdrop.click({ position: { x: 20, y: 200 } });
@@ -1703,7 +1788,7 @@ test("mobile date selection opens a full-screen session and returns to its opene
     return bounds && Object.fromEntries(Object.entries(bounds).map(([key,value]) => [key,Math.round(value)]));
   }).toEqual({x:0,y:0,width:390,height:844});
   await expect(page.locator(".prescription")).toContainText("Repeat 4 times:");
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Close Session", exact: true }).click();
   await expect(session).toBeFocused();
 });
 
@@ -2322,6 +2407,42 @@ test("the plain notice carries the same countdown ring around its dismiss button
   await expect(page.locator(".desk-notice .stage-ring")).toBeVisible();
 });
 
+for (const theme of ["light", "dark"]) {
+  for (const width of [390, 1440]) {
+    test(`notifications use translucent theme glass ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/desk.html?theme=${theme}&palette=aurora#settings/thresholds`);
+      await page.getByRole("button", { name: "Save boundaries" }).click();
+      const notice = page.locator(".desk-notice");
+      await expect(notice).toBeVisible();
+      await notice.hover();
+      await expect(notice).toHaveCSS("backdrop-filter", "blur(24px) saturate(1.45)");
+      const inspect = () => notice.evaluate(element => {
+        const style = getComputedStyle(element);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.fillStyle = style.backgroundColor;
+        context.fillRect(0, 0, 1, 1);
+        return { alpha: context.getImageData(0, 0, 1, 1).data[3] / 255, image: style.backgroundImage, ink: style.color, expectedInk: getComputedStyle(document.documentElement).getPropertyValue("--desk-ink").trim() };
+      });
+      const initial = await inspect();
+      expect(initial.alpha).toBeCloseTo(.8, 2);
+      expect(initial.image).toContain("linear-gradient");
+      await expect(notice).toHaveCSS("color", theme === "dark" ? "rgb(243, 245, 247)" : "rgb(25, 27, 32)");
+      await page.evaluate(() => { document.documentElement.dataset.deskPalette = "sakura"; });
+      expect((await inspect()).image).not.toBe(initial.image);
+      await page.screenshot({ path: testInfo.outputPath(`notification-glass-${theme}-${width}.png`) });
+      await page.emulateMedia({ contrast: "more" });
+      await expect(notice).toHaveCSS("backdrop-filter", "none");
+      await expect(notice).toHaveCSS("background-image", "none");
+      expect((await inspect()).alpha).toBe(1);
+      await notice.getByRole("button", { name: "Dismiss notification" }).click();
+      await expect(notice).toHaveCount(0);
+    });
+  }
+}
+
 for (const width of [320, 390, 768, 1440]) {
   test(`unified notifications do not overlap progress or navigation ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -2332,6 +2453,15 @@ for (const width of [320, 390, 768, 1440]) {
     const notice = page.locator(".desk-notice").filter({ hasText: "Training boundaries saved." });
     await expect(progress).toBeVisible();
     await expect(notice).toBeVisible();
+    const typography = locator => locator.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { fontSize: style.fontSize, lineHeight: style.lineHeight, fontFamily: style.fontFamily, fontWeight: style.fontWeight };
+    });
+    expect(await typography(progress.locator(".stage-line"))).toEqual(await typography(notice.locator(".notice-content")));
+    await emitStage(page, { op: "sync", target: "strava", state: "done", detail: "Strava: 1 copied, 0 already present, 1 pending, 0 need attention. Waiting for the watch activity to arrive." });
+    const detail = progress.locator(".stage-line").last();
+    await expect(detail).toContainText("Waiting for the watch activity");
+    expect(await detail.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     const progressBox = await progress.boundingBox();
     const noticeBox = await notice.boundingBox();
     expect(progressBox.y + progressBox.height <= noticeBox.y || noticeBox.y + noticeBox.height <= progressBox.y).toBe(true);
@@ -2379,7 +2509,7 @@ test("unified notifications queue distinct messages and deduplicate background f
 });
 
 test("unified notifications remain dismissible above a native modal without losing form state", async ({ page }) => {
-  await page.goto("/desk.html#health");
+  await page.goto("/desk.html#health/journal");
   await page.getByRole("button", { name: "Log pain", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Log pain" });
   await dialog.getByLabel("Notes", { exact: true }).fill("Keep this draft");

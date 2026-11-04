@@ -5,6 +5,539 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
 for (const theme of ["light", "dark"]) {
+  test(`multicolor palettes stay distinct and persist ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: theme === "light" ? 320 : 1440, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#settings/appearance`);
+    const options = page.locator('.palette-options input[type="radio"]');
+    await expect(options).toHaveCount(20);
+    await expect(page.getByRole("radio", { name: "Dashing Blueberry", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("radio", { name: "The Coastal Chaos", exact: true })).toHaveCount(0);
+    const signatures = new Set();
+    for (const [palette, name] of [["carnival", "Raspberry Relay"], ["electric", "Electric Stride"], ["sorbet", "Sorbet Sprint"], ["regatta", "Regatta Ready"], ["meadow", "Meadow Medley"]]) {
+      const radio = page.getByRole("radio", { name, exact: true });
+      await expect(radio).toBeEnabled();
+      await radio.check();
+      await expect(radio).toBeChecked();
+      await expect(page.locator("html")).toHaveAttribute("data-desk-palette", palette);
+      await expect.poll(() => page.evaluate(() => localStorage.getItem("runalytics.palette"))).toBe(palette);
+      const colors = await page.evaluate(() => {
+        const style = getComputedStyle(document.documentElement);
+        const tokens = ["--desk-action", "--desk-blue", "--session-tempo"];
+        return tokens.map(token => style.getPropertyValue(token).trim());
+      });
+      expect(new Set(colors).size).toBe(3);
+      signatures.add([...colors].sort().join("/"));
+    }
+    expect(signatures.size).toBe(5);
+    await expect.poll(() => page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("get_settings")).palette)).toBe("meadow");
+    await page.getByRole("button", { name: "All settings", exact: true }).click();
+    await page.locator('a[href="#settings/appearance"]').click();
+    await expect(page.getByRole("radio", { name: "Meadow Medley", exact: true })).toBeChecked();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    await expect(page.getByRole("radio", { name: "Meadow Medley", exact: true })).toBeEnabled();
+    const accessibility = await new AxeBuilder({ page }).include(".settings-editor").analyze();
+    expect(accessibility.violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`multicolor-${theme}.png`), fullPage: true });
+  });
+}
+
+for (const [palette, name] of [["garnet", "Blue Steel Sprint"], ["coastline", "Sunrise Shenanigans"]]) {
+  test(`retired palette ${palette} retains a selected choice`, async ({ page }) => {
+    await page.goto(`/desk.html?palette=${palette}#settings/appearance`);
+    await expect(page.getByRole("radio", { name, exact: true })).toBeChecked();
+    await expect(page.locator('.palette-options input:checked')).toHaveCount(1);
+  });
+}
+
+for (const theme of ["light", "dark", "system"]) {
+  test(`macOS title bar follows the palette ${theme}`, async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        document.documentElement.dataset.nativeWindow = "macos";
+        window.__TAURI_INTERNALS__.metadata = { currentWindow: { label: "main" }, currentWebview: { label: "main" } };
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        window.__nativeThemes = [];
+        window.__TAURI_INTERNALS__.invoke = (command, args) => {
+          if (command === "plugin:window|set_theme") {
+            window.__nativeThemes.push(args.value);
+            return Promise.resolve();
+          }
+          return invoke(command, args);
+        };
+      });
+    });
+    await page.setViewportSize({ width: 1180, height: 780 });
+    await page.goto(`/desk.html?theme=${theme}#health/pace`);
+    await expect(page.locator(".adjustment-status")).toHaveText("No pending adjustments");
+    await expect.poll(() => page.evaluate(() => window.__nativeThemes.at(-1))).toBe(theme === "system" ? null : theme);
+    const title = page.locator(".native-window-title");
+    await expect(title).toBeVisible();
+    await expect(title).toHaveCSS("color", theme === "dark" ? "rgb(255, 255, 255)" : "rgb(0, 0, 0)");
+    await expect(title).toHaveCSS("left", "104px");
+    const inspect = () => page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const shell = getComputedStyle(document.getElementById("desk-root"));
+      const body = getComputedStyle(document.body);
+      return {
+        inset: parseFloat(shell.paddingTop) - parseFloat(shell.paddingBottom),
+        background: body.backgroundImage,
+        accent: root.getPropertyValue("--desk-action").trim(),
+        overflow: document.documentElement.scrollWidth > innerWidth,
+        workspaceTop: document.getElementById("workspace").getBoundingClientRect().top,
+      };
+    });
+    const initial = await inspect();
+    expect(initial.inset).toBe(32);
+    expect(initial.workspaceTop).toBeGreaterThanOrEqual(32);
+    expect(initial.overflow).toBe(false);
+    const pageBackground = await page.evaluate(() => {
+      delete document.documentElement.dataset.nativeWindow;
+      const background = getComputedStyle(document.body).backgroundImage;
+      document.documentElement.dataset.nativeWindow = "macos";
+      return background;
+    });
+    expect(initial.background).toBe(pageBackground);
+    await page.evaluate(() => { document.documentElement.dataset.deskPalette = "sakura"; });
+    const changed = await inspect();
+    expect(changed.accent).not.toBe(initial.accent);
+    expect(changed.background).not.toBe(initial.background);
+    expect(changed.inset).toBe(32);
+    expect(changed.overflow).toBe(false);
+    if (theme === "system") {
+      const commands = await page.evaluate(() => window.__nativeThemes.length);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
+      await expect(title).toHaveCSS("color", "rgb(255, 255, 255)");
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "light");
+      expect(await page.evaluate(() => window.__nativeThemes.length)).toBe(commands);
+      await page.evaluate(() => { location.hash = "settings/appearance"; });
+      for (const selection of ["Light", "Dark", "System", "Dark", "Light", "System"]) {
+        const radio = page.getByRole("radio", { name: selection, exact: true });
+        await expect(radio).toBeEnabled();
+        await radio.check();
+        await expect(radio).toBeChecked();
+        await expect.poll(() => page.evaluate(() => window.__nativeThemes.at(-1))).toBe(selection === "System" ? null : selection.toLowerCase());
+      }
+      await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "light");
+    }
+    await page.screenshot({ path: testInfo.outputPath(`macos-header-${theme}.png`) });
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 1440, 2560]) {
+    test(`Prism overlay controls and corner alignment ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/desk.html?theme=${theme}#health/pace`);
+      const status = page.locator(".adjustment-status");
+      await expect(status).toHaveText("No pending adjustments");
+      await expect(status).toHaveCSS("font-size", "13px");
+      const opener = page.getByRole("button", { name: "About pace insights", exact: true });
+      await opener.click();
+      const dialog = page.getByRole("dialog", { name: "About pace insights", exact: true });
+      const close = dialog.getByRole("button", { name: "Close About pace insights", exact: true });
+      await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).toBeFocused();
+      await expect(close.locator(".control-tooltip")).toHaveCSS("visibility", "hidden");
+      await page.keyboard.press("Tab");
+      await expect(close).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(opener).toBeFocused();
+      await page.goto(`/desk.html?theme=${theme}#health/journal`);
+      await page.getByRole("button", { name: "Log pain", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Log pain" }).getByLabel("Body region")).toBeFocused();
+      await page.keyboard.press("Escape");
+      await page.goto(`/desk.html?theme=${theme}#health/pace`);
+      await expect(opener).toBeVisible();
+      const showNotice = () => page.evaluate(() => window.__deskEmit("plan://stage", { op: "alignment", target: "coros", state: "working" }));
+      await showNotice();
+      const notice = page.locator(".desk-stages");
+      await expect(notice).toBeVisible();
+      const checkCorners = async () => {
+        const workspace = await page.locator("#workspace").boundingBox();
+        const bounds = await notice.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+        if (width > 800) {
+          expect(workspace.x + workspace.width - bounds.x - bounds.width).toBeCloseTo(24, 0);
+          expect(workspace.y + workspace.height - bounds.y - bounds.height).toBeCloseTo(24, 0);
+        }
+      };
+      await checkCorners();
+      await page.screenshot({ path: testInfo.outputPath("notification.png") });
+      await opener.click();
+      await expect(dialog).toBeVisible();
+      await expect(notice).toBeVisible();
+      await checkCorners();
+      await page.screenshot({ path: testInfo.outputPath("dialog.png") });
+      await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
+      await expect(notice).toHaveCount(0);
+      await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).toBeFocused();
+      await close.click();
+      await expect(opener).toBeFocused();
+      await page.goto(`/desk.html?theme=${theme}#training`);
+      const session = page.locator(".session-tile:visible").first();
+      await session.click();
+      const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+      await expect(inspector).toBeFocused();
+      const dismiss = inspector.getByRole("button", { name: "Close Session", exact: true });
+      await expect(dismiss).toHaveClass(/icon-button/);
+      await expect(inspector.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath("inspector.png") });
+      await dismiss.click();
+      await expect(session).toBeFocused();
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 1440]) {
+    test(`Prism Health tabs and unified Pace layout ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/desk.html?theme=${theme}#health`);
+      const tabs = page.getByRole("navigation", { name: "Health view" });
+      if (width <= 390) {
+        await expect.poll(() => tabs.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+        await tabs.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+        await expect.poll(() => tabs.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+        await expect(tabs.getByRole("link", { name: "Milestones", exact: true })).toBeInViewport();
+      }
+      await tabs.getByRole("link", { name: "Pace insights", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      const pace = page.getByRole("region", { name: "Pace insights", exact: true });
+      await expect(pace).toBeVisible();
+      await expect(pace).toHaveCSS("row-gap", "20px");
+      await expect(pace.locator(".pace-mode")).toHaveCSS("margin-bottom", "0px");
+      await expect(pace.locator(".pace-session-picker")).toHaveCSS("margin-top", "0px");
+      await expect(pace.locator(".pace-session-picker")).toHaveCSS("overflow-x", "auto");
+      const chart = await pace.locator(".pace-insights-figure svg").boundingBox();
+      expect(chart.height).toBeLessThanOrEqual(240);
+      const detail = pace.getByRole("region", { name: "Selected pace session" });
+      await expect(detail.getByRole("heading", { level: 3 })).toBeVisible();
+      await expect(detail.getByRole("heading", { level: 3 })).toHaveCSS("font-size", "18px");
+      await expect(pace.locator(".pace-history-heading h3")).toHaveCSS("font-size", "18px");
+      await assertLayout(page, `Pace ${theme} ${width}`);
+      await page.screenshot({ path: testInfo.outputPath("pace-overview.png") });
+      await detail.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("pace-session.png") });
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`activity inspector Back hover remains unclipped ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#journal/1`);
+    const inspector = page.locator(".journal-workspace .desk-inspector");
+    const back = inspector.getByRole("button", { name: "Back", exact: true });
+    await expect(back).toBeVisible();
+    await expect(page.locator(".desk-loading")).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await inspector.evaluate(element => { element.scrollTop = 0; });
+    await back.hover();
+    await expect(back.locator(".control-tooltip")).toBeVisible();
+    await expect.poll(() => back.evaluate(element => {
+      const button = element.getBoundingClientRect();
+      const surface = element.closest(".desk-inspector").getBoundingClientRect();
+      const tooltip = element.querySelector(".control-tooltip").getBoundingClientRect();
+      return Math.min(button.top - surface.top, button.left - surface.left, tooltip.left - surface.left);
+    })).toBeGreaterThanOrEqual(4);
+    await page.keyboard.press("Tab");
+    await back.focus();
+    await expect(back).toHaveCSS("outline-style", "solid");
+    await inspector.screenshot({ path: testInfo.outputPath("activity-back-hover.png") });
+  });
+
+  test(`Prism scroll controls preserve hover clearance ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    for (const route of ["training", "health", "health/pace", "journal/1"]) {
+      await page.goto(`/desk.html?theme=${theme}#${route}`);
+      const selector = route === "journal/1" ? ".review-tabs" : route === "health/pace" ? ".pace-session-picker" : ".horizon-switch";
+      const strip = page.locator(selector).first();
+      await expect(strip).toBeVisible();
+      await expect(page.locator(".desk-loading")).toHaveCount(0);
+      const controls = strip.locator(":scope > a, :scope > button");
+      for (const control of [controls.first(), controls.last()]) {
+        await control.hover();
+        await control.focus();
+        await expect.poll(() => control.evaluate(element => {
+          const bounds = element.getBoundingClientRect();
+          const viewport = element.parentElement.getBoundingClientRect();
+          return Math.min(bounds.top - viewport.top, viewport.bottom - bounds.bottom, bounds.left - viewport.left, viewport.right - bounds.right);
+        })).toBeGreaterThanOrEqual(3);
+        await expect(control).toHaveCSS("outline-style", "solid");
+      }
+      await strip.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-")}-hover.png`) });
+    }
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`Prism horizontal transparent scroll fades ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`/desk.html?theme=${theme}#journal/1`);
+    const tabs = page.getByRole("tablist", { name: "Activity detail" });
+    await expect(tabs).toBeVisible();
+    await expect(tabs).toHaveAttribute("data-scroll-right", "1");
+    await expect(tabs).toHaveCSS("background-image", "none");
+    await expect(tabs).not.toHaveCSS("mask-image", "none");
+    await expect.poll(() => tabs.evaluate(element => getComputedStyle(element).getPropertyValue("--scroll-left-opacity").trim())).toBe("0");
+    await tabs.evaluate(element => { element.scrollLeft = (element.scrollWidth - element.clientWidth) / 2; });
+    await expect(tabs).toHaveAttribute("data-scroll-left", "1");
+    await expect(tabs).toHaveAttribute("data-scroll-right", "1");
+    await tabs.screenshot({ path: testInfo.outputPath("tabs-transparent-fades.png") });
+    const context = tabs.getByRole("tab", { name: "Training context", exact: true });
+    await context.focus();
+    await page.keyboard.press("Enter");
+    await expect(context).toHaveAttribute("aria-selected", "true");
+    await tabs.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+    await expect(tabs).toHaveAttribute("data-scroll-right", "");
+    await expect.poll(() => tabs.evaluate(element => getComputedStyle(element).getPropertyValue("--scroll-right-opacity").trim())).toBe("0");
+    await page.emulateMedia({ contrast: "more", reducedMotion: "reduce" });
+    await expect(tabs).toHaveCSS("mask-image", "none");
+    await page.emulateMedia({ contrast: "no-preference", reducedMotion: "reduce" });
+    await page.goto(`/desk.html?theme=${theme}#training/plan`);
+    await page.getByRole("button", { name: "Show details", exact: true }).click();
+    const table = page.getByRole("region", { name: "Plan basis", exact: true });
+    await table.locator("table").evaluate(element => { element.style.minWidth = "800px"; });
+    await page.setViewportSize({ width: 375, height: 844 });
+    await expect(table).toHaveAttribute("data-scroll-right", "1");
+    await expect(table).toHaveCSS("background-image", "none");
+    await expect(table).not.toHaveCSS("mask-image", "none");
+    await table.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+    await expect(table).toHaveAttribute("data-scroll-left", "1");
+    await expect(table).toHaveAttribute("data-scroll-right", "");
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }, { width: 768, height: 844 }, { width: 740, height: 390 }]) {
+    test(`Prism contained mobile shell ${theme} ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+      await page.setViewportSize(viewport);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto(`/desk.html?theme=${theme}#journal`);
+      const workspace = page.locator("#workspace");
+      const header = page.locator(".desk-appbar");
+      const navigation = page.getByRole("navigation", { name: "Workspaces" });
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      const frame = await workspace.boundingBox();
+      const island = await navigation.boundingBox();
+      expect(frame.y + frame.height - island.y - island.height).toBeGreaterThanOrEqual(8);
+      expect(island.x - frame.x).toBeGreaterThanOrEqual(8);
+      expect(frame.x + frame.width - island.x - island.width).toBeGreaterThanOrEqual(8);
+      const brand = await header.locator(".desk-brand").boundingBox();
+      await page.getByRole("button", { name: "Filters", exact: true }).click();
+      const filters = page.locator(".journal-tools");
+      await expect(filters).toHaveCSS("display", "flex");
+      const reset = page.getByRole("button", { name: "Reset filters", exact: true });
+      await reset.scrollIntoViewIfNeeded();
+      const fields = await filters.locator("input, select").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+      const resetBounds = await reset.boundingBox();
+      for (const field of fields) {
+        const horizontal = Math.max(field.left - resetBounds.x - resetBounds.width, resetBounds.x - field.right);
+        const vertical = Math.max(field.top - resetBounds.y - resetBounds.height, resetBounds.y - field.bottom);
+        expect(Math.max(horizontal, vertical)).toBeGreaterThanOrEqual(8);
+      }
+      await workspace.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      await expect.poll(() => workspace.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+      expect(await workspace.boundingBox()).toEqual(frame);
+      expect(await navigation.boundingBox()).toEqual(island);
+      expect(await header.locator(".desk-brand").boundingBox()).toEqual(brand);
+      await expect(header.locator(".desk-brand")).toBeVisible();
+      expect(await page.evaluate(() => ({ x: scrollX, y: scrollY, overflow: document.documentElement.scrollWidth > innerWidth }))).toEqual({ x: 0, y: 0, overflow: false });
+      await page.screenshot({ path: testInfo.outputPath("scrolled-shell.png") });
+      await workspace.evaluate(element => { element.scrollTop = 0; });
+      await page.screenshot({ path: testInfo.outputPath("filter-spacing.png") });
+      await page.goto(`/desk.html?theme=${theme}#health/journal`);
+      const logPain = page.getByRole("button", { name: "Log pain", exact: true });
+      await logPain.click();
+      const dialog = page.getByRole("dialog", { name: "Log pain", exact: true });
+      await expect(dialog.locator(".form-actions")).toHaveCSS("gap", "12px");
+      const cancel = await dialog.getByRole("button", { name: "Cancel", exact: true }).boundingBox();
+      const save = await dialog.getByRole("button", { name: "Save pain entry", exact: true }).boundingBox();
+      expect(Math.max(save.x - cancel.x - cancel.width, save.y - cancel.y - cancel.height)).toBeGreaterThanOrEqual(12);
+      await page.keyboard.press("Escape");
+      await expect(logPain).toBeFocused();
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768, 820, 1440]) {
+    test(`Prism text clipping audit ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      for (const route of ["training", "training/month", "training/plan", "journal", "journal/1", "health", "health/pace", "health/journal", "health/milestones", "settings", "settings/appearance", "settings/calendar", "help"]) {
+        await page.goto(`/desk.html?theme=${theme}#${route}`);
+        await expect(page.locator("#workspace h1")).toBeVisible();
+        await expect(page.locator(".desk-loading")).toHaveCount(0);
+        if (route === "journal/1") await expect(page.getByRole("region", { name: "Recorded GPS route" })).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        const clipped = () => page.locator("#desk-root").evaluate(root => {
+          const failures = [];
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const element = node.parentElement;
+            if (!node.textContent.trim() || !element || element.closest(".sr-only, svg, .control-tooltip, .maplibregl-map")) continue;
+            if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+            if (getComputedStyle(element).clipPath !== "none" || getComputedStyle(element).clip !== "auto") continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const rect of range.getClientRects()) {
+              if (rect.width < 1 || rect.height < 1) continue;
+              let ancestor = element;
+              while (ancestor && ancestor !== root) {
+                const style = getComputedStyle(ancestor);
+                const bounds = ancestor.getBoundingClientRect();
+                if (style.clipPath !== "none" || style.clip !== "auto") break;
+                if ([style.overflowX, style.overflowY].some(value => value === "auto" || value === "scroll")) break;
+                if (["hidden", "clip"].includes(style.overflowX) && (rect.left < bounds.left - 1 || rect.right > bounds.right + 1)) {
+                  failures.push({ text: node.textContent.trim(), container: ancestor.className, axis: "horizontal" });
+                  break;
+                }
+                if (["hidden", "clip"].includes(style.overflowY) && (rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1)) {
+                  failures.push({ text: node.textContent.trim(), container: ancestor.className, axis: "vertical" });
+                  break;
+                }
+                ancestor = ancestor.parentElement;
+              }
+            }
+          }
+          return failures;
+        });
+        await expect.poll(clipped, { message: `${route} ${theme} ${width}` }).toEqual([]);
+        await assertLayout(page, `text audit ${route} ${theme} ${width}`);
+        if (route === "journal") {
+          await expect(page.locator(".activity-library")).toHaveCSS("border-radius", "0px");
+          await expect(page.locator(".activity-purpose").first()).toHaveCSS("-webkit-line-clamp", "none");
+          await page.screenshot({ path: testInfo.outputPath("journal-text.png") });
+        }
+      }
+    });
+  }
+}
+
+for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`Prism compact navigation island responds to input ${reducedMotion}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/desk.html#training");
+    const navigation = page.getByRole("navigation", { name: "Workspaces" });
+    const before = await navigation.boundingBox();
+    expect(before.width).toBeLessThan(244);
+    const training = navigation.getByRole("link", { name: "Training", exact: true });
+    const health = navigation.getByRole("link", { name: "Health", exact: true });
+    const activities = navigation.getByRole("link", { name: "Activities", exact: true });
+    await expect(navigation.locator('[tabindex="0"]')).toHaveCount(0);
+    for (const link of [training, activities, health]) {
+      const bounds = await link.boundingBox();
+      expect(bounds.width).toBeGreaterThanOrEqual(44);
+      expect(bounds.width).toBe(64);
+      expect(bounds.height).toBeGreaterThanOrEqual(44);
+    }
+    await health.focus();
+    await expect(health).toHaveCSS("outline-style", "solid");
+    await navigation.evaluate(element => {
+      window.__navigationPositions = [];
+      window.__navigationObserver = new MutationObserver(() => {
+        const marker = element.querySelector(".selection-marker");
+        if (marker) window.__navigationPositions.push(marker.getBoundingClientRect().x);
+      });
+      window.__navigationObserver.observe(element, { subtree: true, attributes: true, childList: true });
+    });
+    await page.keyboard.press("Enter");
+    await expect(health).toHaveAttribute("aria-current", "page");
+    await expect.poll(() => health.locator(".selection-marker").evaluate(element => {
+      const marker = element.getBoundingClientRect();
+      const link = element.parentElement.getBoundingClientRect();
+      const border = parseFloat(getComputedStyle(element.parentElement).borderLeftWidth);
+      return Math.abs(marker.x - link.x - border) + Math.abs(marker.width - link.width + 2 * border);
+    })).toBeLessThan(1);
+    if (reducedMotion === "no-preference") {
+      const origin = await training.boundingBox();
+      const target = await health.boundingBox();
+      expect(await page.evaluate(({ start, end }) => window.__navigationPositions.some(position => position > start + 8 && position < end - 8), { start: origin.x, end: target.x })).toBe(true);
+    }
+    await page.evaluate(() => window.__navigationObserver.disconnect());
+    const center = await activities.boundingBox();
+    await page.mouse.move(center.x + center.width / 2, center.y + center.height / 2);
+    await page.mouse.down();
+    if (reducedMotion === "no-preference") await expect.poll(() => activities.evaluate(element => parseFloat(getComputedStyle(element).scale))).toBeLessThan(1);
+    await page.mouse.up();
+    await expect(activities).toHaveAttribute("aria-current", "page");
+    await health.click();
+    await training.click();
+    await expect(training).toHaveAttribute("aria-current", "page");
+    await expect.poll(() => training.locator(".selection-marker").evaluate(element => {
+      const marker = element.getBoundingClientRect();
+      const link = element.parentElement.getBoundingClientRect();
+      const border = parseFloat(getComputedStyle(element.parentElement).borderLeftWidth);
+      return Math.abs(marker.x - link.x - border);
+    })).toBeLessThan(1);
+    await page.mouse.move(10, 10);
+    await expect.poll(async () => (await navigation.boundingBox()).width).toBe(before.width);
+    if (reducedMotion === "reduce") await expect(training.locator(".navigation-icon")).toHaveCSS("transform", "none");
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+    const target = await health.boundingBox();
+    const touchPoints = [{ x: target.x + target.width / 2, y: target.y + target.height / 2 }];
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints });
+    await expect(training).toHaveAttribute("aria-current", "page");
+    await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await expect(training).toHaveAttribute("aria-current", "page");
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints });
+    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(health).toHaveAttribute("aria-current", "page");
+    await session.detach();
+    await expect.poll(() => health.locator(".navigation-icon").evaluate(element => getComputedStyle(element).transform)).toBe(reducedMotion === "reduce" ? "none" : "matrix(1.08, 0, 0, 1.08, 0, -2)");
+    await page.screenshot({ path: testInfo.outputPath("compact-navigation.png") });
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 768]) {
+    test(`Prism flat mobile surfaces ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto(`/desk.html?theme=${theme}#journal`);
+      const rows = page.locator(".activity-row");
+      await expect(rows).toHaveCount(9);
+      await expect(rows.last()).toHaveCSS("border-bottom-width", "0px");
+      await expect(rows.first()).toHaveCSS("border-bottom-width", "1px");
+      await expect(rows.first()).toHaveCSS("border-radius", "8px");
+      const navigation = page.getByRole("navigation", { name: "Workspaces" });
+      await expect(navigation).toHaveCSS("box-shadow", "none");
+      const active = navigation.locator("a[aria-current]");
+      await active.focus();
+      await expect(active).toBeFocused();
+      await expect(active).toHaveCSS("outline-style", "solid");
+      const shell = await page.locator("#workspace").evaluate(element => {
+        const header = document.querySelector(".desk-appbar");
+        const bounds = element.getBoundingClientRect();
+        return {
+          inset: bounds.left,
+          radius: getComputedStyle(element).borderTopLeftRadius,
+          headerRadius: getComputedStyle(header, "::before").borderTopLeftRadius,
+          headerShadow: getComputedStyle(header, "::before").boxShadow,
+          overflow: document.documentElement.scrollWidth > innerWidth,
+        };
+      });
+      expect(shell).toEqual({ inset: 8, radius: "32px", headerRadius: "32px", headerShadow: "none", overflow: false });
+      await page.screenshot({ path: testInfo.outputPath("flat-mobile-journal.png") });
+      await navigation.getByRole("link", { name: "Training", exact: true }).click();
+      await expect(page.locator(".day-itinerary")).toBeVisible();
+      await assertLayout(page, `flat mobile ${theme} ${width}`);
+      await page.screenshot({ path: testInfo.outputPath("flat-mobile-training.png") });
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 768, 1440]) {
     test(`Prism compact health workflow ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 844 });
@@ -14,6 +547,16 @@ for (const theme of ["light", "dark"]) {
       await expect(details).toHaveAttribute("aria-expanded", "false");
       await expect(page.locator("#health-details")).toBeHidden();
       await assertLayout(page, `health ${theme} ${width}`);
+      const disclaimer = page.locator(".health-disclaimer");
+      await expect(disclaimer).toHaveCSS("border-left-width", "0px");
+      await expect(disclaimer).toHaveCSS("border-radius", "8px");
+      await expect(disclaimer).toHaveCSS("font-size", "14px");
+      await expect(disclaimer.locator("svg")).toHaveAttribute("aria-hidden", "true");
+      expect(await disclaimer.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await disclaimer.scrollIntoViewIfNeeded();
+      expect((await new AxeBuilder({ page }).include(".health-disclaimer").analyze()).violations).toEqual([]);
+      await disclaimer.screenshot({ path: testInfo.outputPath("health-disclaimer.png") });
+      await page.locator("#workspace").evaluate(element => { element.scrollTop = 0; });
       if (width <= 800) {
         await expect(page.locator(".health-heading")).toBeHidden();
         await expect(details).toBeInViewport();
@@ -105,8 +648,10 @@ for (const theme of ["light", "dark"]) {
       await expect(page.locator(".training-context h2")).toBeInViewport();
       await assertLayout(page, `plan ${theme} ${width}`);
       const details = page.locator(".plan-basis");
+      await expect(page.locator("details, summary")).toHaveCount(0);
       if (width <= 800) {
-        await expect(details).not.toHaveAttribute("open", "");
+        await expect(details.getByRole("button", { name: "Show details", exact: true })).toHaveAttribute("aria-expanded", "false");
+        await expect(page.locator("#plan-details")).toHaveAttribute("inert", "");
         const geometry = await page.evaluate(() => ({
           metrics: document.querySelector(".plan-overview .metrics-line").getBoundingClientRect().height,
           row: document.querySelector(".roadmap-row.is-current").getBoundingClientRect().height,
@@ -115,16 +660,18 @@ for (const theme of ["light", "dark"]) {
         expect(geometry.metrics).toBeLessThan(130);
         expect(geometry.row).toBeLessThan(110);
         expect(geometry.targets.every(height => height >= 44)).toBe(true);
-        await details.locator("summary").focus();
+        await details.getByRole("button", { name: "Show details", exact: true }).focus();
         await page.keyboard.press("Enter");
+        await expect(details.getByRole("button", { name: "Hide details", exact: true })).toHaveAttribute("aria-expanded", "true");
       }
       await expect(details.getByRole("heading", { name: "Plan basis", exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("plan-details-open.png") });
       await details.getByRole("button", { name: "End current plan", exact: true }).click();
       const end = page.getByRole("dialog", { name: "End current plan?", exact: true });
       await expect(end).toBeVisible();
       await end.getByRole("button", { name: "Keep plan", exact: true }).click();
       await expect(end).toHaveCount(0);
-      if (width <= 800) await details.locator("summary").click();
+      if (width <= 800) await details.getByRole("button", { name: "Hide details", exact: true }).click();
       await page.getByRole("button", { name: "Schedule race or test", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Schedule race or test", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
@@ -187,7 +734,7 @@ for (const theme of ["light", "dark"]) {
 }
 
 for (const reducedMotion of ["reduce", "no-preference"]) {
-  test(`Prism mobile scroll-aware topbar ${reducedMotion}`, async ({ page }, testInfo) => {
+  test(`Prism mobile stationary topbar ${reducedMotion}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 640 });
     await page.emulateMedia({ reducedMotion });
     await page.goto("/desk.html#training/month");
@@ -195,32 +742,38 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
     await expect(page.locator(".training-context")).toHaveAttribute("data-reveal", "settled");
     const navigation = page.getByRole("navigation", { name: "Workspaces" });
     const before = await navigation.boundingBox();
-    await page.mouse.move(8, 400);
+    const workspace = page.locator("#workspace");
+    const frame = await workspace.boundingBox();
+    const header = await page.locator(".desk-appbar").boundingBox();
+    await page.mouse.move(120, 400);
     await page.mouse.wheel(0, 180);
-    await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
-    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeHidden();
+    await expect.poll(() => workspace.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+    expect(await workspace.boundingBox()).toEqual(frame);
+    expect(await page.locator(".desk-appbar").boundingBox()).toEqual(header);
     await expect(navigation).toBeVisible();
     expect(await navigation.boundingBox()).toEqual(before);
-    await page.screenshot({ path: testInfo.outputPath("topbar-hidden.png") });
+    await page.screenshot({ path: testInfo.outputPath("topbar-stationary.png") });
     await page.mouse.wheel(0, -8);
     await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
     await page.locator("#workspace").evaluate(element => { element.scrollTop += 100; });
-    await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
+    await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
+    expect(await workspace.boundingBox()).toEqual(frame);
     await navigation.getByRole("link", { name: "Health", exact: true }).click();
     await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
   });
 }
 
-test("Prism mobile opaque topbar hides its background without hiding navigation", async ({ page }) => {
+test("Prism mobile opaque topbar stays within the shell while scrolling", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 640 });
   await page.emulateMedia({ contrast: "more" });
   await page.goto("/desk.html#training/month");
   await expect(page.locator(".month-board")).toBeVisible();
   await page.locator("#workspace").evaluate(element => { element.scrollTop = 180; });
-  await expect(page.locator(".desk-appbar")).toHaveClass(/is-scrolled-away/);
-  await expect.poll(() => page.locator(".desk-appbar").evaluate(element => getComputedStyle(element, "::before").visibility)).toBe("hidden");
+  await expect(page.locator(".desk-appbar")).not.toHaveClass(/is-scrolled-away/);
+  await expect.poll(() => page.locator(".desk-appbar").evaluate(element => getComputedStyle(element, "::before").visibility)).toBe("visible");
   await expect(page.locator(".desk-appbar")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.getByRole("navigation", { name: "Workspaces" })).toBeVisible();
   await expect(page.locator(".desk-navigation")).toHaveCSS("background-image", "none");
@@ -673,7 +1226,7 @@ for (const width of [390, 820, 1440]) {
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width + 1);
       await page.screenshot({ path: testInfo.outputPath("inspector.png"), fullPage: true });
-      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Close Session", exact: true }).click();
       await expect(page.locator(".desk-inspector")).toHaveCount(0);
     });
   }
