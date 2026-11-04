@@ -18,6 +18,8 @@ mod ios_auth;
 
 const SERVICE: &str = "com.fradone.runalytics.strava";
 const API: &str = "https://www.strava.com/api/v3";
+#[cfg(any(target_os = "ios", test))]
+const IOS_REDIRECT: &str = "com.fradone.runalytics://localhost/strava/callback";
 static OPERATION: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static AUTH_CANCEL: OnceLock<tokio::sync::Notify> = OnceLock::new();
 
@@ -367,7 +369,7 @@ async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tau
 
 #[cfg(target_os = "ios")]
 async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tauri::Url, String)> {
-    let redirect = "com.fradone.runalytics://strava/callback".to_string();
+    let redirect = IOS_REDIRECT.to_string();
     let url = authorize_url(client_id, &redirect, state)?;
     let callback = ios_auth::authorize(app, url.as_str()).await?;
     Ok((
@@ -862,6 +864,9 @@ enum DescriptionChange {
 fn description_change(existing: &str, payload: &str, reference: &str) -> DescriptionChange {
     let normalized = existing.replace("\r\n", "\n");
     let block = payload.replace("\r\n", "\n");
+    if block.lines().filter(|line| line.trim().starts_with("Made with Runalytics") || line.trim() == "Runalytics").count() > 1 {
+        return DescriptionChange::Review;
+    }
     if normalized.lines().any(|line| line.trim() == reference)
         || format!("\n\n{}\n\n", normalized.trim()).contains(&format!("\n\n{}\n\n", block.trim()))
     {
@@ -1149,6 +1154,24 @@ mod tests {
     }
 
     #[test]
+    fn ios_oauth_uses_whitelisted_host_and_validates_the_custom_callback() {
+        let url = authorize_url("12345", IOS_REDIRECT, "nonce").unwrap();
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        let redirect = tauri::Url::parse(&pairs["redirect_uri"]).unwrap();
+        assert_eq!(redirect.host_str(), Some("localhost"));
+        assert_eq!(redirect.scheme(), "com.fradone.runalytics");
+        assert_eq!(redirect.path(), "/strava/callback");
+        let callback = tauri::Url::parse(&format!(
+            "{IOS_REDIRECT}?state=nonce&code=synthetic&scope=activity:read_all,activity:write"
+        )).unwrap();
+        assert_eq!(callback_code(&callback, IOS_REDIRECT, "nonce").unwrap(), "synthetic");
+        assert!(callback_code(&callback, IOS_REDIRECT, "wrong").is_err());
+        let mut unexpected = callback;
+        unexpected.set_host(Some("strava")).unwrap();
+        assert!(callback_code(&unexpected, IOS_REDIRECT, "nonce").is_err());
+    }
+
+    #[test]
     fn oauth_requires_exact_callback_state_and_both_granted_scopes() {
         let redirect = "http://127.0.0.1:12345/strava/callback";
         let callback = tauri::Url::parse(&format!(
@@ -1257,6 +1280,12 @@ mod tests {
             .query_row("SELECT count(*) FROM strava_exports", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn duplicated_export_payload_requires_review_without_writing() {
+        let payload = "Made with Runalytics\n\nProgressive tempo\n\nMade with Runalytics\n\nProgressive tempo";
+        assert_eq!(description_change("", payload, "reference"), DescriptionChange::Review);
     }
 
     #[test]

@@ -112,9 +112,9 @@ distributed.
   their own Client ID and Client Secret; Runalytics has no OAuth server and
   does not bundle shared API credentials. Follow Strava's current API terms and
   application-capacity requirements.
-2. For iPhone, set the application's **Authorization Callback Domain** to
-  `strava`. The app uses the callback
-  `com.fradone.runalytics://strava/callback` with Apple's native browser
+2. Set the application's **Authorization Callback Domain** to `localhost`.
+  On iPhone, the app uses the callback
+  `com.fradone.runalytics://localhost/strava/callback` with Apple's native browser
   authentication session. macOS opens the system browser and uses a temporary
   `http://127.0.0.1:<port>/strava/callback`; Strava whitelists the loopback host.
 3. In **Settings > Strava**, save the Client ID and Client Secret, then select

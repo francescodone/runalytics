@@ -70,7 +70,86 @@ pub fn build(
         return (splits_as_laps(&splits), splits);
     };
     let details = session::details_for_plan(workout, plan);
-    let planned_m = details.distance_m();
+    build_from_slots(points, activity, slots(&details.steps), tolerance)
+}
+
+pub fn build_completed(
+    points: &[TrackPoint],
+    activity: &Activity,
+    notes: &str,
+    tolerance: f64,
+) -> (Vec<LapSlice>, Vec<KmSplit>) {
+    build_from_slots(points, activity, saved_slots(notes), tolerance)
+}
+
+fn saved_slots(notes: &str) -> Option<Vec<Slot>> {
+    fn distance(value: &str) -> Option<(f64, &str)> {
+        let (number, rest) = value.split_once(' ')?;
+        let number: f64 = number.parse().ok()?;
+        let (unit, label) = rest.split_once(' ')?;
+        let meters = number * match unit { "km" => 1000.0, "m" => 1.0, _ => return None };
+        (meters.is_finite() && meters > 0.0).then_some((meters, label))
+    }
+    fn pace(value: &str) -> Option<i64> {
+        let (minutes, seconds) = value.split_once(':')?;
+        let minutes: i64 = minutes.parse().ok()?;
+        let seconds: i64 = seconds.parse().ok()?;
+        (minutes >= 0 && (0..60).contains(&seconds))
+            .then_some(minutes.checked_mul(60)?.checked_add(seconds)?)
+            .filter(|pace| *pace > 0)
+    }
+    let body = notes.split_once("\n\nPlan:\n")?.1.split("\n\n").next()?;
+    let mut output = Vec::new();
+    for line in body.lines() {
+        let line = line.trim().strip_prefix("• ").or_else(|| line.trim().strip_prefix("- "))?;
+        let (repeats, line) = match line.split_once(" × ") {
+            Some((count, rest)) => (count.parse::<usize>().ok()?, rest),
+            None => (1, line),
+        };
+        if !(1..=100).contains(&repeats) { return None; }
+        let (meters, rest) = distance(line)?;
+        let (work, recovery) = match rest.split_once(" + ") {
+            Some((work, recovery)) => {
+                let (meters, label) = distance(recovery)?;
+                if label != "recovery" { return None; }
+                (work, Some(meters))
+            }
+            None => (rest, None),
+        };
+        let (label, kind, band) = if let Some((label, _)) = work.split_once(", no faster than ") {
+            (label, LapKind::Easy, (None, None))
+        } else if let Some((label, range)) = work.split_once(" at ") {
+            let (low, high) = range.strip_suffix("/km")?.split_once('-')?;
+            let (low, high) = (pace(low)?, pace(high)?);
+            if high < low { return None; }
+            (label, LapKind::Work, (Some(low), Some(high)))
+        } else {
+            (work, LapKind::Easy, (None, None))
+        };
+        if label.is_empty() { return None; }
+        for rep in 0..repeats {
+            output.push(Slot { label: label.into(), kind, meters, band });
+            if rep + 1 < repeats {
+                if let Some(meters) = recovery {
+                    output.push(Slot { label: "Recovery".into(), kind: LapKind::Recovery, meters, band: (None, None) });
+                }
+            }
+        }
+    }
+    (!output.is_empty()).then_some(output)
+}
+
+fn build_from_slots(
+    points: &[TrackPoint],
+    activity: &Activity,
+    slots: Option<Vec<Slot>>,
+    tolerance: f64,
+) -> (Vec<LapSlice>, Vec<KmSplit>) {
+    let splits = kilometre_splits(points);
+    let Some(slots) = slots else {
+        return (splits_as_laps(&splits), splits);
+    };
+    let planned_m: f64 = slots.iter().map(|slot| slot.meters).sum();
     let run_m = activity.distance_m;
     // The layout is only trustworthy when the recorded run is the session that
     // was planned. Same tolerance the grading uses, so the chart and the
@@ -78,9 +157,6 @@ pub fn build(
     if planned_m <= 0.0 || run_m <= 0.0 || !distance_ratio_ok(run_m / planned_m) {
         return (splits_as_laps(&splits), splits);
     }
-    let Some(slots) = slots(&details.steps) else {
-        return (splits_as_laps(&splits), splits);
-    };
     let scale = run_m / planned_m;
     let laps = prescribed_laps(points, &slots, scale, tolerance);
     if laps.is_empty() {
@@ -95,16 +171,27 @@ pub fn insight_laps(
     activity: &Activity,
     plan: &TrainingPlan,
     workout: &PlanWorkout,
+    original_notes: &str,
 ) -> Vec<LapSlice> {
-    let details = session::details_for_plan(workout, plan);
-    let planned_m = details.distance_m();
+    let slots = if original_notes.trim().is_empty() {
+        slots(&session::details_for_plan(workout, plan).steps)
+    } else {
+        saved_slots(original_notes)
+    };
+    let Some(slots) = slots else {
+        return Vec::new();
+    };
+    let planned_m: f64 = slots.iter().map(|slot| slot.meters).sum();
     if planned_m <= 0.0 || !distance_ratio_ok(activity.distance_m / planned_m) {
         return Vec::new();
     }
-    let Some(slots) = slots(&details.steps) else {
-        return Vec::new();
-    };
     completed_insight_laps(points, &slots)
+}
+
+pub fn completed_work_reps(notes: &str) -> Option<usize> {
+    Some(saved_slots(notes)?.iter().filter(|slot| {
+        slot.kind == LapKind::Work && slot.band.0.is_some() && slot.band.1.is_some()
+    }).count())
 }
 
 fn completed_insight_laps(points: &[TrackPoint], slots: &[Slot]) -> Vec<LapSlice> {
@@ -459,6 +546,29 @@ mod tests {
             meters,
             band,
         }
+    }
+
+    #[test]
+    fn completed_progressive_prescription_controls_execution_targets() {
+        let notes = "Brand\n\nPlan:\n  • 2.0 km Warm-up, no faster than 4:38/km, at conversational pace; a limit, not a target: slower is fine, and often better\n  • 1.0 km Tempo at 4:13-4:23/km\n  • 1.0 km Tempo at 3:58-4:08/km\n  • 2.0 km Tempo at 3:48-3:58/km\n  • 1.0 km Cool-down, no faster than 4:38/km, at conversational pace; a limit, not a target: slower is fine, and often better\n\nWhy: Progressive blocks.";
+        let points = track(&[(2000.0, 290.0), (1000.0, 258.0), (1000.0, 243.0), (2000.0, 233.0), (1000.0, 295.0)]);
+        let (laps, splits) = build_completed(&points, &run(7000.0), notes, 0.0);
+        assert_eq!(laps.len(), 5);
+        assert_eq!(laps.iter().map(|lap| lap.band_lo_s_km).collect::<Vec<_>>(), vec![None, Some(253), Some(238), Some(228), None]);
+        assert_eq!(laps.iter().map(|lap| lap.band_hi_s_km).collect::<Vec<_>>(), vec![None, Some(263), Some(248), Some(238), None]);
+        assert_eq!(laps[1].label, "Tempo");
+        assert!((laps[1].start_m - 2000.0).abs() < 0.1);
+        assert!((laps[3].meters - 2000.0).abs() < 1.0);
+        assert_eq!(laps[1].verdict, Some(LapVerdict::InRange));
+        assert_eq!(splits.len(), 7);
+        for invalid in ["unrecognized", &notes.replace("4:13-4:23", "4:99-4:23"), &notes.replace("1.0 km Tempo", "invalid Tempo")] {
+            let (fallback, _) = build_completed(&points, &run(7000.0), invalid, 0.0);
+            assert!(fallback.iter().all(|lap| lap.band_lo_s_km.is_none() && lap.verdict.is_none()));
+        }
+        let repeated = "Brand\n\nPlan:\n  • 4 × 750 m Controlled threshold at 3:48-3:58/km + 195 m recovery\n\nWhy: Controlled.";
+        let saved = saved_slots(repeated).unwrap();
+        assert_eq!(saved.len(), 7);
+        assert_eq!(saved[1].kind, LapKind::Recovery);
     }
 
     /// `repeats` x 1 km at 4:40-4:50/km with `recovery_m` of jog recovery.

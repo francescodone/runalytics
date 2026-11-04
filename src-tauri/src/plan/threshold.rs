@@ -946,7 +946,11 @@ pub fn wearable_evidence(
                     })
                     .sum(),
             );
-            for lap in crate::laps::insight_laps(&points, run, plan, workout) {
+            let original_notes = completions.iter()
+                .find(|(_, activity_id, _)| *activity_id == run.id)
+                .map(|entry| entry.2.as_str())
+                .unwrap_or_default();
+            for lap in crate::laps::insight_laps(&points, run, plan, workout, original_notes) {
                 repetitions.push(Repetition {
                     duration_s: lap.duration_s,
                     pace_s_km: lap.avg_pace_s_km,

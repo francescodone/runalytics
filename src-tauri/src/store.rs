@@ -1446,11 +1446,16 @@ impl Store {
     }
 
     pub fn set_completion_notes(&self, workout_id: &str, notes: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE calendar_completions SET original_notes=?2 WHERE workout_id=?1",
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE calendar_completions SET original_notes=?2 WHERE workout_id=?1 AND original_notes<>?2",
             params![workout_id, notes],
         )?;
+        if changed > 0 {
+            tx.execute(Self::REV_BUMP, params![workout_id])?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

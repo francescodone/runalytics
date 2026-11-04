@@ -38,6 +38,13 @@ export const deskFixture = `(function () {
   window.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
     window.__deskCalls.push({command:cmd, args});
     if (cmd === window.__deskFail) throw new Error('Unable to save right now');
+    if (cmd === 'plugin:updater|check') return window.__deskNoUpdate ? null : {rid:73,currentVersion:'0.25.0',version:'0.26.0'};
+    if (cmd === 'plugin:updater|download_and_install') {
+      window.__deskUpdateEvent = event => args.onEvent.onmessage(event);
+      await new Promise((resolve, reject) => { window.__deskFinishUpdate = resolve; window.__deskRejectUpdate = () => reject(new Error('Installation failed')); });
+      return null;
+    }
+    if (cmd === 'plugin:process|restart') return null;
     if (cmd === 'strava_status') return {...deskStrava};
     if (cmd === 'strava_configure') { deskStrava={...deskStrava,configured:true,clientId:args.clientId}; return {...deskStrava}; }
     if (cmd === 'strava_connect') { if (window.__deskHoldStrava) await new Promise((resolve,reject) => { window.__deskCancelStrava=() => reject(new Error('Strava sign-in was cancelled.')); }); deskStrava={...deskStrava,connected:true,athleteId:42,enabled:false,pending:2}; return {...deskStrava}; }

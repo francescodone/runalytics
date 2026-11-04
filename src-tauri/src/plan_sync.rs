@@ -272,6 +272,8 @@ struct CompletionWire {
     /// That provider's id for the run — identical on every device that synced
     /// the same watch, which is what makes the pairing portable.
     record_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_notes: Option<String>,
 }
 
 impl PlanWire {
@@ -879,6 +881,7 @@ async fn sync_channel(state: &AppState, mut config: PlanSync, token: &str, sub: 
     // Pair each done session with the run that completed it, named by the
     // provider's record id so the other device can resolve the same activity.
     let records = state.store.calendar_completion_records()?;
+    let completed_notes = state.store.calendar_completions()?;
     let completion_of = |workout: &PlanWorkout| -> Option<CompletionWire> {
         records
             .iter()
@@ -886,6 +889,10 @@ async fn sync_channel(state: &AppState, mut config: PlanSync, token: &str, sub: 
             .map(|(_, provider, record_id)| CompletionWire {
                 provider: provider.clone(),
                 record_id: record_id.clone(),
+                original_notes: completed_notes.iter()
+                    .find(|(workout_id, _, _)| workout_id == &workout.id)
+                    .map(|(_, _, notes)| notes.clone())
+                    .filter(|notes| !notes.trim().is_empty()),
             })
     };
 
@@ -1143,7 +1150,10 @@ async fn install_snapshot(
         let Some(workout) = workouts.iter().find(|w| w.id == wire.id) else {
             continue;
         };
-        let notes = crate::calendar::workout_notes(workout, &incoming);
+        let notes = completion.original_notes.as_deref()
+            .filter(|notes| !notes.trim().is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::calendar::workout_notes(workout, &incoming));
         if let Err(error) = state
             .store
             .complete_calendar_workout(&wire.id, activity_id, &notes)
@@ -1537,6 +1547,57 @@ mod tests {
             }
         });
         (api, snapshot, requests, server)
+    }
+
+    #[tokio::test]
+    async fn completed_prescription_survives_sync_restart_and_legacy_import() {
+        let state = device();
+        let mut blob = wire();
+        let original = "Made with Runalytics - a virtual personal vibecoded coach 🏃\n\n🏃 Slow Burn (total 7.0 km)\n\nPlan:\n  • 2.0 km Warm-up\n  • 1.0 km Tempo at 4:13-4:23/km\n  • 1.0 km Tempo at 3:58-4:08/km\n  • 2.0 km Tempo at 3:48-3:58/km\n  • 1.0 km Cool-down\n\nWhy: Progressive blocks.";
+        blob.workouts[0].completion = Some(CompletionWire {
+            provider: "coros".into(),
+            record_id: "completed-run".into(),
+            original_notes: Some(original.into()),
+        });
+        blob.workouts[0].done = true;
+        state.store.conn.lock().unwrap().execute(
+            "INSERT INTO activities(provider,provider_record_id,sport,start_ts,duration_s,distance_m) VALUES('coros','completed-run','running',1793032200,1820,7020)",
+            [],
+        ).unwrap();
+        let sealed = seal("synthetic-account", &serde_json::to_vec(&blob).unwrap()).unwrap();
+        let (api, content, _, server) = fake_gist(sealed, 200).await;
+        let config = PlanSync { enabled: true, gist_id: Some("channel".into()), ..Default::default() };
+        let installed = sync_channel(&state, config, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        crate::calendar::adopt_naming(&state.store).unwrap();
+        assert_eq!(state.store.calendar_completions().unwrap()[0].2, original);
+        let previous_rev = state.store.current_plan_rev().unwrap();
+        let corrected = original.replace("Progressive blocks.", "Progressive blocks, controlled not raced.");
+        state.store.set_completion_notes("w-1", &corrected).unwrap();
+        assert!(state.store.current_plan_rev().unwrap() > previous_rev);
+        let corrected_rev = state.store.current_plan_rev().unwrap();
+        state.store.set_completion_notes("w-1", &corrected).unwrap();
+        assert_eq!(state.store.current_plan_rev().unwrap(), corrected_rev);
+        let published = sync_channel(&state, installed, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let accepted = decode_snapshot("synthetic-account", &content.lock().unwrap()).unwrap().unwrap();
+        assert_eq!(accepted.workouts[0].completion.as_ref().unwrap().original_notes.as_deref(), Some(corrected.as_str()));
+        blob.rev += 100;
+        blob.workouts[0].completion.as_mut().unwrap().original_notes = None;
+        *content.lock().unwrap() = seal("synthetic-account", &serde_json::to_vec(&blob).unwrap()).unwrap();
+        sync_channel(&state, published, "synthetic-token", "synthetic-account", &api).await.unwrap();
+        let reopened = crate::store::Store::open(&state.data_dir.join("store.sqlite")).unwrap();
+        for _ in 0..3 {
+            crate::calendar::adopt_naming(&reopened).unwrap();
+            assert_eq!(reopened.calendar_completions().unwrap()[0].2, corrected);
+            let matched = crate::commands::matched_sessions_for_store(&reopened).unwrap();
+            assert_eq!(matched[0].purpose, "Progressive blocks, controlled not raced.");
+            assert!(matched[0].notes.contains("1.0 km Tempo at 4:13-4:23/km"));
+            assert!(!matched[0].notes.contains("Controlled threshold"));
+        }
+        let legacy: CompletionWire = serde_json::from_value(serde_json::json!({"provider":"coros","recordId":"completed-run"})).unwrap();
+        assert!(legacy.original_notes.is_none());
+        server.abort();
+        drop(reopened);
+        std::fs::remove_dir_all(state.data_dir).unwrap();
     }
 
     #[tokio::test]

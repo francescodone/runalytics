@@ -420,6 +420,12 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .settings-editor { max-width: 800px; margin: 0 auto; }.settings-editor > header { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-7) 0; }.settings-editor > header h2 { margin: 0; font-size: var(--text-page); }.settings-editor h3 { margin: var(--space-4) 0; }
 .settings-editor fieldset { border: 0; padding: var(--space-6) 0; margin: 0; border-top: 1px solid var(--desk-line); }.settings-editor legend { padding: 0 var(--space-2) 0 0; font-size: var(--text-body); font-weight: var(--weight-medium); }
 .settings-section { border-top: 1px solid var(--desk-line); margin-top: var(--section-gap); padding-top: var(--section-inset); }.settings-editor .form-actions { justify-content: flex-start; }.settings-editor form > .form-grid { margin: var(--section-inset) 0; }
+.about-settings { display: grid; gap: var(--section-inset); min-width: 0; }
+.about-settings h3, .about-settings p, .about-settings .form-actions { margin: 0; }
+.about-settings h3 { margin-bottom: var(--space-4); }
+.app-update { display: grid; gap: var(--space-5); min-width: 0; }
+.app-update progress { display: block; width: 100%; max-width: 32rem; height: var(--space-3); accent-color: var(--desk-action); }
+.app-update [role="status"] { overflow-wrap: anywhere; }
 .choice-row { display: flex; flex-wrap: wrap; gap: var(--control-gap); padding: var(--space-1); border: var(--control-border) solid var(--glass-border); border-radius: var(--radius-panel); background: var(--desk-soft); }
 .choice-row label, .palette-options label, .toggle-setting { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-size); }
 .choice-row label { flex: 1; justify-content: center; padding: var(--space-2); border-radius: var(--radius-control); cursor: pointer; color: var(--desk-muted); }

@@ -299,17 +299,26 @@ function About() {
   const [message, setMessage] = useState("");
   const [progress, setProgress] = useState<number | null>(null);
   const desktop = inTauri && !/iPhone|iPad|iPod/.test(navigator.userAgent);
-  return <><h3>Runalytics {__APP_VERSION__}</h3><p className="muted">Training analytics for runners.</p><ErrorNotice error={command.error} />{desktop && <Button tone="primary" busy={command.busy} onClick={() => void command.run(async () => {
+  return <div className="about-settings"><div><h3>Runalytics {__APP_VERSION__}</h3><p className="muted">Training analytics for runners.</p></div><ErrorNotice error={command.error} />{desktop && <div className="app-update"><div className="form-actions"><Button tone="primary" busy={command.busy} onClick={() => void command.run(async () => {
     if (!pending) { const update = await check(); setPending(update); setMessage(update ? `${update.version} is available. Installing will restart Runalytics.` : `You are on the latest version (${__APP_VERSION__}).`); return; }
     let bytes = 0;
     let total = 0;
-    await pending.downloadAndInstall(event => {
-      if (event.event === "Started") total = event.data.contentLength ?? 0;
-      if (event.event === "Progress") { bytes += event.data.chunkLength; setProgress(total ? bytes / total * 100 : null); }
-      if (event.event === "Finished") setMessage("Installed. Restarting...");
-    });
+    setProgress(null);
+    setMessage("Downloading update...");
+    try {
+      await pending.downloadAndInstall(event => {
+        if (event.event === "Started") total = event.data.contentLength ?? 0;
+        if (event.event === "Progress") { bytes += event.data.chunkLength; setProgress(total ? bytes / total * 100 : null); }
+        if (event.event === "Finished") setMessage("Download complete. Installing...");
+      });
+      setMessage("Installed. Restarting...");
+    } catch (error) {
+      setProgress(null);
+      setMessage("Update not installed. Try again or browse releases.");
+      throw error;
+    }
     await relaunch();
-  })}>{pending ? `Install ${pending.version} and restart` : "Check for updates"}</Button>}{progress != null && <progress value={progress} max={100} aria-label="Update download" />}{message && <p role="status">{message}</p>}<div className="form-actions"><Button onClick={() => void command.run(() => openUrl("https://github.com/francescodone/runalytics/releases"))}>Browse releases</Button></div></>;
+  })}>{pending ? `Install ${pending.version} and restart` : "Check for updates"}</Button></div>{(progress != null || (command.busy && pending)) && <progress value={progress ?? undefined} max={100} aria-label="Update download" />}{message && <p role="status">{message}</p>}</div>}<div className="form-actions"><Button onClick={() => void command.run(() => openUrl("https://github.com/francescodone/runalytics/releases"))}>Browse releases</Button></div></div>;
 }
 
 export function Help() {

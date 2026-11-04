@@ -227,6 +227,9 @@ pub fn adopt_naming(store: &Store) -> Result<()> {
     };
     let completions = store.calendar_completions()?;
     for workout in workouts {
+        if completions.iter().any(|entry| entry.0 == workout.id && !entry.2.trim().is_empty()) {
+            continue;
+        }
         let mut workout = workout;
         if let Some(title) = session::title_for_plan(&workout, &plan) {
             workout.title = title;
@@ -986,6 +989,51 @@ mod tests {
         store.insert_plan(&plan).unwrap();
         store.insert_workouts(&workouts).unwrap();
         (store, plan, workouts)
+    }
+
+    #[test]
+    fn naming_preserves_completed_prescription_across_training_method_changes() {
+        let (store, _, workouts) = fixture();
+        let workout = &workouts[0];
+        let activity_id = insert_run(&store, workout, "running", "preserved-prescription");
+        let original = format!("{BRAND}\n\n{RUN_EMOJI} Slow Burn (total 7.0 km)\n\nPlan:\n  • 2.0 km Warm-up\n  • 1.0 km Tempo at 4:13-4:23/km\n  • 1.0 km Tempo at 3:58-4:08/km\n  • 2.0 km Tempo at 3:48-3:58/km\n  • 1.0 km Cool-down\n\nWhy: Progressive blocks.");
+        store.conn.lock().unwrap().execute(
+            "INSERT INTO calendar_completions(workout_id,activity_id,original_notes) VALUES(?1,?2,?3)",
+            rusqlite::params![workout.id, activity_id, original],
+        ).unwrap();
+        adopt_naming(&store).unwrap();
+        adopt_naming(&store).unwrap();
+        assert_eq!(store.calendar_completions().unwrap()[0].2, original);
+        let event = events(&store).unwrap().into_iter().find(|event| event.activity_id == Some(activity_id)).unwrap();
+        assert!(event.notes.starts_with(&original));
+        assert_eq!(event.notes.matches(BRAND).count(), 1);
+        let matched = crate::commands::matched_sessions_for_store(&store).unwrap();
+        let session = matched.iter().find(|session| session.activity_id == activity_id).unwrap();
+        assert_eq!(session.notes, event.notes);
+        assert_eq!(session.purpose, "Progressive blocks.");
+        assert!(!session.title.starts_with(RUN_EMOJI));
+        {
+            let mut conn = store.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute("UPDATE activities SET distance_m=7000 WHERE id=?1", [activity_id]).unwrap();
+            for index in 0..=350 {
+                tx.execute("INSERT INTO trackpoints(activity_id,ts,lat,lon) VALUES(?1,?2,?3,?4)", rusqlite::params![
+                    activity_id, index * 5, 32.7 + index as f64 * 20.0 / 111_320.0, -96.8,
+                ]).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        for retired in [false, true] {
+            if retired {
+                store.conn.lock().unwrap().execute("UPDATE training_plans SET status='completed'", []).unwrap();
+            }
+            let review = crate::commands::activity_review_for_store(&store, activity_id, 0.0).unwrap();
+            assert!(review.prescribed);
+            assert_eq!(review.workout_id.as_deref(), Some(workout.id.as_str()));
+            assert_eq!(review.laps.len(), 5);
+            assert_eq!(review.laps.iter().map(|lap| lap.band_lo_s_km).collect::<Vec<_>>(), vec![None, Some(253), Some(238), Some(228), None]);
+            assert_eq!(review.laps.iter().map(|lap| lap.band_hi_s_km).collect::<Vec<_>>(), vec![None, Some(263), Some(248), Some(238), None]);
+        }
     }
 
     #[test]

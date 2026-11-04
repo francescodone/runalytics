@@ -520,9 +520,14 @@ pub fn adaptation_edits(
 pub fn adaptation_reviews(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Vec<SessionReview>> {
     let insights = insights_with_limit(store, plan, LOOKBACK)?;
     let workouts = store.plan_workouts(&plan.id)?;
+    let completions = store.calendar_completions()?;
     let mut reviews: Vec<_> = insights.speed.into_iter().filter(|session| !session.outdated).filter(|insight| {
         let Some(workout) = workouts.iter().find(|workout| workout.id == insight.workout_id) else { return false };
-        let expected: u32 = session::details_for_plan(workout, plan).steps.iter().filter(|step| !step.open_ended && step.pace_lo_s_km.is_some()).map(|step| step.repeats.max(1)).sum();
+        let saved = completions.iter().find(|entry| entry.0 == workout.id).map(|entry| entry.2.as_str()).filter(|notes| !notes.trim().is_empty());
+        let expected = match saved {
+            Some(notes) => crate::laps::completed_work_reps(notes).unwrap_or(0),
+            None => session::details_for_plan(workout, plan).steps.iter().filter(|step| !step.open_ended && step.pace_lo_s_km.is_some()).map(|step| step.repeats.max(1) as usize).sum(),
+        };
         expected > 0 && insight.reps.len() as f64 / expected as f64 >= 0.8
     }).map(|session| {
         let total = session.reps.len() as f64;
@@ -724,7 +729,7 @@ fn insights_with_limit(store: &Store, plan: &TrainingPlan, limit: usize) -> Resu
             continue;
         };
         let points = store.track_points(activity.id, crate::laps::TRACK_POINTS)?;
-        let reps: Vec<_> = crate::laps::insight_laps(&points, &activity, plan, workout)
+        let reps: Vec<_> = crate::laps::insight_laps(&points, &activity, plan, workout, &entry.2)
             .into_iter()
             .filter_map(insight_rep)
             .collect();
@@ -940,6 +945,29 @@ mod tests {
             &crate::calendar::workout_notes(workout, plan),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn insights_preserve_completed_progressive_targets_after_plan_changes() {
+        let store = store();
+        let (mut plan, workouts) = plan_with_quality(&store, &[1]);
+        let workout = &workouts[0];
+        let activity_id = synthetic_track(&store, "progressive-history", workout.date, 7000.0, 250.0, None);
+        let notes = "Brand\n\nPlan:\n  • 2.0 km Warm-up, no faster than 4:38/km\n  • 1.0 km Tempo at 4:13-4:23/km\n  • 1.0 km Tempo at 3:58-4:08/km\n  • 2.0 km Tempo at 3:48-3:58/km\n  • 1.0 km Cool-down, no faster than 4:38/km\n\nWhy: Progressive blocks.";
+        store.complete_calendar_workout(&workout.id, activity_id, notes).unwrap();
+        plan.training_method = TrainingMethod::Norwegian;
+        plan.quality_offset_sec_km = -10.0;
+        let report = insights(&store, &plan).unwrap();
+        let session = report.speed.iter().find(|session| session.activity_id == activity_id).unwrap();
+        assert_eq!(session.reps.len(), 3);
+        assert_eq!(session.reps.iter().map(|rep| rep.index).collect::<Vec<_>>(), vec![2, 3, 4]);
+        assert_eq!(session.reps.iter().map(|rep| (rep.band_lo_s_km, rep.band_hi_s_km)).collect::<Vec<_>>(), vec![(253, 263), (238, 248), (228, 238)]);
+        assert!(session.reps[0].relative_pace > 1.0);
+        assert!(session.reps[1].relative_pace < -1.0);
+        assert!(session.reps[2].relative_pace < -1.0);
+        assert_eq!(adaptation_reviews(&store, &plan, &Thresholds::default()).unwrap().len(), 1);
+        store.set_completion_notes(&workout.id, "Unrecognized historical notes").unwrap();
+        assert!(insights(&store, &plan).unwrap().speed.is_empty());
     }
 
     #[test]

@@ -4,6 +4,63 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const width of [320, 820, 1440]) for (const theme of ["light", "dark"]) {
+  test(`desktop updater keeps progress and feedback spaced ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`/desk.html?theme=${theme}#settings/about`);
+    await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+    const install = page.getByRole("button", { name: "Install 0.26.0 and restart", exact: true });
+    await expect(install).toBeEnabled();
+    await install.click();
+    await expect(install).toBeDisabled();
+    await page.evaluate(() => {
+      window.__deskUpdateEvent({ event: "Started", data: { contentLength: 100 } });
+      window.__deskUpdateEvent({ event: "Progress", data: { chunkLength: 50 } });
+    });
+    const progress = page.getByRole("progressbar", { name: "Update download" });
+    await expect(progress).toHaveAttribute("value", "50");
+    const actionBox = await install.boundingBox();
+    const progressBox = await progress.boundingBox();
+    const status = page.locator(".app-update [role=status]");
+    const statusBox = await status.boundingBox();
+    const releasesBox = await page.getByRole("button", { name: "Browse releases" }).boundingBox();
+    expect(progressBox.y - actionBox.y - actionBox.height).toBeGreaterThanOrEqual(12);
+    expect(statusBox.y - progressBox.y - progressBox.height).toBeGreaterThanOrEqual(12);
+    expect(releasesBox.y - statusBox.y - statusBox.height).toBeGreaterThanOrEqual(16);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.evaluate(() => window.__deskUpdateEvent({ event: "Finished" }));
+    await expect(status).toHaveText("Download complete. Installing...");
+    expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "plugin:process|restart"))).toBe(false);
+    expect((await new AxeBuilder({ page }).include(".settings-editor").analyze()).violations).toEqual([]);
+    await page.screenshot({ path: test.info().outputPath(`updater-${width}-${theme}.png`), fullPage: true });
+    await page.evaluate(() => window.__deskFinishUpdate());
+    await expect(status).toHaveText("Installed. Restarting...");
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "plugin:process|restart"))).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("desktop updater failures clear stale progress and allow retry", async ({ page }) => {
+  await page.goto("/desk.html#settings/about");
+  await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+  const install = page.getByRole("button", { name: "Install 0.26.0 and restart", exact: true });
+  await install.click();
+  await page.evaluate(() => {
+    window.__deskUpdateEvent({ event: "Started", data: { contentLength: 100 } });
+    window.__deskUpdateEvent({ event: "Progress", data: { chunkLength: 50 } });
+    window.__deskRejectUpdate();
+  });
+  await expect(page.getByRole("progressbar", { name: "Update download" })).toHaveCount(0);
+  await expect(page.locator(".app-update [role=status]")).toHaveText("Update not installed. Try again or browse releases.");
+  await expect(install).toBeEnabled();
+  await install.click();
+  await expect(page.getByRole("progressbar", { name: "Update download" })).not.toHaveAttribute("value");
+  await page.evaluate(() => window.__deskFinishUpdate());
+  await expect(page.locator(".app-update [role=status]")).toHaveText("Installed. Restarting...");
+});
+
 test.describe("plan freshness", () => {
   test("failed checks retry without overwriting the visible plan and remote endings clear it", async ({ page }) => {
     await page.clock.install();

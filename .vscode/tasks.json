@@ -161,6 +161,38 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify completed prescription persistence",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline completed_prescription && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline plan_sync::tests && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Build repaired desktop",
+			"type": "shell",
+			"command": "npx tauri build --debug --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Verify historical session execution",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline laps::tests && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline completed_prescription && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify historical pace insights",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline plan::pacing::tests && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline laps::tests && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

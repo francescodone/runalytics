@@ -591,37 +591,45 @@ pub async fn activity_review(
     state: State<'_, AppState>,
     activity_id: i64,
 ) -> Result<ActivityReview> {
-    let activity = state
-        .store
+    activity_review_for_store(&state.store, activity_id, thresholds(&state).pace_tolerance_sec_km)
+}
+
+pub(crate) fn activity_review_for_store(
+    store: &crate::store::Store,
+    activity_id: i64,
+    tolerance: f64,
+) -> Result<ActivityReview> {
+    let activity = store
         .activity_by_id(activity_id)?
         .ok_or_else(|| AppError::Other(format!("activity {activity_id} not found")))?;
-    let points = state.store.track_points(activity_id, laps::TRACK_POINTS)?;
-    let th = thresholds(&state);
+    let points = store.track_points(activity_id, laps::TRACK_POINTS)?;
+    let completion = store.calendar_completions()?.into_iter().find(|entry| entry.1 == activity_id);
     // The plan session this run stands for, if the calendar linked them.
-    let prescribed = state.store.current_plan()?.and_then(|(plan, workouts)| {
-        let workout_id = state
-            .store
-            .calendar_completions()
-            .ok()?
-            .into_iter()
-            .find(|c| c.1 == activity_id)
-            .map(|c| c.0)?;
-        let workout = workouts.into_iter().find(|w| w.id == workout_id)?;
-        Some((plan, workout, workout_id))
-    });
-    let (laps, splits) = match &prescribed {
-        Some((plan, workout, _)) => laps::build(
+    let prescribed = if completion.as_ref().is_some_and(|entry| !entry.2.trim().is_empty()) {
+        None
+    } else {
+        store.current_plan()?.and_then(|(plan, workouts)| {
+            let workout_id = &completion.as_ref()?.0;
+            let workout = workouts.into_iter().find(|workout| &workout.id == workout_id)?;
+            Some((plan, workout))
+        })
+    };
+    let (laps, splits) = match (&completion, &prescribed) {
+        (Some((_, _, notes)), _) if !notes.trim().is_empty() => laps::build_completed(
+            &points, &activity, notes, tolerance,
+        ),
+        (_, Some((plan, workout))) => laps::build(
             &points,
             &activity,
             Some((plan, workout)),
-            th.pace_tolerance_sec_km,
+            tolerance,
         ),
-        None => laps::build(&points, &activity, None, th.pace_tolerance_sec_km),
+        _ => laps::build(&points, &activity, None, tolerance),
     };
     Ok(ActivityReview {
         has_track: !points.is_empty(),
         track: points,
-        workout_id: prescribed.as_ref().map(|p| p.2.clone()),
+        workout_id: completion.as_ref().map(|entry| entry.0.clone()),
         // "Prescribed" in the UI means "there are target caps to read
         // against", which is a property of the laps, not of the lookup
         // succeeding — a fallback layout must not claim targets it lacks.
@@ -687,24 +695,24 @@ pub struct MatchedSession {
 
 #[tauri::command]
 pub async fn matched_sessions(state: State<'_, AppState>) -> Result<Vec<MatchedSession>> {
-    let Some((plan, workouts)) = state.store.current_plan()? else {
-        return Ok(Vec::new());
-    };
-    let workout_by_id: std::collections::HashMap<String, PlanWorkout> = workouts
+    matched_sessions_for_store(&state.store)
+}
+
+pub(crate) fn matched_sessions_for_store(store: &crate::store::Store) -> Result<Vec<MatchedSession>> {
+    Ok(calendar::events(store)?
         .into_iter()
-        .map(|workout| (workout.id.clone(), workout))
-        .collect();
-    Ok(state
-        .store
-        .calendar_completions()?
-        .into_iter()
-        .filter_map(|(workout_id, activity_id, _)| {
-            let workout = workout_by_id.get(&workout_id)?;
+        .filter_map(|event| {
+            event.workout_id.as_ref()?;
+            let activity_id = event.activity_id?;
+            let purpose = event.notes
+                .split_once("\n\nWhy:")
+                .map(|(_, rest)| rest.split("\n\n").next().unwrap_or_default().trim().to_string())
+                .unwrap_or_default();
             Some(MatchedSession {
                 activity_id,
-                title: workout.title.clone(),
-                purpose: calendar::workout_purpose(workout, &plan),
-                notes: calendar::workout_notes(workout, &plan),
+                title: event.title.strip_prefix("🏃 ").unwrap_or(&event.title).to_string(),
+                purpose,
+                notes: event.notes,
             })
         })
         .collect())
