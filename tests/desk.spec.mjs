@@ -2220,7 +2220,7 @@ test("calendar settings never publish on read and retain blank credentials and s
   await expect(page.getByText("synthetic-account-channel", {exact:true})).toBeVisible();
 });
 
-test("connection transfer QR encrypts credentials and requires review before paused import", async ({page}) => {
+test("connection transfer QR encrypts credentials and enables device sync after review", async ({page}) => {
   await page.goto("/desk.html?calendarReady=1#settings/transfer");
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "export_connection_settings"))).toBe(false);
   await page.getByRole("button", {name:"Create transfer QR", exact:true}).click();
@@ -2273,7 +2273,9 @@ test("connection transfer QR encrypts credentials and requires review before pau
   const calls=await page.evaluate(() => window.__deskCalls);
   expect(calls.find(call => call.command === "save_calendar_publishing").args.password).toBe("synthetic-calendar-secret");
   expect(calls.find(call => call.command === "save_calendar_publishing").args.config.enabled).toBe(false);
-  expect(calls.filter(call => call.command === "plan_sync_configure").at(-1).args).toEqual({config:{enabled:false},token:"synthetic-github-token"});
+  const syncCalls=calls.filter(call => call.command === "plan_sync_configure");
+  expect(syncCalls.at(-2).args).toEqual({config:{enabled:false},token:"synthetic-github-token"});
+  expect(syncCalls.at(-1).args).toEqual({config:{enabled:true},token:null});
   expect(calls.find(call => call.command === "strava_configure").args).toEqual({clientId:"12345",clientSecret:"synthetic-strava-secret"});
   expect(calls.find(call => call.command === "set_llm_api_key").args).toEqual({key:"synthetic-assistant-secret"});
   const importedSettings=calls.find(call=>call.command==="save_settings").args.settings;
