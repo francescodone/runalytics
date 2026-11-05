@@ -1,3 +1,15 @@
+## Mobile Shell Safe Areas, 2026-11-05
+
+The compact workspace and topbar share a 48px corner radius. The topbar glass
+extends to the viewport edge and the navigation island sits lower while retaining
+some clearance for the bottom safe area. Reduced-transparency fallback stays opaque.
+The production build passed. Synthetic-IPC Chromium checks passed for 41 of 42
+selected cases, including route layouts at 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light/dark, plus compact
+navigation and topbar behavior. A 34px bottom inset was simulated; native iPhone
+rendering and home-indicator interaction were not tested. The 200% text check at
+320px failed on plan roadmap row overflow; 820px and 1440px passed.
+
 ## Notification Alignment, 2026-11-05
 
 Compact notifications keep their message and dismiss control vertically centered,

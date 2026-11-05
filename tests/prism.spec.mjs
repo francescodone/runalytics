@@ -1229,6 +1229,35 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
   });
 }
 
+test("Prism mobile shell follows safe-area geometry", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/desk.html#training/month");
+  await expect(page.locator(".month-board")).toBeVisible();
+  const geometry = await page.evaluate(() => {
+    const workspace = document.querySelector(".desk-workspace");
+    const header = document.querySelector(".desk-appbar");
+    const nav = document.querySelector(".desk-navigation");
+    const style = document.createElement("style");
+    style.textContent = ".desk-navigation { bottom: max(calc(2 * var(--space-2)), calc(34px - var(--space-5))) !important; }";
+    document.head.append(style);
+    const result = {
+      radius: getComputedStyle(workspace).borderTopLeftRadius,
+      headerRadius: getComputedStyle(header).borderTopLeftRadius,
+      blur: getComputedStyle(header, "::before").backdropFilter,
+      blurTop: header.getBoundingClientRect().top + parseFloat(getComputedStyle(header, "::before").top),
+      bottom: innerHeight - nav.getBoundingClientRect().bottom,
+    };
+    style.remove();
+    return result;
+  });
+  expect(geometry.radius).toBe("48px");
+  expect(geometry.headerRadius).toBe(geometry.radius);
+  expect(geometry.blur).toContain("blur(");
+  expect(geometry.blurTop).toBe(0);
+  expect(geometry.bottom).toBeGreaterThanOrEqual(4);
+  expect(geometry.bottom).toBeLessThan(34);
+});
+
 test("Prism mobile opaque topbar stays within the shell while scrolling", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 640 });
   await page.emulateMedia({ contrast: "more" });
