@@ -4,6 +4,468 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const reducedMotion of ["no-preference", "reduce"]) {
+  test(`appearance changes respect motion preference ${reducedMotion}`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion });
+    await page.addInitScript(() => {
+      const start = document.startViewTransition.bind(document);
+      window.__appearanceTransitions = 0;
+      document.startViewTransition = (...args) => {
+        window.__appearanceTransitions++;
+        return start(...args);
+      };
+    });
+    await page.goto("/desk.html?theme=light#settings/appearance");
+    await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
+    const initialTransitions = await page.evaluate(() => window.__appearanceTransitions);
+    await page.getByRole("radio", { name: "Dark", exact: true }).check();
+    await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
+    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (reducedMotion === "reduce" ? 0 : 1));
+    await page.getByRole("radio", { name: "Light", exact: true }).check();
+    await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "light");
+    await page.getByRole("radio", { name: "Raspberry Relay", exact: true }).check();
+    await expect(page.locator("html")).toHaveAttribute("data-desk-palette", "carnival");
+    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (reducedMotion === "reduce" ? 0 : 3));
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [320, 390, 820, 1440]) {
+    test(`calendar tile morph expands and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.goto(`/desk.html?theme=${theme}#training`);
+      if (width <= 800) await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
+      await page.locator(".session-tile:visible").first().evaluate(element => element.setAttribute("data-morph-source", ""));
+      const tile = page.locator("[data-morph-source]");
+      await expect(tile).toBeVisible();
+      await tile.scrollIntoViewIfNeeded();
+      const frames = await tile.evaluate(async element => {
+        const source = element.getBoundingClientRect().toJSON();
+        element.click();
+        const frames = [];
+        for (let index = 0; index < 32; index++) {
+          await new Promise(requestAnimationFrame);
+          const modal = document.querySelector('.desk-inspector[aria-label="Session"]');
+          if (modal) frames.push(modal.getBoundingClientRect().toJSON());
+        }
+        return { source, frames };
+      });
+      expect(frames.frames.length).toBeGreaterThan(10);
+      const first = frames.frames[0];
+      const last = frames.frames.at(-1);
+      expect(Math.abs(first.x - frames.source.x)).toBeLessThan(12);
+      expect(Math.abs(first.y - frames.source.y)).toBeLessThan(12);
+      expect(first.width).toBeLessThan(last.width * .9);
+      expect(first.height).toBeLessThan(last.height * .9);
+      await expect(tile).toHaveCSS("visibility", "hidden");
+      const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+      await expect(inspector).toBeFocused();
+      await expect(page.locator("#workspace")).toHaveCSS("overflow", "hidden");
+      await page.screenshot({ path: testInfo.outputPath("expanded-session.png") });
+      const closing = await inspector.evaluate(async element => {
+        const start = element.getBoundingClientRect().toJSON();
+        element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        const widths = [];
+        for (let index = 0; index < 24; index++) {
+          await new Promise(requestAnimationFrame);
+          if (element.isConnected) widths.push(element.getBoundingClientRect().width);
+        }
+        return { start, widths };
+      });
+      expect(closing.widths.some(value => value < closing.start.width * .9)).toBe(true);
+      await expect(inspector).toHaveCount(0);
+      await expect(tile).toHaveCSS("visibility", "visible");
+      await expect(tile).toBeFocused();
+      await expect(page.locator("#workspace")).not.toHaveCSS("overflow", "hidden");
+      await page.keyboard.press("Enter");
+      await expect(inspector).toBeFocused();
+      await inspector.getByRole("button", { name: "Close Session", exact: true }).click();
+      await expect(inspector).toHaveCount(0);
+      await expect(tile).toBeFocused();
+    });
+  }
+}
+
+test("calendar tile morph respects reduced motion and interrupted dismissal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/desk.html#training");
+  await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
+  await page.locator(".session-tile:visible").first().evaluate(element => element.setAttribute("data-morph-source", ""));
+  const tile = page.locator("[data-morph-source]");
+  await tile.click();
+  const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+  await expect(inspector).toHaveCSS("transform", "none");
+  await expect(tile).toHaveCSS("visibility", "visible");
+  await page.keyboard.press("Escape");
+  await expect(inspector).toHaveCount(0);
+  await expect(tile).toBeFocused();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await tile.evaluate(element => {
+    element.click();
+    requestAnimationFrame(() => document.querySelector('.desk-inspector[aria-label="Session"]')?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  });
+  await expect(inspector).toHaveCount(0);
+  await expect(tile).toHaveCSS("visibility", "visible");
+  await expect(tile).toBeFocused();
+});
+
+test.describe("calendar month touch morph", () => {
+  test.use({ hasTouch: true });
+  for (const width of [390, 1440]) {
+    test(`calendar tile morph month touch ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.goto("/desk.html#training/month");
+      if (width <= 800) await page.locator('.month-day:has(.session-tile) .month-number').first().tap();
+      await page.locator(".session-tile:visible").first().evaluate(element => element.setAttribute("data-morph-source", ""));
+      const tile = page.locator("[data-morph-source]");
+      await tile.tap();
+      const inspector = page.getByRole("dialog", { name: "Session", exact: true });
+      await expect(inspector).toBeFocused();
+      await expect(tile).toHaveCSS("visibility", "hidden");
+      await inspector.getByRole("button", { name: "Close Session", exact: true }).tap();
+      await expect(inspector).toHaveCount(0);
+      await expect(tile).toHaveCSS("visibility", "visible");
+      await expect(tile).toBeFocused();
+    });
+  }
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`plan cards remain inside their scroller on hover ${theme}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/desk.html?theme=${theme}#training/plan`);
+      const scroller = page.getByRole("region", { name: "Plan weeks" });
+      const row = scroller.locator(".roadmap-row").first();
+      await expect(row).toBeVisible();
+      for (const edge of ["left", "right"]) {
+        const bounds = await row.boundingBox();
+        await row.hover({ position: { x: edge === "left" ? 8 : bounds.width - 8, y: bounds.height / 2 } });
+        await expect(row).toHaveAttribute("data-aura-tracking", "true");
+        await expect.poll(() => row.evaluate(element => {
+          const card = element.getBoundingClientRect();
+          const container = element.closest(".plan-roadmap").getBoundingClientRect();
+          return Math.min(card.left - container.left, container.right - card.right);
+        })).toBeGreaterThanOrEqual(4);
+      }
+      await page.screenshot({ path: testInfo.outputPath(`plan-hover-${width}.png`) });
+    }
+  });
+
+  for (const width of [320, 1440]) test(`glass button borders follow pointer and press ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#settings/thresholds`);
+    const control = page.getByRole("button", { name: "Restore defaults", exact: true });
+    await expect(control).toBeVisible();
+    await page.mouse.move(0, 0);
+    const size = await control.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }));
+    const reflection = () => control.evaluate(element => {
+      const style = getComputedStyle(element, "::after");
+      return { image: style.backgroundImage, opacity: style.opacity, mask: style.maskComposite.split(", "), events: style.pointerEvents, padding: style.padding, inset: style.inset };
+    });
+    expect(await reflection()).toMatchObject({ opacity: "0", mask: ["exclude", "exclude"], events: "none", padding: "1px", inset: "-1px" });
+    await control.hover({ position: { x: 8, y: size.height / 2 } });
+    await expect.poll(async () => (await reflection()).opacity).toBe("0.8");
+    await expect(control).toHaveAttribute("data-aura-tracking", "true");
+    const first = await reflection();
+    expect(first.image).toContain("radial-gradient");
+    await expect.poll(() => control.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeLessThan(15);
+    await control.hover({ position: { x: size.width - 8, y: size.height / 2 } });
+    await expect.poll(() => control.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeGreaterThan(85);
+    expect((await reflection()).image).not.toBe(first.image);
+    await page.mouse.down();
+    await expect.poll(async () => (await reflection()).opacity).toBe("1");
+    await page.screenshot({ path: testInfo.outputPath("glass-rim-pressed.png") });
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await expect.poll(async () => (await reflection()).opacity).toBe("0");
+    expect(await control.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }))).toEqual(size);
+    await page.keyboard.press("Tab");
+    await control.focus();
+    await expect(control).toHaveCSS("outline-style", "solid");
+    await expect(control).toHaveCSS("--aura-x", "50%");
+    await expect(control).toHaveCSS("--aura-y", "50%");
+    await expect.poll(async () => (await reflection()).opacity).toBe("0.8");
+    await page.emulateMedia({ contrast: "more" });
+    expect(await control.evaluate(element => getComputedStyle(element, "::after").display)).toBe("none");
+    await expect(control).toHaveCSS("outline-style", "solid");
+    await page.emulateMedia({ contrast: "no-preference" });
+    await control.evaluate(element => element.blur());
+    await control.evaluate(element => { element.disabled = true; });
+    await control.hover();
+    expect(await control.evaluate(element => getComputedStyle(element, "::after").content)).toBe("none");
+  });
+
+  test(`glass buttons retain material and keyboard feedback ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#settings/thresholds`);
+    const control = page.getByRole("button", { name: "Restore defaults", exact: true });
+    const alpha = () => control.evaluate(element => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(element).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data[3] / 255;
+    });
+    await expect(control).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect.poll(alpha).toBeCloseTo(.64, 2);
+    await control.hover();
+    await expect.poll(alpha).toBeCloseTo(.76, 2);
+    await expect(control).toHaveCSS("backdrop-filter", /blur\(12px\)/);
+    const hoveredShadow = await control.evaluate(element => getComputedStyle(element).boxShadow);
+    await page.mouse.down();
+    await expect(control).toHaveCSS("scale", "0.98");
+    await expect.poll(alpha).toBeCloseTo(.88, 2);
+    await expect(control).not.toHaveCSS("box-shadow", hoveredShadow);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("Tab");
+    await control.focus();
+    await expect(control).toHaveCSS("outline-style", "solid");
+    await expect(control).toHaveCSS("transform", "none");
+    await control.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Restore training defaults?" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(control).toBeFocused();
+    await page.emulateMedia({ contrast: "more" });
+    await control.hover();
+    await expect.poll(alpha).toBe(1);
+    await expect(control).toHaveCSS("backdrop-filter", "none");
+    await page.emulateMedia({ contrast: "no-preference" });
+    await control.evaluate(element => element.blur());
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: testInfo.outputPath("glass-buttons.png") });
+  });
+
+  test(`view controls share glass and settings use restrained tilt ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const families = [
+      ["training", ".horizon-switch a"],
+      ["health", ".horizon-switch a"],
+      ["journal/1", ".review-tabs button"],
+      ["health/pace", ".pace-mode button, .pace-session-picker button"],
+      ["settings/appearance", ".palette-options label"],
+    ];
+    for (const [route, selector] of families) {
+      await page.goto(`/desk.html?theme=${theme}#${route}`);
+      await page.mouse.move(0, 0);
+      const reference = page.getByRole("button", { name: "Sync activities", exact: true });
+      await expect(reference).toBeVisible();
+      const shadow = await reference.evaluate(element => getComputedStyle(element).boxShadow);
+      const controls = page.locator(`${selector.split(", ").map(part => `${part}:visible`).join(", ")}`);
+      await expect(controls.first()).toBeVisible();
+      for (const control of await controls.all()) {
+        await expect(control).toHaveCSS("box-shadow", shadow);
+        await expect(control).toHaveCSS("backdrop-filter", "none");
+        expect(await control.evaluate(element => getComputedStyle(element, "::before").backgroundImage)).toContain("linear-gradient");
+      }
+      await controls.first().hover();
+      await expect(controls.first()).toHaveCSS("backdrop-filter", /blur\(12px\)/);
+      await page.emulateMedia({ contrast: "more" });
+      await expect(controls.first()).toHaveCSS("backdrop-filter", "none");
+      await expect(controls.first()).toHaveCSS("box-shadow", "none");
+      await page.emulateMedia({ contrast: "no-preference" });
+    }
+    await page.goto(`/desk.html?theme=${theme}#training`);
+    await page.getByRole("link", { name: "Month", exact: true }).click();
+    await expect(page.getByRole("link", { name: "Month", exact: true })).toHaveAttribute("aria-current");
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: testInfo.outputPath("unified-toolbar.png") });
+    await page.goto(`/desk.html?theme=${theme}#settings`);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const row = page.locator('.settings-task-list a[href="#settings/appearance"]');
+    await expect(row).toBeVisible();
+    await row.hover({ position: { x: 20, y: 20 } });
+    await expect(row).toHaveAttribute("data-aura-tracking", "true");
+    await expect(row).not.toHaveCSS("transform", "none");
+    const angles = await row.evaluate(element => {
+      const style = getComputedStyle(element);
+      const strength = parseFloat(style.getPropertyValue("--surface-tilt-strength"));
+      return ["--aura-tilt-x", "--aura-tilt-y"].map(name => Math.abs(parseFloat(style.getPropertyValue(name)) * strength));
+    });
+    expect(Math.max(...angles)).toBeGreaterThan(0);
+    expect(Math.max(...angles)).toBeLessThanOrEqual(1.8);
+    await expect(row).toHaveCSS("--surface-tilt-strength", "3");
+    await expect(row).toHaveCSS("--surface-perspective", "1200px");
+    await page.mouse.down();
+    await expect.poll(() => row.evaluate(element => Math.abs(new DOMMatrix(getComputedStyle(element).transform).m13))).toBeLessThan(.05);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await expect(row).toHaveCSS("transform", "none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await row.hover();
+    await expect(row).toHaveCSS("transform", "none");
+    await page.screenshot({ path: testInfo.outputPath("settings-motion.png") });
+  });
+
+  test(`training cards visibly tilt with pointer ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#training`);
+    const card = page.locator(".session-tile").first();
+    await page.mouse.move(0, 0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const originalFill = await card.evaluate(element => getComputedStyle(element).backgroundColor);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await card.hover({ position: { x: 10, y: 10 } });
+    await expect(card).toHaveCSS("background-color", originalFill);
+    await expect(card).not.toHaveCSS("background-image", "none");
+    await expect(card).toHaveAttribute("data-aura-tracking", "true");
+    const pivot = await card.evaluate(element => {
+      const style = getComputedStyle(element);
+      const [horizontal, vertical] = style.transformOrigin.split(" ").map(parseFloat);
+      return { horizontal: horizontal / element.offsetWidth, vertical: vertical / element.offsetHeight };
+    });
+    expect(pivot.horizontal).toBeCloseTo(.5, 2);
+    expect(pivot.vertical).toBeCloseTo(.5, 2);
+    expect(await card.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-tilt-x")))).toBeGreaterThan(0);
+    expect(await card.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-tilt-y")))).toBeLessThan(0);
+    await expect.poll(() => card.evaluate(element => {
+      const style = getComputedStyle(element);
+      return Math.abs(parseFloat(style.getPropertyValue("--aura-tilt-x")) * parseFloat(style.getPropertyValue("--surface-tilt-strength")));
+    })).toBeGreaterThan(6);
+    await expect(card).not.toHaveCSS("transform", "none");
+    const hoverDepth = await card.evaluate(element => Math.abs(new DOMMatrix(getComputedStyle(element).transform).m23));
+    await page.mouse.down();
+    await expect.poll(() => card.evaluate(element => Math.abs(new DOMMatrix(getComputedStyle(element).transform).m23))).toBeGreaterThan(hoverDepth * 1.1);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.mouse.move(0, 0);
+    await expect(card).toHaveCSS("transform", "none");
+  });
+
+  test(`dynamic aura tracks pointer and click origin ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    const control = page.locator(".activity-row").first();
+    await expect(control).toBeVisible();
+    await expect(control).toHaveCSS("--surface-tilt-strength", "3");
+    await expect(control).toHaveCSS("--surface-perspective", "1200px");
+    await control.hover({ position: { x: 40, y: 40 } });
+    await expect(control).toHaveAttribute("data-aura-tracking", "true");
+    const first = await control.evaluate(element => element.style.getPropertyValue("--aura-x"));
+    await expect(control).not.toHaveCSS("transform", "none");
+    const bounds = await control.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width - 40, bounds.y + 40);
+    await expect.poll(() => control.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeGreaterThan(parseFloat(first));
+    const tilt = await control.evaluate(element => ({ horizontal: parseFloat(element.style.getPropertyValue("--aura-tilt-y")), vertical: parseFloat(element.style.getPropertyValue("--aura-tilt-x")) }));
+    expect(tilt.horizontal).toBeGreaterThan(0);
+    expect(Math.abs(tilt.horizontal)).toBeLessThanOrEqual(.6);
+    expect(Math.abs(tilt.vertical)).toBeLessThanOrEqual(.6);
+    await expect.poll(() => control.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const container = element.closest(".activity-library").getBoundingClientRect();
+      return Math.min(bounds.left - container.left, container.right - bounds.right, bounds.top - container.top);
+    })).toBeGreaterThanOrEqual(4);
+    const hoverTransform = await control.evaluate(element => getComputedStyle(element).transform);
+    await page.mouse.down();
+    await expect(control).not.toHaveCSS("transform", hoverTransform);
+    await expect.poll(() => control.evaluate(element => element.getAnimations().some(animation => animation.effect?.getKeyframes().some(keyframe => keyframe.backgroundSize === "155% 155%")))).toBe(true);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await expect(control).not.toHaveAttribute("data-aura-tracking");
+    await expect(control).toHaveCSS("transform", "none");
+    await expect.poll(() => control.evaluate(element => element.getAnimations().length)).toBe(0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await control.hover();
+    await expect(control).toHaveCSS("transform", "none");
+    await page.mouse.down();
+    expect(await control.evaluate(element => element.getAnimations().length)).toBe(0);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+  });
+
+  test(`shared aura touch release stays flat ${theme}`, async ({ browser }, testInfo) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+    const page = await context.newPage();
+    await installDeskFixture(page);
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    const control = page.locator(".activity-row").first();
+    await expect(control).toBeVisible();
+    const navigation = page.getByRole("link", { name: "Activities", exact: true });
+    const bounds = await navigation.boundingBox();
+    const touch = await context.newCDPSession(page);
+    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bounds.x + 8, y: bounds.y + bounds.height / 2 }] });
+    await expect.poll(() => navigation.evaluate(element => getComputedStyle(element, "::after").opacity)).toBe("1");
+    expect(await navigation.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeLessThan(25);
+    await page.screenshot({ path: testInfo.outputPath("glass-rim-touch.png") });
+    await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect.poll(() => navigation.evaluate(element => getComputedStyle(element, "::after").opacity)).toBe("0");
+    await expect(navigation).toHaveAttribute("aria-current", "page");
+    await expect(navigation).toHaveCSS("--aura-strength", "0%");
+    await expect(control).toHaveCSS("--aura-strength", "0%");
+    await expect(control).toHaveCSS("box-shadow", "none");
+    await context.close();
+  });
+
+  test(`shared flat surfaces engage with aura ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    const toolbar = page.locator(".journal-sidebar > .desk-toolbar");
+    await expect(toolbar).toBeVisible();
+    await expect(toolbar).toHaveCSS("background-image", "none");
+    await expect(toolbar).toHaveCSS("box-shadow", "none");
+    const controls = [page.locator('.desk-navigation a[href="#journal"]'), toolbar.locator("button").first(), page.locator(".activity-row").first()];
+    for (const control of controls) {
+      await page.mouse.move(0, 0);
+      await expect(control).toHaveCSS("--aura-strength", "0%");
+      if (await control.evaluate(element => element.matches(".desk-button, .desk-navigation a"))) {
+        await expect(control).toHaveCSS("box-shadow", /inset/);
+        await expect(control).toHaveCSS("backdrop-filter", "none");
+        expect(await control.evaluate(element => getComputedStyle(element, "::before").backgroundImage)).toContain("linear-gradient");
+      } else {
+        await expect(control).toHaveCSS("box-shadow", "none");
+      }
+      await control.hover();
+      await expect(control).not.toHaveCSS("background-image", "none");
+      await expect(control).not.toHaveCSS("box-shadow", "none");
+      if (await control.evaluate(element => element.matches(".desk-button"))) await expect(control).toHaveCSS("backdrop-filter", /blur\(12px\)/);
+      await expect(control).toHaveCSS("transform", "none");
+      await page.mouse.down();
+      await expect(control).toHaveCSS("box-shadow", /inset/);
+      await page.mouse.move(0, 0);
+      await page.mouse.up();
+      await page.keyboard.press("Tab");
+      await control.focus();
+      await expect(control).toHaveCSS("outline-style", "solid");
+      await expect(control).not.toHaveCSS("background-image", "none");
+      await control.evaluate(element => element.blur());
+    }
+    await expect(toolbar).toHaveCSS("background-image", "none");
+    await page.locator(".activity-row").first().hover();
+    await page.screenshot({ path: testInfo.outputPath("shared-aura.png") });
+    await page.emulateMedia({ contrast: "more" });
+    await expect(page.locator(".activity-row").first()).toHaveCSS("background-image", "none");
+    await expect(toolbar.locator("button").first()).toHaveCSS("backdrop-filter", "none");
+    await expect(toolbar.locator("button").first()).toHaveCSS("box-shadow", "none");
+  });
+}
+
+test("shared aura color fades on hover and departure", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#journal");
+  const control = page.locator(".activity-row").first();
+  await page.mouse.move(0, 0);
+  await expect(control).toHaveCSS("--aura-strength", "0%");
+  await control.hover();
+  await expect.poll(() => control.evaluate(element => element.getAnimations().some(animation => animation instanceof CSSTransition && animation.transitionProperty === "--aura-strength"))).toBe(true);
+  await expect(control).toHaveCSS("--aura-strength", "100%");
+  await page.mouse.move(0, 0);
+  await expect.poll(() => control.evaluate(element => element.getAnimations().some(animation => animation instanceof CSSTransition && animation.transitionProperty === "--aura-strength"))).toBe(true);
+  await expect(control).toHaveCSS("--aura-strength", "0%");
+});
+
 for (const theme of ["light", "dark"]) {
   test(`multicolor palettes stay distinct and persist ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: theme === "light" ? 320 : 1440, height: 900 });
@@ -177,6 +639,7 @@ for (const theme of ["light", "dark"]) {
       await close.click();
       await expect(opener).toBeFocused();
       await page.goto(`/desk.html?theme=${theme}#training`);
+      if (width <= 800) await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
       const session = page.locator(".session-tile:visible").first();
       await session.click();
       const inspector = page.getByRole("dialog", { name: "Session", exact: true });
@@ -1060,7 +1523,7 @@ test("Prism preview uses native date shapes and populated initial progress", asy
   await expect(page.locator(".schedule-summary")).not.toContainText("/ 0.0 km");
 });
 
-const routes = ["training", "training/month", "training/plan", "journal", "health", "health/pace", "health/journal", "health/milestones", "settings", "help"];
+const routes = ["training", "training/month", "training/plan", "journal", "health", "health/pace", "health/journal", "health/milestones", "settings", "settings/calendar", "settings/devices", "settings/transfer", "help"];
 const widths = [320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920, 2560];
 
 async function assertLayout(page, context) {

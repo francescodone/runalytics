@@ -44,6 +44,7 @@ targets:
     info:
       path: runalytics_iOS/Info.plist
       properties:
+        NSCameraUsageDescription: Scan an encrypted Runalytics connection QR code from your other device.
         CFBundleURLTypes:
           - CFBundleURLName: com.fradone.runalytics.strava
             CFBundleURLSchemes: [com.fradone.runalytics]

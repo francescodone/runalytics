@@ -1,3 +1,377 @@
+## Notification Alignment, 2026-11-05
+
+Compact notifications keep their message and dismiss control vertically centered,
+including multiline progress messages. Synthetic-IPC browser geometry and
+dismissal checks passed at 320, 390, 768 and 1440px. Native rendering was not tested.
+
+## Appearance Transitions, 2026-11-05
+
+Theme and palette changes cross-fade the rendered view when the browser supports
+view transitions. Reduced motion and unsupported browsers apply changes immediately;
+initial appearance remains pre-painted. Rapid updates supersede older transitions.
+
+Verification: TypeScript, production build and two synthetic-IPC Chromium appearance
+checks passed at 390px, covering light, dark, palette and reduced motion. The route
+matrix did not pass: 31 cases reported a missing app heading with blank screenshots;
+the broader layout matrix and native macOS/iOS rendering remain unverified.
+
+## Pointer-Lit Glass Button Borders, 2026-11-05
+
+Shared action buttons, navigation, tabs and option controls now have a masked
+glass rim: a white reflection follows the existing pointer coordinates while
+a palette-tinted reflection catches the opposite edge. Hover and keyboard
+focus fade the rim in; press strengthens it at the interaction origin. The
+mask leaves labels and fills untouched and does not change control geometry.
+Shared pointer-down/up/cancel handling supplies immediate held-touch feedback.
+Reduced motion retains non-spatial feedback; contrast, reduced transparency
+and forced colors omit the reflective layer. Disabled controls omit it too.
+
+Verification: production build and 50 distinct synthetic-IPC Chromium checks
+passed. Border, keyboard, disabled and contrast states passed at 320 and 1440px
+in light/dark; held touch and release passed at 390px. Shared controls, button
+pending/result geometry and the route matrix passed at 320, 360, 375, 390, 414,
+430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px. Desktop,
+compact and touch screenshots were inspected. Native macOS/iOS rendering was
+not tested. Existing card fills and tilt strengths are unchanged.
+
+## Long Card Depth, 2026-11-05
+
+Plan weeks, activity rows and settings cards share the shallower 3 tilt
+strength and 1200px perspective, while calendar session tiles retain strength
+20 and 650px perspective. Pointer, press and reduced-motion behavior are
+otherwise unchanged. This supersedes the matching-depth decision below.
+
+Verification: build and 43 synthetic-IPC browser checks passed, including
+light/dark pointer and press behavior, reduced motion, touch, card clearance,
+button workflows and the route matrix at 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px. Native rendering
+was not tested.
+
+## Training Context Control Clearance, 2026-11-05
+
+The activity review's context range control is inset from the inspector edge
+to preserve its focus outline. The production build passed; browser geometry
+and focus were checked at 320, 390 and 1440px. The broader route matrix did not
+produce a final result. Native rendering was not tested.
+
+## Plan Card Edge Clearance, 2026-11-05
+
+The plan-week scroller reserves additional horizontal space for card tilt and
+shadows without changing vertical scrolling or the cards' interaction physics.
+The build and 39 synthetic-IPC browser checks passed, including pointer probes
+at both card edges at 320 and 1440px in light and dark themes, screenshots, and
+the route matrix at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280,
+1366, 1440, 1600, 1920 and 2560px. Native rendering was not tested.
+
+## Calendar Tile-to-Modal Morph, 2026-11-05
+
+Week and month session items now expand from the activated tile's position
+and bounds into the shared session Inspector, with its contents fading in.
+Dismissal reverses the same path; the original tile remains hidden until
+the Inspector unmounts. Compact itineraries use the actual activated tile,
+not the hidden desktop calendar copy. Shared spring and exit tokens govern
+the transition. Reduced motion retains the existing non-spatial behavior.
+Focus return, Escape, background inertness, scroll locking and session actions
+remain intact; other Inspectors retain their existing entrance motion.
+
+Verification: production build, TypeScript, whitespace checks and 59 distinct
+synthetic-IPC browser checks passed across focused and regression runs. Morph
+geometry, reverse motion and keyboard reopening passed at 320, 390, 820 and
+1440px in light/dark, including interrupted dismissal and reduced motion.
+Month-view touch activation passed at 390 and 1440px. Existing session editing,
+Undo, activity matching, stale drafts and drag-to-reschedule passed, together
+with Prism's width/theme route matrix at 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px. Desktop and compact
+screenshots were inspected. Compact overlay tests now select a scheduled day
+instead of assuming today has a session. Native macOS/iOS rendering remains
+unverified. The referenced foundations, components and motion documents were
+absent from this checkout; current shared primitives and tokens were used.
+
+## Matching Activity and Settings Motion, 2026-11-05
+
+Activity and settings cards now use the calendar session tiles' 20 tilt
+strength and 650px perspective for pointer hover and press. Plan roadmap rows
+retain their restrained motion. Reduced-motion and touch behavior are unchanged.
+This supersedes the activity and settings row motion described below.
+
+Verification: build and 41 synthetic-IPC browser checks passed, including
+light/dark pointer and press behavior, reduced motion, touch, button workflows,
+and route layouts at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024,
+1280, 1366, 1440, 1600, 1920 and 2560px. Native rendering was not tested.
+
+## Consistent View Controls and Restrained Rows, 2026-11-05
+
+View tabs, navigation, pace controls, date/lap controls and option labels now
+share action-button sheen, resting edge depth and interaction-only blur.
+Selected/current tint and selection indicators remain intact. Wide settings,
+activity and roadmap rows use a tilt strength of 2 instead of 20 and 1200px
+perspective, bounding hover rotation to 1.2 degrees per axis. Training tiles
+retain their existing behavior; reduced motion and opaque fallbacks remain.
+
+Verification: build, whitespace checks and 46 synthetic-IPC browser tests passed.
+Coverage includes both themes at 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px; cross-view material consistency,
+tab navigation, wide-row press/release, keyboard focus, contrast, reduced motion,
+touch and pending/success/error geometry. Toolbar and settings screenshots were
+inspected. Native macOS/iOS rendering remains unverified; the enlarged-text and
+ambient-animation limitations recorded below were not changed by this work.
+
+## Action Button Glass Refinement
+
+Shared action buttons retain a translucent resting fill, restrained sheen and
+inset edge depth. Hover, keyboard focus and press activate 12px backdrop blur;
+press increases fill density. Existing pointer aura, tilt, control dimensions
+and pending/result behavior are preserved. Reduced motion removes movement;
+contrast and reduced-transparency preferences use opaque, unfiltered surfaces.
+
+Verification: production build passed. The final synthetic-IPC browser run
+passed 44 of 45 checks, including light/dark route matrices at 320, 360, 375,
+390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px;
+button hover/press material, keyboard activation/focus return, contrast fallback,
+touch aura and pending/success/error geometry. Enlarged text passed at 820 and
+1440px; 320px reported plan-roadmap row overflow outside this button change.
+Desktop and 390px mobile screenshots were inspected in light/dark.
+
+The two existing settled-rendering tests time out because the page's infinite
+`atmosphere-aurora` animation prevents their all-animations-quiet guard. A
+separate settled desktop probe found one filtered surface (app-bar pseudo-element)
+and no resting button blur. Native macOS/iOS rendering remains unverified.
+
+## Watch-Gated Connection Transfer, 2026-11-04
+
+Transfer connections requires a connected COROS watch account. A visible
+disclaimer asks runners to sign in with the same account on both devices;
+both transfer actions stay disabled while disconnected, loading or unavailable,
+with a link to Watch connection. Export, import review and import confirmation
+recheck provider status before reading credentials or writing settings.
+
+Expanded encrypted transfers include assistant endpoint/model/API key, COROS
+account fingerprint and optional Strava athlete ID. Known account mismatches
+block import; missing identity requires explicit acknowledgement. Assistant use
+remains disabled after import. These are local account comparisons, not physical
+watch identity or live authentication verification.
+
+Verification: TypeScript and 19 synthetic-IPC transfer tests passed, including
+disconnect-before-export/import guards, account mismatches and QR presentation
+at 320, 390 and 1440px in light/dark. Native watch/Keychain behavior was not tested.
+
+## Centered Cursor Weight, 2026-11-05
+
+Supersedes pointer-anchored depth: the pivot remains at the surface center.
+Both tilt axes are reversed so the cursor-facing side recedes and the opposite
+side rises, with pressing deepening that same response. Aura, fade and strength
+are unchanged. Nine focused browser checks passed, including centered pivot,
+direction signs, press depth, list clearance, touch and reduced motion.
+Native rendering remains unverified.
+
+## Pointer-Anchored Depth, 2026-11-05
+
+Hover and press transforms pivot at the pointer position rather than the center.
+The area near the pointer stays relatively anchored while farther edges move
+more. Aura shading, color fade and existing motion/accessibility fallbacks are
+unchanged. Nine focused browser checks passed, including corner pivot geometry,
+press depth, list clearance, fade, touch and reduced motion. Native rendering
+remains unverified.
+
+## Hover Aura Color Transition, 2026-11-05
+
+Shared controls interpolate registered aura strength over the existing 240ms
+motion-change timing. The transparent gradient stays mounted so pointer entry
+and departure both fade smoothly and can reverse mid-transition. Original card
+fills and pointer tracking remain unchanged. Reduced motion applies immediate
+color feedback; contrast/transparency preferences still omit the aura.
+
+Verification: explicit fade-in/fade-out, light/dark shared material, touch and
+contrast checks passed. Native rendering remains unverified.
+
+## Inverted Pointer Aura, 2026-11-05
+
+Hovered and pressed controls now carry a 9% accent wash away from the pointer,
+with a neutral 7% foreground-tone patch at the pointer: darker in light mode,
+lighter in dark mode. Glass sheen, original card fills, tilt, keyboard focus
+and accessibility fallbacks are unchanged. Eight focused light/dark interaction
+checks passed, including card-color preservation, pointer tracking, touch and
+contrast fallback. Native rendering remains unverified.
+
+## Shared Glass Button Depth, 2026-11-04
+
+Shared buttons use pointer-position palette aura, brighter glass edges and
+layered hover/pressed shadows. Non-card controls tilt up to 2.4 degrees with
+800px perspective; action buttons regain translucent glass fills. Content
+cards retain their original background colors while aura overlays them.
+Reduced motion removes spatial movement and transparency/contrast preferences
+retain opaque surfaces. Plan rows share activity-style surfaces; compact
+date/status typography preserves their 320px footprint.
+
+Verification: production build, whitespace validation, eight focused light/dark
+interaction checks and eight plan workflow checks passed. These cover original
+card fills, pointer/press feedback, touch, reduced motion and plan layouts at
+320, 390, 768 and 1440px. Native rendering remains unverified.
+
+## Stronger Hover and Press Depth, 2026-11-04
+
+Card-only tilt now reaches 6 degrees on hover and 8.1 degrees while pressed,
+with 900px perspective and stronger contact shading. Press rotation now consumes
+the same card-strength multiplier as hover instead of dropping to a weaker
+fixed angle. Ordinary controls retain restrained feedback. Eight focused
+light/dark checks passed, including measured press depth greater than hover,
+Training cards, activity-list clearance, touch and reduced-motion behavior.
+
+## Visible Training Card Tilt, 2026-11-04
+
+Live Training inspection confirmed the transform worked but the previous 1.2
+degree cap was too subtle on narrow session tiles. Card-only hover tilt now
+reaches 3.6 degrees per axis; ordinary controls remain unchanged. Explicit
+Training regressions verify pointer tracking, a perceptible angle and return
+to flat in both themes. Eight focused browser checks passed, including existing
+activity-list clearance, reduced-motion and touch checks.
+
+## Reference-Inspired Card Tilt, 2026-11-04
+
+Activity, session, roadmap and settings-entry surfaces use a whole-card,
+pointer-directed tilt inspired by DaisyUI Hover 3D, bounded to 1.2 degrees per
+axis. Transform transitions now ease pointer movement and return to flat rather
+than snapping between orientations. Ordinary buttons retain their quieter
+response. Existing tint, local shading, scroll clearance and reduced-motion
+fallbacks are preserved; no hover-zone overlays or dependency were added.
+
+Verification: six focused light/dark pointer, press, list-edge clearance, touch
+and reduced-motion browser checks passed. Native rendering remains unverified.
+
+## Subtle Tinted Paper Feedback, 2026-11-04
+
+Controls retain a quiet palette tint at rest. Pointer lighting now shifts the
+local tone by only 4% of the theme foreground rather than adding a saturated
+accent glow. Directional hover dips the pointer-facing edge by at most 0.6
+degrees; pressing deepens that angle to at most 0.9 degrees. Softer contact
+shadows and a slight hover contraction keep the response restrained. Activity
+and roadmap scroll containers reserve 8px internal clearance for transformed
+rows while retaining contained scrolling and edge fades.
+
+Verification: TypeScript, production build and focused light/dark material,
+touch and directional-geometry checks passed. Geometry assertions cover inward
+tilt, bounded angles, distinct press deformation and at least 4px clearance
+inside the activity list. Native/device rendering remains unverified.
+
+## Pointer-Responsive Aura and Depth, 2026-11-04
+
+Shared controls and interactive rows position their radial aura at the pointer
+or press origin. Fine-pointer hover adds bounded directional tilt (up to 2.5
+degrees per axis); presses briefly expand the light before settling. Pointer
+updates are frame-coalesced without React renders or idle animation loops.
+Keyboard focus centers the light. Leaving, cancellation, window blur and
+unmount clean up tracking or pulses. Reduced motion disables tilt and press
+animation; contrast/transparency fallbacks omit decorative light.
+
+Verification: production build, TypeScript, whitespace checks and 18 selected
+synthetic-IPC browser checks passed. Coverage includes pointer-origin tracking,
+directional tilt, finite press pulses, return to flat, reduced motion, real
+browser touch taps, keyboard/hover clearance and navigation, plus light/dark
+route checks at 320, 820 and 1440px. Native rendering and physical-device feel
+were not exercised. Existing localhost preview is retained.
+
+## Flat Surfaces and Engaged Aura, 2026-11-04
+
+Shared navigation, buttons, selectors and interactive rows now rest without
+sheen or elevation. Floating toolbars use an opaque flat surface instead of
+permanent aura and blur. Pointer hover and keyboard focus introduce the same
+palette-driven aura and shallow contact shadow; pressing compresses the shadow.
+Perspective tilt and hover enlargement are removed. Selection retains its tint
+and border independently of hover. Shell/overlay glass and semantic colors are
+preserved. Reduced motion retains feedback without movement; increased contrast,
+forced colors and reduced transparency disable decorative aura and elevation.
+
+Verification: production build and 70 selected synthetic-IPC browser checks
+passed. The route matrix covers 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light/dark, with additional
+short/landscape and enlarged-text checks. Coverage includes plan/health workflows,
+navigation input, hover clearance, resting/hover/press/keyboard-focus materials,
+high-contrast fallback and real browser touch taps without sticky hover.
+Desktop 1440px and mobile 390px captures were recorded. The existing localhost
+preview listens on IPv6, so the matrix used a temporary localhost test config;
+repository test infrastructure was unchanged. Native rendering, physical touch
+devices and the complete UI suite were not exercised.
+
+## Standalone Connection Transfer, 2026-11-04
+
+QR generation/import moved out of Calendar apps and Device sync into the
+searchable Transfer connections settings destination. Encrypted exports now
+include saved Strava application Client ID/Secret, explicitly excluding OAuth
+tokens and athlete sessions. Older version-1 QR images remain compatible and
+leave Strava unchanged when that optional field is absent. Import review shows
+actual calendar URLs, username, credential presence and Strava Client ID, masks
+all secrets and states replacement/removal effects before any save.
+
+Verification: native Rust check, production build and 30 synthetic-IPC
+transfer/calendar/device tests passed, including standalone routing, legacy
+payload compatibility, malformed Strava rejection and explicit import review.
+Existing QR color/decoding/spacing checks cover 320, 390 and 1440px light/dark.
+Real Keychain export/import, Strava authorization and physical camera were not
+exercised. A rebuilt native app is required for the expanded export command.
+
+## Connection QR Presentation, 2026-11-04
+
+Transfer dialogs list included settings as three bullets and separate excluded
+account/history data from the privacy notice. Token-based gaps separate the
+summary, QR image, download control and instructions. QR pixels use the current
+theme's ink and surface colors, including inverted dark codes, and regenerate
+on theme/palette changes without changing the encrypted payload.
+
+Verification: TypeScript, 10 transfer workflow checks and six explicit QR
+decoding/color/spacing/axe checks passed at 320, 390 and 1440px in light/dark.
+Inspected the dark mobile capture. Physical-camera readability remains unverified.
+
+## Encrypted Connection QR Transfer, 2026-11-04
+
+Calendar apps and Device sync share a transfer dialog. QR images contain only
+calendar hosting settings/credentials and the GitHub device-sync token, encrypted
+locally with AES-256-GCM and PBKDF2-SHA256 (600,000 iterations, random salt/nonce).
+Generation requires an explicit action and a 12-character minimum passphrase.
+Import supports image upload and camera decoding, validates the decrypted shape
+and HTTPS addresses, and requires review before replacing connections. Sync is
+paused before credential replacement; both publishing and sync remain paused.
+No account sessions, training history, persistence or network upload are added.
+Camera streams stop on scan, close or image selection. Native iOS camera usage
+metadata is configured; native macOS keeps image upload as the supported path.
+
+Verification: native Rust check, production build, TypeScript and 41 combined
+synthetic-IPC connection checks passed, including 10 transfer checks. Tests cover encrypted PNG round-trip, wrong
+passphrases, tampering, schema/URL rejection, explicit confirmation, paused
+imports, denied camera fallback, successful synthetic capture and track cleanup.
+QR dialogs passed axe/overflow at 320, 390 and 1440px in light/dark; inspected
+mobile-light and desktop-dark captures. Physical camera and native Keychain
+transfer were not exercised. Existing critical MapLibre dependency advisory
+remains outside this change; QR libraries introduced no reported advisories.
+
+## Calendar Apps and Device Sync, 2026-11-04
+
+Split calendar subscriptions from editable plan sync into separate settings
+destinations. Calendar hosting, link copying and local file access are disclosed
+under options; subscriptions remain read-only and calendar clients control fetch
+timing. Device sync has independent token setup and state-specific actions.
+Different-plan replacement still requires confirmation. Existing publishing
+routes, saved credentials, automatic sync and failed drafts are preserved.
+Publishing retries inspect backend error status before reporting success.
+
+Verification: production build and 31 focused synthetic-IPC browser checks
+passed. Connection layouts and axe checks cover 320, 390, 768, 820 and 1440px
+in light/dark. Inspected mobile and desktop captures. The full UI run also
+exercises both routes in Prism's width/theme, short-height and enlarged-text
+matrix, which passed. The full 426-test run recorded 39 failures outside these
+connection workflows, including motion, training, branding and native-window
+checks. Their pre-existing status was not independently established.
+Native calendar subscription handoff and real hosting uploads are not verified.
+
+## Sync Verdict Icons, 2026-11-04
+
+Completed sync steps use full-opacity foreground checkmarks; failed steps use
+X icons. Working steps retain their spinner. Timing and dismissal are unchanged.
+
+Verification: production build and 18 selected synthetic-IPC Strava browser
+checks passed, including verdict icons at 320 and 1440px in light and dark.
+Inspected the light 320px progress capture. Native rendering and the full UI
+suite were not exercised.
+
 ## Transparent macOS Title Strip, 2026-11-04
 
 Removed the native-only opaque background band so the title strip shares the

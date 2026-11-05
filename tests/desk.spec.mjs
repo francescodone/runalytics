@@ -138,9 +138,10 @@ test.describe("plan freshness", () => {
     for (const theme of ["light", "dark"]) {
       test(`sync status fits ${width}px ${theme}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
-        await page.goto(`/desk.html?theme=${theme}#settings/calendar`);
-        await expect(page.getByRole("button", { name: "Check now", exact: true })).toBeEnabled();
-        await expect(page.getByText("Last checked", { exact: true })).toBeVisible();
+        await page.goto(`/desk.html?theme=${theme}#settings/devices`);
+        await expect(page.getByText("Plan up to date", { exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "More options", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         expect((await new AxeBuilder({ page }).include(".settings-editor").analyze()).violations).toEqual([]);
         await page.screenshot({ path: test.info().outputPath(`plan-sync-${width}-${theme}.png`), fullPage: true });
@@ -178,6 +179,7 @@ test.describe("plan freshness", () => {
   test("offline and hidden checks wait for reconnection and preserve credential drafts", async ({ page }) => {
     await page.clock.install();
     await page.goto("/desk.html#settings/calendar");
+    await page.getByRole("button", { name: "Connect a calendar", exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
     const upload = page.getByLabel("Upload URL", { exact: true });
     await upload.fill("https://example.test/unsaved-calendar.ics");
@@ -392,7 +394,7 @@ test.describe("motion system", () => {
       await session.detach();
       await page.emulateMedia({ reducedMotion: "no-preference", contrast: "no-preference", colorScheme: theme });
       await page.goto(`/desk.html?theme=${theme}#settings/training`);
-      const danger = page.getByRole("button", { name: "Remove all saved plans", exact: true });
+      const danger = page.getByRole("button", { name: "Clear plans and scheduled training", exact: true });
       await expect(danger).toBeVisible();
       await expect.poll(() => alpha(danger)).toBeLessThan(.7);
       await danger.hover();
@@ -1035,6 +1037,17 @@ test('graded performance proposals preview race estimates and only change them a
   await page.getByRole('button',{name:'Review changes',exact:true}).click();
   const preview = page.getByRole('region',{name:'Proposed race estimates'});
   await expect(preview).toBeVisible();
+  for (const distance of ['5 km','10 km']) {
+    const cells = preview.getByRole('row').filter({has:page.getByRole('rowheader',{name:distance,exact:true})}).locator('td');
+    for (const cell of await cells.all()) {
+      const seconds = Number(await cell.getAttribute('data-seconds'));
+      await expect(cell).toHaveText(`${Math.floor(seconds/60)}m ${String(seconds%60).padStart(2,'0')}s`);
+    }
+  }
+  expect(await page.evaluate(async () => {
+    const {fmtDuration}=await import('/src/lib/ipc.ts');
+    return [fmtDuration(1348),fmtDuration(1348,true),fmtDuration(2810,true),fmtDuration(3599.6,true),fmtDuration(3601,true),fmtDuration(1200,true)];
+  })).toEqual(['22m','22m 28s','46m 50s','1h 00m 00s','1h 00m 01s','20m 00s']);
   const times = await preview.locator('tbody tr').evaluateAll(rows => rows.map(row => [...row.querySelectorAll('td')].map(cell => Number(cell.dataset.seconds))));
   expect(times).toHaveLength(4);
   expect(times.every(([before,after]) => after < before && after > before*.95)).toBe(true);
@@ -1388,7 +1401,7 @@ test("original entry routes load the independent workspace and retain deep links
     if(section) await expect(page.locator('.horizon-switch a[aria-current="page"]')).toHaveText(section);
     await expect(page.locator('#desk-root')).toBeVisible();
   }
-  for(const [hash,heading] of [['theme','Appearance'],['zones','Training boundaries'],['tiles','Offline maps'],['publishing','Calendar and devices'],['setup','Watch connection']]) {
+  for(const [hash,heading] of [['theme','Appearance'],['zones','Training boundaries'],['tiles','Offline maps'],['publishing','Calendar apps'],['setup','Watch connection']]) {
     await page.goto(`/settings.html#${hash}`);
     await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
   }
@@ -2148,6 +2161,27 @@ for (const route of ["journal", "health", "health/milestones"]) {
   });
 }
 
+for (const width of [320,390,1440]) for (const theme of ["light","dark"]) {
+  test(`settings connection group fits ${width}px ${theme}`, async ({page}) => {
+    await page.setViewportSize({width,height:900});
+    await page.goto(`/desk.html?theme=${theme}#settings`);
+    const group=page.getByRole("region",{name:"Third-party connections",exact:true});
+    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(page.locator(".settings-group > h2")).toHaveText(["Third-party connections","General"]);
+    await expect(group.getByRole("link").locator("strong")).toHaveText(["Watch connection","Transfer connections","Device sync","Calendar apps","Strava","Injury assistant"]);
+    for(const route of ["watch","strava","calendar","devices","transfer","assistant"]) await expect(group.locator(`a[href="#settings/${route}"]`)).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    expect((await new AxeBuilder({page}).include(".settings-directory").analyze()).violations).toEqual([]);
+    await page.screenshot({path:test.info().outputPath(`settings-groups-${width}-${theme}.png`),fullPage:true});
+    await page.getByRole("searchbox",{name:"Search settings"}).fill("third-party");
+    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(page.getByRole("region",{name:"General",exact:true})).toHaveCount(0);
+    await page.getByRole("searchbox",{name:"Search settings"}).fill("no-such-setting");
+    await expect(page.getByText("No matching settings",{exact:true})).toBeVisible();
+    await expect(group).toHaveCount(0);
+  });
+}
+
 test("settings directory searches tasks and preserves unrelated settings", async ({ page }) => {
   await page.goto("/desk.html#settings");
   await page.getByRole("searchbox", { name: "Search settings" }).fill("colour");
@@ -2164,6 +2198,7 @@ test("settings directory searches tasks and preserves unrelated settings", async
 
 test("calendar settings never publish on read and retain blank credentials and sync metadata", async ({ page }) => {
   await page.goto("/desk.html#settings/calendar");
+  await page.getByRole("button", { name: "Connect a calendar", exact: true }).click();
   await expect(page.getByRole("button", { name: "Save calendar settings" })).toBeVisible();
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "publish_calendar"))).toEqual([]);
   await page.getByRole("checkbox", { name: "Publish calendar remotely" }).check();
@@ -2172,37 +2207,445 @@ test("calendar settings never publish on read and retain blank credentials and s
   const payload = await page.evaluate(() => window.__deskCalls.find(call => call.command === "save_calendar_publishing").args);
   expect(payload.password).toBeNull();
   expect(payload.config.lastPublished).toBe("2026-10-29T12:00:00Z");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "publish_calendar"))).toBe(false);
+  await expect(page.getByRole("checkbox", { name: "Sync this plan across devices" })).toHaveCount(0);
+  await page.goto("/desk.html#settings/devices");
   await page.getByRole("checkbox", { name: "Sync this plan across devices" }).uncheck();
   const sync = await page.evaluate(() => window.__deskCalls.find(call => call.command === "plan_sync_configure").args);
   expect(sync).toEqual({config:{enabled:false},token:null});
+  await expect(page.getByText("Device sync paused", {exact:true})).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import plan", exact:true })).toHaveCount(0);
+  await page.getByRole("button", { name:"More options", exact:true }).click();
+  await page.getByRole("button", { name:"Sync diagnostics", exact:true }).click();
   await expect(page.getByText("synthetic-account-channel", {exact:true})).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import plan", exact:true })).toBeDisabled();
 });
+
+test("connection transfer QR encrypts credentials and requires review before paused import", async ({page}) => {
+  await page.goto("/desk.html?calendarReady=1#settings/transfer");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "export_connection_settings"))).toBe(false);
+  await page.getByRole("button", {name:"Create transfer QR", exact:true}).click();
+  let dialog = page.getByRole("dialog", {name:"Create connection transfer", exact:true});
+  await dialog.getByLabel("Transfer passphrase", {exact:true}).fill("synthetic transfer passphrase");
+  await dialog.getByRole("button", {name:"Generate encrypted QR", exact:true}).click();
+  const image = dialog.getByRole("img", {name:"Encrypted connection transfer QR code"});
+  await expect(image).toBeVisible();
+  const source = await image.getAttribute("src");
+  const png = Buffer.from(source.split(",")[1], "base64");
+  const decoded = await page.evaluate(async () => {
+    const {default:jsQR} = await import("/node_modules/.vite/deps/jsqr.js");
+    const image = document.querySelector(".transfer-qr");
+    const canvas = document.createElement("canvas"); canvas.width=image.naturalWidth; canvas.height=image.naturalHeight;
+    const context=canvas.getContext("2d"); context.drawImage(image,0,0);
+    const pixels=context.getImageData(0,0,canvas.width,canvas.height);
+    return jsQR(pixels.data,pixels.width,pixels.height).data;
+  });
+  expect(decoded).toMatch(/^runalytics:connections:1:/);
+  expect(decoded).not.toContain("synthetic-github-token");
+  expect(decoded).not.toContain("synthetic-calendar-secret");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", {name:"Import transfer QR", exact:true}).click();
+  dialog=page.getByRole("dialog", {name:"Import connection transfer", exact:true});
+  await dialog.getByLabel("QR image", {exact:true}).setInputFiles({name:"connections.png",mimeType:"image/png",buffer:png});
+  await expect(dialog.getByRole("status")).toHaveText("QR code loaded.");
+  await dialog.getByLabel("Transfer passphrase", {exact:true}).fill("incorrect transfer phrase");
+  await dialog.getByRole("button", {name:"Review settings", exact:true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("Could not unlock");
+  await dialog.getByLabel("Transfer passphrase", {exact:true}).fill("synthetic transfer passphrase");
+  await dialog.getByRole("button", {name:"Review settings", exact:true}).click();
+  await expect(dialog.getByRole("heading", {name:"Replace connection settings?"})).toBeVisible();
+  await expect(dialog).toContainText("synthetic");
+  await expect(dialog).toContainText("12345");
+  await expect(dialog).toContainText("Strava Client Secret");
+  await expect(dialog).not.toContainText("synthetic-strava-secret");
+  await expect(dialog).not.toContainText("synthetic-github-token");
+  await expect(dialog).not.toContainText("synthetic-calendar-secret");
+  await expect(dialog).not.toContainText("synthetic-assistant-secret");
+  await expect(dialog).toContainText("COROS account matches this device.");
+  await expect(dialog).toContainText("https://assistant.example.test/v1");
+  await expect(dialog).toContainText("transfer-model");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_configure"))).toBe(false);
+  await page.screenshot({path:test.info().outputPath("transfer-import-review.png"),fullPage:true});
+  await dialog.getByRole("checkbox",{name:"I trust this QR source and understand the account could not be fully verified."}).check();
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "save_calendar_publishing" || call.command === "plan_sync_configure"))).toBe(false);
+  await dialog.getByRole("button", {name:"Replace connections", exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  const calls=await page.evaluate(() => window.__deskCalls);
+  expect(calls.find(call => call.command === "save_calendar_publishing").args.password).toBe("synthetic-calendar-secret");
+  expect(calls.find(call => call.command === "save_calendar_publishing").args.config.enabled).toBe(false);
+  expect(calls.filter(call => call.command === "plan_sync_configure").at(-1).args).toEqual({config:{enabled:false},token:"synthetic-github-token"});
+  expect(calls.find(call => call.command === "strava_configure").args).toEqual({clientId:"12345",clientSecret:"synthetic-strava-secret"});
+  expect(calls.find(call => call.command === "set_llm_api_key").args).toEqual({key:"synthetic-assistant-secret"});
+  const importedSettings=calls.find(call=>call.command==="save_settings").args.settings;
+  expect(importedSettings.llmEnabled).toBe(false);
+  expect(importedSettings.llmEndpoint).toBe("https://assistant.example.test/v1");
+  expect(importedSettings.llmModel).toBe("transfer-model");
+});
+
+test("connection transfer camera denial retains image upload fallback", async ({page}) => {
+  await page.addInitScript(() => { Object.defineProperty(navigator,"userAgent",{get:()=>"iPhone"}); navigator.mediaDevices.getUserMedia=async () => { throw new DOMException("Denied", "NotAllowedError"); }; });
+  await page.goto("/desk.html#settings/transfer");
+  await page.getByRole("button", {name:"Import transfer QR", exact:true}).click();
+  const dialog=page.getByRole("dialog", {name:"Import connection transfer"});
+  await dialog.getByRole("button", {name:"Scan with camera", exact:true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("Upload a QR image instead");
+  await expect(dialog.getByRole("button",{name:"Scan with camera",exact:true})).toHaveCount(0);
+  await expect(dialog.getByLabel("QR image", {exact:true})).toBeVisible();
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "export_connection_settings"))).toBe(false);
+});
+
+test("connection transfer requires a connected watch", async ({page}) => {
+  await page.goto("/desk.html#settings/watch");
+  await page.evaluate(async () => {
+    await window.__TAURI_INTERNALS__.invoke("disconnect_provider", {provider:"coros"});
+    location.hash="settings/transfer";
+  });
+  await expect(page.getByText("Before importing or exporting connections, sign in to your watch account. Use the same COROS account on both devices.")).toBeVisible();
+  await expect(page.getByRole("button",{name:"Create transfer QR",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Import transfer QR",exact:true})).toBeDisabled();
+  await expect(page.getByRole("link",{name:"Connect your watch",exact:true})).toHaveAttribute("href","#settings/watch");
+  expect(await page.evaluate(()=>window.__deskCalls.some(call=>call.command === "export_connection_settings"))).toBe(false);
+});
+
+test("connection transfer rechecks watch before exporting credentials", async ({page}) => {
+  await page.goto("/desk.html#settings/transfer");
+  await page.getByRole("button",{name:"Create transfer QR",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Create connection transfer"});
+  await dialog.getByLabel("Transfer passphrase",{exact:true}).fill("synthetic transfer passphrase");
+  await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke("disconnect_provider",{provider:"coros"}));
+  await dialog.getByRole("button",{name:"Generate encrypted QR",exact:true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("Sign in to your watch account");
+  expect(await page.evaluate(()=>window.__deskCalls.some(call=>call.command === "export_connection_settings"))).toBe(false);
+});
+
+for (const scenario of ["matching", "coros-mismatch", "strava-mismatch", "legacy", "changed-after-review", "watch-disconnected"]) {
+  test(`connection transfer account guard ${scenario}`, async ({page}) => {
+    await page.goto("/desk.html#settings/transfer");
+    const data=await page.evaluate(async scenario => {
+      const {sealConnections}=await import("/src/desk/connection-transfer.tsx");
+      const {default:QRCode}=await import("/node_modules/.vite/deps/qrcode.js");
+      const source={version:1,created:1,calendar:{uploadUrl:"https://example.test/calendar.ics",subscriptionUrl:"https://example.test/calendar.ics",username:"runner",password:null},githubToken:"synthetic-transfer-token",identity:{corosCode:scenario === "coros-mismatch" ? "different-coros-account" : "synthetic-account-channel"},strava:{clientId:"12345",clientSecret:"synthetic-client-secret",athleteId:42}};
+      if(scenario === "legacy"){delete source.identity;delete source.strava;}
+      const invoke=window.__TAURI_INTERNALS__.invoke;
+      window.__transferAccountChanged=false;
+      window.__TAURI_INTERNALS__.invoke=async (command,args)=>{
+        if(command === "strava_status")return {...await invoke(command,args),connected:true,athleteId:scenario === "strava-mismatch" ? 99 : 42};
+        if(command === "plan_sync_status" && window.__transferAccountChanged)return {...await invoke(command,args),code:"changed-after-review"};
+        return invoke(command,args);
+      };
+      const code=await sealConnections(source,"synthetic transfer passphrase");
+      return QRCode.toDataURL(code,{width:1000,margin:4});
+    },scenario);
+    await page.getByRole("button",{name:"Import transfer QR",exact:true}).click();
+    const dialog=page.getByRole("dialog",{name:"Import connection transfer"});
+    await dialog.getByLabel("QR image",{exact:true}).setInputFiles({name:"identity.png",mimeType:"image/png",buffer:Buffer.from(data.split(",")[1],"base64")});
+    await expect(dialog.getByRole("status")).toHaveText("QR code loaded.");
+    await dialog.getByLabel("Transfer passphrase",{exact:true}).fill("synthetic transfer passphrase");
+    await dialog.getByRole("button",{name:"Review settings",exact:true}).click();
+    const replace=dialog.getByRole("button",{name:"Replace connections",exact:true});
+    const writes=()=>page.evaluate(()=>window.__deskCalls.filter(call=>["save_calendar_publishing","plan_sync_configure","strava_configure","set_llm_api_key","save_settings"].includes(call.command)));
+    expect(await writes()).toEqual([]);
+    if(scenario.endsWith("mismatch")) {
+      await expect(dialog.getByRole("alert")).toContainText("Import blocked");
+      await expect(replace).toBeDisabled();
+    } else if(scenario === "legacy") {
+      await expect(replace).toBeDisabled();
+      await expect(dialog).toContainText("existing Strava setup stays");
+      await dialog.getByRole("checkbox",{name:/I trust this QR source/}).check();
+      await expect(replace).toBeEnabled();
+    } else if(scenario === "watch-disconnected") {
+      await expect(replace).toBeEnabled();
+      await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke("disconnect_provider",{provider:"coros"}));
+      await replace.click();
+      await expect(dialog.getByRole("alert").first()).toContainText("Sign in to your watch account");
+      expect(await writes()).toEqual([]);
+    } else if(scenario === "changed-after-review") {
+      await expect(replace).toBeEnabled();
+      await page.evaluate(()=>{window.__transferAccountChanged=true;});
+      await replace.click();
+      await expect(dialog.getByRole("alert").first()).toContainText("Accounts changed");
+      expect(await writes()).toEqual([]);
+    } else {
+      await expect(dialog).toContainText("COROS account matches this device.");
+      await expect(dialog).toContainText("Strava athlete 42 matches this device.");
+      await expect(replace).toBeEnabled();
+      await expect(dialog.getByRole("checkbox",{name:/I trust this QR source/})).toHaveCount(0);
+    }
+  });
+}
+
+test("connection transfer rejects unsupported and tampered encrypted settings", async ({page}) => {
+  await page.goto("/desk.html#settings/transfer");
+  const results=await page.evaluate(async () => {
+    const {sealConnections,openConnections}=await import("/src/desk/connection-transfer.tsx");
+    const valid={version:1,created:1,calendar:{uploadUrl:"https://example.test/feed",subscriptionUrl:"https://example.test/feed",username:"runner",password:null},githubToken:null};
+    const phrase="synthetic transfer passphrase";
+    const payloads=["not a Runalytics code",await sealConnections({...valid,version:2},phrase),await sealConnections({...valid,calendar:{...valid.calendar,uploadUrl:"http://example.test/feed"}},phrase),await sealConnections({...valid,strava:{clientId:"invalid",clientSecret:"secret"}},phrase)];
+    const good=await sealConnections(valid,phrase);
+    const legacy=await openConnections(good,phrase);
+    if (legacy.strava !== undefined || legacy.calendar.username !== "runner") throw new Error("Legacy transfer changed");
+    payloads.push(good.slice(0,-5)+"AAAAA");
+    return Promise.all(payloads.map(async code => {try{await openConnections(code,phrase);return false;}catch{return true;}}));
+  });
+  expect(results).toEqual([true,true,true,true,true]);
+});
+
+test("connection transfer lives in its own searchable settings destination", async ({page}) => {
+  for(const route of ["calendar","devices"]) {
+    await page.goto(`/desk.html#settings/${route}`);
+    await expect(page.getByRole("button",{name:"Create transfer QR",exact:true})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:"Import transfer QR",exact:true})).toHaveCount(0);
+  }
+  await page.goto("/desk.html#settings");
+  await page.getByRole("searchbox",{name:"Search settings"}).fill("transfer");
+  await page.getByRole("link",{name:/Transfer connections/}).click();
+  await expect(page).toHaveURL(/#settings\/transfer$/);
+  await expect(page.getByRole("button",{name:"Import transfer QR",exact:true})).toBeVisible();
+});
+
+test("connection transfer camera decodes locally and stops capture after scanning and close", async ({page}) => {
+  await page.addInitScript(() => { Object.defineProperty(navigator,"userAgent",{get:()=>"iPhone"}); });
+  await page.goto("/desk.html#settings/transfer");
+  await page.evaluate(async () => {
+    const {default:QRCode}=await import("/node_modules/.vite/deps/qrcode.js");
+    const canvas=document.createElement("canvas");
+    await QRCode.toCanvas(canvas,"runalytics:connections:1:synthetic-camera-code",{width:600});
+    window.__cameraStops=0;
+    navigator.mediaDevices.getUserMedia=async () => {
+      const stream=canvas.captureStream(5);
+      const timer=setInterval(()=>{canvas.getContext("2d").fillRect(0,0,1,1);},100);
+      for(const track of stream.getTracks()){const stop=track.stop.bind(track);track.stop=()=>{clearInterval(timer);window.__cameraStops+=1;stop();};}
+      return stream;
+    };
+  });
+  await page.getByRole("button",{name:"Import transfer QR",exact:true}).click();
+  let dialog=page.getByRole("dialog",{name:"Import connection transfer"});
+  await dialog.getByRole("button",{name:"Scan with camera",exact:true}).click();
+  await expect(dialog.getByRole("status")).toHaveText("QR code loaded.");
+  await expect.poll(()=>page.evaluate(()=>window.__cameraStops)).toBe(1);
+  await expect(dialog.locator("video")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia=async () => {
+      const canvas=document.createElement("canvas");canvas.width=400;canvas.height=400;
+      const stream=canvas.captureStream(5);
+      const timer=setInterval(()=>{canvas.getContext("2d").fillRect(0,0,1,1);},100);
+      for(const track of stream.getTracks()){const stop=track.stop.bind(track);track.stop=()=>{clearInterval(timer);window.__cameraStops+=1;stop();};}
+      return stream;
+    };
+  });
+  await page.getByRole("button",{name:"Import transfer QR",exact:true}).click();
+  dialog=page.getByRole("dialog",{name:"Import connection transfer"});
+  await dialog.getByRole("button",{name:"Scan with camera",exact:true}).click();
+  await expect(dialog.locator("video")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(()=>page.evaluate(()=>window.__cameraStops)).toBe(2);
+});
+
+for(const width of [320,390,1440]) for(const theme of ["light","dark"]) {
+  test(`connection transfer dialog fits ${width}px ${theme}`,async ({page})=>{
+    await page.setViewportSize({width,height:844});
+    await page.goto(`/desk.html?theme=${theme}#settings/transfer`);
+    await page.getByRole("button",{name:"Create transfer QR",exact:true}).click();
+    const dialog=page.getByRole("dialog",{name:"Create connection transfer"});
+    await dialog.getByLabel("Transfer passphrase",{exact:true}).fill("synthetic transfer passphrase");
+    await dialog.getByRole("button",{name:"Generate encrypted QR",exact:true}).click();
+    await expect(dialog.getByRole("img")).toBeVisible();
+    await expect(dialog.getByRole("region",{name:"Transfer contents"}).getByRole("listitem")).toHaveCount(6);
+    const qr = await dialog.getByRole("img",{name:"Encrypted connection transfer QR code",exact:true}).evaluate(async image => {
+      await image.decode();
+      const {default:jsQR}=await import("/node_modules/.vite/deps/jsqr.js");
+      const canvas=document.createElement("canvas");canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+      const context=canvas.getContext("2d");context.drawImage(image,0,0);
+      const pixels=context.getImageData(0,0,canvas.width,canvas.height);
+      return {code:jsQR(pixels.data,pixels.width,pixels.height)?.data,background:[...pixels.data.slice(0,3)]};
+    });
+    expect(qr.code).toMatch(/^runalytics:connections:1:/);
+    expect(qr.background).toEqual(theme === "dark" ? [36,38,44] : [255,255,255]);
+    const footerGap=await dialog.locator(".transfer-export-footer").evaluate(element=>{
+      const [link,text]=[...element.children].map(child=>child.getBoundingClientRect());
+      return text.top-link.bottom;
+    });
+    expect(footerGap).toBeGreaterThanOrEqual(16);
+    expect(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
+    expect((await new AxeBuilder({page}).include(".desk-dialog").analyze()).violations).toEqual([]);
+    await page.screenshot({path:test.info().outputPath(`qr-${width}-${theme}.png`),fullPage:true});
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button",{name:"Import transfer QR",exact:true}).click();
+    const importer=page.getByRole("dialog",{name:"Import connection transfer"});
+    await expect(importer.getByRole("button",{name:"Scan with camera",exact:true})).toHaveCount(0);
+    const formGaps=await importer.locator("form").evaluate(element=>{
+      const children=[...element.children].map(child=>child.getBoundingClientRect());
+      return children.slice(1).map((child,index)=>child.top-children[index].bottom);
+    });
+    expect(formGaps.every(gap=>gap>=20)).toBe(true);
+    expect(await importer.evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
+    expect((await new AxeBuilder({page}).include(".desk-dialog").analyze()).violations).toEqual([]);
+    await page.screenshot({path:test.info().outputPath(`qr-import-${width}-${theme}.png`),fullPage:true});
+  });
+}
+
+test("calendar connections separate subscription actions from device setup", async ({ page }) => {
+  await page.goto("/desk.html?calendarReady=1#settings/calendar");
+  await expect(page.getByRole("button", {name:"Open in calendar app", exact:true})).toBeVisible();
+  await expect(page.getByLabel("Upload URL", {exact:true})).toBeHidden();
+  await expect(page.getByRole("button", {name:"Copy calendar link", exact:true})).toBeHidden();
+  await expect(page.getByRole("checkbox", {name:"Sync this plan across devices"})).toHaveCount(0);
+  await page.getByRole("button", {name:"More options", exact:true}).click();
+  await expect(page.getByRole("button", {name:"Copy calendar link", exact:true})).toBeVisible();
+  await page.getByRole("button", {name:"Stop publishing", exact:true}).click();
+  const dialog = page.getByRole("dialog", {name:"Stop calendar publishing?", exact:true});
+  await expect(dialog).toContainText("existing feed and saved credentials are kept");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "save_calendar_publishing"))).toBe(false);
+  await dialog.getByRole("button", {name:"Keep publishing", exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", {name:"Stop publishing", exact:true}).click();
+  await dialog.getByRole("button", {name:"Stop publishing", exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("Calendar publishing is off", {exact:true})).toBeVisible();
+  const saved = await page.evaluate(() => window.__deskCalls.find(call => call.command === "save_calendar_publishing").args);
+  expect(saved.password).toBeNull();
+  expect(saved.config.enabled).toBe(false);
+  expect(saved.config.lastPublished).toBe("2026-10-29T12:00:00Z");
+});
+
+test("calendar connections retain failed drafts and offer publishing retry", async ({ page }) => {
+  await page.goto("/desk.html#settings/calendar");
+  await page.getByRole("button", {name:"Connect a calendar", exact:true}).click();
+  await page.getByLabel("Upload URL", {exact:true}).fill("https://example.test/draft.ics");
+  await page.getByLabel("Password or token", {exact:true}).fill("synthetic-calendar-token");
+  await page.evaluate(() => { window.__deskFail="save_calendar_publishing"; });
+  await page.getByRole("button", {name:"Save calendar settings", exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("Unable to save right now");
+  await expect(page.getByLabel("Upload URL", {exact:true})).toHaveValue("https://example.test/draft.ics");
+  await expect(page.getByLabel("Password or token", {exact:true})).toHaveValue("synthetic-calendar-token");
+  await page.goto("/desk.html?calendarError=1#settings/calendar");
+  await expect(page.getByText("Calendar host unavailable", {exact:true})).toBeVisible();
+  await page.getByRole("button", {name:"Retry publishing", exact:true}).click();
+  await expect(page.getByText("Calendar feed available", {exact:true})).toBeVisible();
+  await expect(page.getByRole("button", {name:"Open in calendar app", exact:true})).toBeVisible();
+});
+
+test("calendar connections never report a failed upload as published", async ({page}) => {
+  await page.goto("/desk.html?calendarError=1&calendarUploadFails=1#settings/calendar");
+  await page.getByRole("button", {name:"Retry publishing", exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("Calendar upload failed");
+  await expect(page.getByRole("status")).not.toContainText("Calendar feed published.");
+  await expect(page.getByRole("button", {name:"Retry publishing", exact:true})).toBeVisible();
+});
+
+for (const [state, action] of [["unpublished", "Sync now"], ["updateAvailable", "Update this device"], ["importAvailable", "Get my plan"], ["otherPlan", "Review plans"]]) {
+  test(`device connections select one main action for ${state}`, async ({page}) => {
+    await page.goto(`/desk.html?syncState=${state}${state === "otherPlan" ? "&syncConflict=1" : ""}#settings/devices`);
+    await expect(page.locator(".settings-editor .desk-button.primary:visible")).toHaveCount(1);
+    await expect(page.getByRole("button", {name:action, exact:true})).toBeVisible();
+    await expect(page.getByRole("button", {name:"Publish plan", exact:true})).toHaveCount(0);
+    await expect(page.getByRole("button", {name:"Import plan", exact:true})).toHaveCount(0);
+    await page.getByRole("button", {name:action, exact:true}).click();
+    if (state !== "unpublished") {
+      await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_pull").map(call => call.args.force))).toEqual([false]);
+    }
+    if (state === "otherPlan") await expect(page.getByRole("dialog", {name:"Replace the plan on this device?"})).toBeVisible();
+  });
+}
+
+test("device connections save credentials independently and retain failed drafts", async ({page}) => {
+  await page.goto("/desk.html?syncSetup=1#settings/devices");
+  await page.getByRole("button", {name:"Set up device sync", exact:true}).click();
+  await page.getByLabel("GitHub token", {exact:true}).fill("synthetic-device-token");
+  await page.evaluate(() => { window.__deskFail="plan_sync_configure"; });
+  await page.getByRole("button", {name:"Save device connection", exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("Unable to save right now");
+  await expect(page.getByLabel("GitHub token", {exact:true})).toHaveValue("synthetic-device-token");
+  await page.evaluate(() => { window.__deskFail=""; });
+  await page.getByRole("button", {name:"Save device connection", exact:true}).click();
+  await expect(page.getByText("Plan up to date", {exact:true})).toBeVisible();
+  await expect(page.getByLabel("GitHub token", {exact:true})).toHaveValue("");
+  const calls = await page.evaluate(() => window.__deskCalls);
+  expect(calls.filter(call => call.command === "plan_sync_configure").at(-1).args).toEqual({config:{enabled:true},token:"synthetic-device-token"});
+  expect(calls.some(call => call.command === "save_calendar_publishing" || call.command === "publish_calendar")).toBe(false);
+});
+
+test("device connections keep settings accessible when checks fail or prerequisites are missing", async ({page}) => {
+  await page.addInitScript(() => { window.__deskFail="plan_sync_check"; });
+  await page.goto("/desk.html#settings/devices");
+  await expect(page.getByRole("button", {name:"Retry sync", exact:true})).toBeVisible();
+  await page.getByRole("button", {name:"More options", exact:true}).click();
+  await page.getByRole("button", {name:"Connection settings", exact:true}).click();
+  await expect(page.getByLabel("GitHub token", {exact:true})).toBeVisible();
+  await page.goto("/desk.html?noAccount=1#settings/devices");
+  await expect(page.getByRole("link", {name:"Connect COROS"})).toHaveAttribute("href", "#settings/watch");
+  await expect(page.getByRole("button", {name:"Retry sync", exact:true})).toHaveCount(0);
+  await page.goto("/desk.html?syncPaused=1#settings/devices");
+  await expect(page.getByText("Device sync paused", {exact:true})).toBeVisible();
+});
+
+for (const width of [320,390,768,820,1440]) for (const theme of ["light","dark"]) {
+  test(`calendar connections fit ${width}px ${theme}`, async ({page}) => {
+    await page.setViewportSize({width,height:900});
+    await page.goto(`/desk.html?calendarReady=1&theme=${theme}#settings/calendar`);
+    const more = page.getByRole("button", {name:"More options", exact:true});
+    const collapsedBackground = await more.evaluate(element => getComputedStyle(element).backgroundColor);
+    await page.getByRole("button", {name:"More options", exact:true}).click();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await expect(more.locator(".disclosure-indicator")).toHaveCSS("rotate", "180deg");
+    await expect.poll(() => more.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(collapsedBackground);
+    await page.getByRole("button", {name:"Connection settings", exact:true}).click();
+    const connection = page.getByRole("button", {name:"Connection settings", exact:true});
+    await expect(connection).toHaveAttribute("aria-expanded", "true");
+    await expect(connection.locator(".disclosure-indicator")).toHaveCSS("rotate", "180deg");
+    const gaps = await page.locator("#calendar-options .connection-options").evaluate(element => {
+      const children = [...element.children].map(child => child.getBoundingClientRect());
+      return children.slice(1).map((child, index) => child.top - children[index].bottom);
+    });
+    expect(gaps.every(gap => gap >= 16)).toBe(true);
+    await expect(page.getByLabel("Upload URL", {exact:true})).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect((await new AxeBuilder({page}).include(".settings-editor").analyze()).violations).toEqual([]);
+    await page.screenshot({path:test.info().outputPath(`calendar-${width}-${theme}.png`),fullPage:true});
+    await page.getByRole("button", {name:"Connection settings", exact:true}).click();
+    await expect(connection).toHaveAttribute("aria-expanded", "false");
+    await expect(connection.locator(".disclosure-indicator")).toHaveCSS("rotate", "0deg");
+    await expect(page.getByLabel("Upload URL", {exact:true})).toBeHidden();
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.closest("#calendar-setup") !== null)).toBe(false);
+  });
+}
 
 test("clearing training data needs confirmation and never touches recorded history", async ({ page }) => {
   await page.goto("/desk.html#settings/training");
   await expect(page.getByRole("link", { name: "Only end the current plan" })).toHaveAttribute("href", "#training/plan");
-  await expect(page.getByRole("button", { name: "Remove all saved plans", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Remove all saved plans", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Pending plan offers are also removed. This cannot be undone.");
+  await expect(page.getByRole("button", { name: "Clear plans and scheduled training", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Clear plans and scheduled training", exact: true }).click();
+  const confirmation = page.getByRole("dialog");
+  await expect(confirmation).toContainText("This cannot be undone.");
+  await expect(confirmation).toContainText("This device's database:");
+  await expect(confirmation).toContainText("past and upcoming");
+  await expect(confirmation).toContainText("Other devices receive the clear on their next successful sync");
+  await expect(confirmation).toContainText("The Gist itself is not deleted");
+  await expect(confirmation).toContainText("previously imported calendar snapshots are not removed");
+  await expect(confirmation).toContainText("Recorded activities, GPS tracks, health history, pain entries and connection credentials stay");
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toEqual([]);
   await page.getByRole("button", { name: "Keep my plans", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Remove all saved plans", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Remove all saved plans", exact: true }).click();
+  await page.getByRole("button", { name: "Clear plans and scheduled training", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Clear plans and scheduled training", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "clear_local_plan_data"))).toHaveLength(1);
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "delete_pain_entry" || call.command === "clear_pain_messages"))).toBe(false);
-  await expect(page.getByRole("button", { name: "Remove all saved plans", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Clear plans and scheduled training", exact: true })).toBeDisabled();
 });
 
 test("plan import only overwrites after explicit confirmation", async ({ page }) => {
-  await page.goto("/desk.html?syncConflict=1#settings/calendar");
-  await page.getByRole("button", { name: "Import plan", exact: true }).click();
+  await page.goto("/desk.html?syncConflict=1#settings/devices");
+  await page.getByRole("button", { name: "Review plans", exact: true }).click();
   await expect(page.getByRole("dialog", {name:"Replace the plan on this device?"})).toBeVisible();
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_pull").map(call => call.args.force))).toEqual([false]);
   await page.getByRole("button", { name:"Keep local plan" }).click();
-  await page.getByRole("button", { name:"Import plan", exact:true }).click();
+  await page.getByRole("button", { name:"Review plans", exact:true }).click();
   await page.getByRole("button", { name:"Replace local plan", exact:true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("status").last()).toContainText("Imported 33 sessions");
@@ -2239,10 +2682,11 @@ for (const width of [320, 1440]) {
       ["health", "Estimate basis", "Riegel model"],
       ["health/pace", "About pace insights", "Rep boundaries are inferred"],
       ["settings/watch", "Connection diagnostics", "Check COROS API"],
-      ["settings/calendar", "Local calendar file", "Reveal calendar"],
+      ["settings/devices", "Sync diagnostics", "synthetic-account-channel"],
       ["help", "A recent workout is missing", "Check watch connection"],
     ]) {
       await page.goto(`/desk.html#${route}`);
+      if (route === "settings/devices") await page.getByRole("button", { name: "More options", exact: true }).click();
       if (route === "health" && title !== "Data for readiness") {
         const detailsToggle = page.getByRole("button", { name: /^(Show|Hide) health details$/ });
         await expect(detailsToggle).toBeVisible();
@@ -2309,6 +2753,11 @@ for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
     await emitStage(page, { op: "sync", target: "op", state: "done" });
     await expect(toast.locator(".stage-line")).toHaveText(["Updated local DB", "Updated calendar", "Updated gist", pending]);
     await expect(toast.locator(".stage-working")).toHaveCount(0);
+    await expect(toast.locator(".stage-done > .tabler-icon-check")).toHaveCount(4);
+    for (const icon of await toast.locator(".stage-done > svg").all()) {
+      await expect(icon).toHaveCSS("opacity", "1");
+      expect(await icon.evaluate(element => getComputedStyle(element).color === getComputedStyle(element.parentElement).color)).toBe(true);
+    }
     await expect(toast.locator(".stage-ring")).toHaveCount(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const box = await toast.boundingBox();
@@ -2321,6 +2770,7 @@ for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
     await emitStage(page, { op: "sync", target: "op", state: "error" });
     await expect(toast.locator(".stage-line")).toHaveCount(1);
     await expect(toast.locator(".stage-error")).toContainText("Updating Strava failed: Strava Keychain is unavailable.");
+    await expect(toast.locator(".stage-error > .tabler-icon-x")).toBeVisible();
     await expect(toast.locator(".stage-ring")).toHaveCount(1);
     await page.mouse.move(0, 0);
     await expect(toast).toBeHidden({ timeout: 12000 });
@@ -2462,6 +2912,11 @@ for (const width of [320, 390, 768, 1440]) {
     const detail = progress.locator(".stage-line").last();
     await expect(detail).toContainText("Waiting for the watch activity");
     expect(await detail.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    for (const notification of [notice, progress]) {
+      const content = await notification.locator(".notice-content").boundingBox();
+      const dismissButton = await notification.getByRole("button", { name: "Dismiss notification" }).boundingBox();
+      expect(Math.abs(content.y + content.height / 2 - dismissButton.y - dismissButton.height / 2)).toBeLessThan(1);
+    }
     const progressBox = await progress.boundingBox();
     const noticeBox = await notice.boundingBox();
     expect(progressBox.y + progressBox.height <= noticeBox.y || noticeBox.y + noticeBox.height <= progressBox.y).toBe(true);

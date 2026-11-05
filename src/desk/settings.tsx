@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { IconArrowLeft, IconChevronRight, IconDeviceWatch, IconPalette, IconAdjustments, IconMap, IconCalendarShare, IconCalendarEvent, IconMessage, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh, IconBrandStrava, IconLink, IconUnlink, IconDeviceFloppy } from "@tabler/icons-react";
+import { IconArrowLeft, IconChevronDown, IconChevronRight, IconDeviceWatch, IconPalette, IconAdjustments, IconMap, IconCalendarShare, IconCalendarEvent, IconMessage, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh, IconBrandStrava, IconLink, IconUnlink, IconDeviceFloppy } from "@tabler/icons-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -8,15 +8,18 @@ import type { CalendarPublishing, PaletteId, Settings, Thresholds } from "../lib
 import { displayPlanName } from "../lib/types";
 import { navigate, patchSettings, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, Dialog, Empty, ErrorNotice, InfoDialog, Loading } from "./ui";
-import { Change, Presence } from "./interaction";
+import { Change, Disclosure, Presence } from "./interaction";
+import { ConnectionTransfer } from "./connection-transfer";
 
 const tasks = [
   { id: "watch", title: "Watch connection", detail: "COROS, sign-in, history sync, API diagnostics", Icon: IconDeviceWatch },
   { id: "strava", title: "Strava", detail: "Connection, paired activity descriptions, sync status", Icon: IconBrandStrava },
   { id: "appearance", title: "Appearance", detail: "System theme, light, dark, colour palette", Icon: IconPalette },
   { id: "thresholds", title: "Training boundaries", detail: "Load, recovery, build cycle, pace tolerance", Icon: IconAdjustments },
-  { id: "training", title: "Training data", detail: "Remove all saved plans, sessions and plan offers", Icon: IconCalendarEvent },
-  { id: "calendar", title: "Calendar and devices", detail: "Calendar subscription, publishing, plan sync", Icon: IconCalendarShare },
+  { id: "training", title: "Training data", detail: "Clear plans and scheduled training, local and synced copies", Icon: IconCalendarEvent },
+  { id: "calendar", title: "Calendar apps", detail: "Read-only subscription, calendar link, file snapshot", Icon: IconCalendarShare },
+  { id: "devices", title: "Device sync", detail: "Keep your Runalytics plan up to date across devices", Icon: IconRefresh },
+  { id: "transfer", title: "Transfer connections", detail: "Encrypted QR export and import, calendar, GitHub and Strava credentials", Icon: IconCopy },
   { id: "assistant", title: "Injury assistant", detail: "Provider, model, secure API key, privacy", Icon: IconMessage },
   { id: "maps", title: "Offline maps", detail: "Local PMTiles archive and map source", Icon: IconMap },
   { id: "about", title: "About and updates", detail: "App version, releases, install an update", Icon: IconInfoCircle },
@@ -28,9 +31,14 @@ export function SettingsWorkspace() {
   const aliases: Record<string, string> = { setup: "watch", zones: "thresholds", tiles: "maps", theme: "appearance", publishing: "calendar" };
   const section = aliases[route.section] ?? route.section;
   const selected = tasks.find(task => task.id === section);
+  const connectionIds = ["watch", "strava", "calendar", "devices", "transfer", "assistant"];
+  const groups = [
+    { id: "connections", title: "Third-party connections", items: ["watch", "transfer", "devices", "calendar", "strava", "assistant"].map(id => tasks.find(task => task.id === id)!) },
+    { id: "general", title: "General", items: tasks.filter(task => !connectionIds.includes(task.id)) },
+  ].map(group => ({...group, items:group.items.filter(task => `${group.title} ${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase()))}));
   return <Change identity={section}>{selected ? <section className="settings-editor"><Button onClick={() => navigate("settings")}><IconArrowLeft size={18} />All settings</Button><header><selected.Icon size={24} aria-hidden="true" /><h2>{selected.title}</h2></header>
-    {section === "watch" ? <WatchSettings /> : section === "strava" ? <StravaSettings /> : section === "appearance" ? <Appearance /> : section === "thresholds" ? <TrainingBoundaries /> : section === "training" ? <TrainingData /> : section === "calendar" ? <CalendarSettings /> : section === "assistant" ? <AssistantSettings /> : section === "maps" ? <MapSettings /> : <About />}
-  </section> : <section className="settings-directory"><label className="search-field"><IconSearch size={20} /><input type="search" aria-label="Search settings" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a setting" /></label><div className="settings-task-list">{tasks.filter(task => `${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase())).map(task => <a key={task.id} href={`#settings/${task.id}`}><task.Icon size={25} aria-hidden="true" /><span><strong>{task.title}</strong><small>{task.detail}</small></span><IconChevronRight size={18} aria-hidden="true" /></a>)}</div>{!tasks.some(task => `${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase())) && <Empty title="No matching settings" action={<Button onClick={() => setQuery("")}>Clear search</Button>} />}</section>}</Change>;
+    {section === "watch" ? <WatchSettings /> : section === "strava" ? <StravaSettings /> : section === "appearance" ? <Appearance /> : section === "thresholds" ? <TrainingBoundaries /> : section === "training" ? <TrainingData /> : section === "calendar" ? <CalendarSettings /> : section === "devices" ? <DeviceSync /> : section === "transfer" ? <ConnectionTransfer /> : section === "assistant" ? <AssistantSettings /> : section === "maps" ? <MapSettings /> : <About />}
+  </section> : <section className="settings-directory"><label className="search-field"><IconSearch size={20} /><input type="search" aria-label="Search settings" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a setting" /></label>{groups.filter(group => group.items.length > 0).map(group => <section className="settings-group" key={group.id} aria-labelledby={`settings-${group.id}`}><h2 id={`settings-${group.id}`}>{group.title}</h2><div className="settings-task-list">{group.items.map(task => <a key={task.id} href={`#settings/${task.id}`}><task.Icon size={25} aria-hidden="true" /><span><strong>{task.title}</strong><small>{task.detail}</small></span><IconChevronRight size={18} aria-hidden="true" /></a>)}</div></section>)}{groups.every(group => group.items.length === 0) && <Empty title="No matching settings" action={<Button onClick={() => setQuery("")}>Clear search</Button>} />}</section>}</Change>;
 }
 
 function WatchSettings() {
@@ -192,20 +200,27 @@ function TrainingData() {
   const { refresh, notify } = useWorkspace();
   const [confirm, setConfirm] = useState(false);
   const plan = current.data?.[0];
+  const scope = <ul className="plain-list">
+    <li><strong>This device's database:</strong> deletes all saved plans, including drafts and older plans, all their planned sessions (past and upcoming), and pending plan adjustments.</li>
+    <li><strong>GitHub Gist and other Runalytics devices:</strong> when device sync is enabled and connected, attempts to publish the cleared plan to the existing Gist. Other devices receive the clear on their next successful sync. The Gist itself is not deleted. With sync off or failing, other devices are not cleared.</li>
+    <li><strong>COROS:</strong> attempts to cancel the schedules of plans published from Runalytics. This does not delete recorded runs or remove the plan entry from COROS.</li>
+    <li><strong>Calendar:</strong> regenerates this device's calendar file and, when calendar publishing is enabled, attempts to upload the updated feed. Calendar apps fetch it on their own schedule; previously imported calendar snapshots are not removed.</li>
+  </ul>;
   return <><ErrorNotice error={current.error ?? command.error} retry={current.retry} />{current.loading ? <Loading /> : <>
     <p className="muted">{plan ? `This device holds one plan: ${displayPlanName(plan)}.` : "This device holds no plan right now."}</p>
-    <p>Remove every saved plan, including older plans and drafts, their scheduled sessions and pending plan offers. Recorded activities, health history and pain entries are kept.</p>
-    <p>Runalytics will attempt to cancel published plans on COROS and update your calendar and connected devices so removed plans do not return on the next sync.</p>
+    <p>This is not a local-only reset. It clears saved plans and their scheduled training here and can propagate the cleared plan to your other devices.</p>
+    {scope}
+    <p>Recorded activities, GPS tracks, health history, pain entries, connection settings and credentials are kept. Remote updates can fail after local deletion; check sync results and external calendars afterward.</p>
     {plan && <a className="desk-button normal context-link" href="#training/plan">Only end the current plan<IconChevronRight size={18} /></a>}
-    <div className="form-actions"><Button tone="danger" disabled={!plan} onClick={() => setConfirm(true)}>Remove all saved plans</Button></div>
-  </>}<Presence>{confirm && <Dialog title="Remove all saved plans?" onClose={() => setConfirm(false)}><p>{plan ? `${displayPlanName(plan)}, any other saved plans and all their scheduled sessions will be deleted.` : "All saved plans and scheduled sessions will be deleted."} Pending plan offers are also removed. This cannot be undone.</p><p>Recorded activities, health history and pain entries stay. Runalytics will attempt to clear the published schedules on COROS and update your calendar and connected devices.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirm(false)}>Keep my plans</Button><Button tone="danger" busy={command.busy} onClick={async () => {
-    if (await command.run(async () => { await tauri.clearLocalPlanData(); refresh(); }, "Saved plans removed.")) { setConfirm(false); notify("All saved plans removed. Your recorded history is retained."); }
-  }}>Remove all saved plans</Button></div></Dialog>}</Presence></>;
+    <div className="form-actions"><Button tone="danger" disabled={!plan} onClick={() => setConfirm(true)}>Clear plans and scheduled training</Button></div>
+  </>}<Presence>{confirm && <Dialog title="Clear plans and scheduled training?" onClose={() => setConfirm(false)}><p>{plan ? `${displayPlanName(plan)} and every other saved plan on this device will be deleted.` : "All saved plans on this device will be deleted."} This cannot be undone.</p>{scope}<p>Recorded activities, GPS tracks, health history, pain entries and connection credentials stay. This is not a local-only reset. Remote cleanup is not guaranteed; check sync results afterward.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirm(false)}>Keep my plans</Button><Button tone="danger" busy={command.busy} onClick={async () => {
+    if (await command.run(async () => { await tauri.clearLocalPlanData(); refresh(); })) { setConfirm(false); notify("Local plans and scheduled training cleared. Check sync results for other devices, COROS and your calendar. Recorded history is retained."); }
+  }}>Clear plans and scheduled training</Button></div></Dialog>}</Presence></>;
 }
 
 function CalendarSettings() {
   const data = useRemote(() => Promise.all([tauri.calendarPublishing(), tauri.icsPath()]));
-  return <><ErrorNotice error={data.error} retry={data.retry} />{data.loading ? <Loading /> : data.data && <PublishingForm config={data.data[0]} path={data.data[1]} />}<DeviceSync /></>;
+  return <><ErrorNotice error={data.error} retry={data.retry} />{data.loading ? <Loading /> : data.data && <PublishingForm config={data.data[0]} path={data.data[1]} />}</>;
 }
 function PublishingForm({ config, path }: { config: CalendarPublishing; path: string }) {
   const [enabled, setEnabled] = useState(config.enabled);
@@ -214,34 +229,75 @@ function PublishingForm({ config, path }: { config: CalendarPublishing; path: st
   const [username, setUsername] = useState(config.username);
   const [secret, setSecret] = useState("");
   const [clear, setClear] = useState(false);
+  const [setup, setSetup] = useState(false);
+  const [options, setOptions] = useState(false);
+  const [disconnect, setDisconnect] = useState(false);
   const command = useCommand();
   const { notify } = useWorkspace();
-  const ready = Boolean(config.lastPublished && config.subscriptionUrl);
-  return <section><h3>Calendar subscription</h3><p className="muted" role="status">{config.lastError || (config.lastPublished ? `Last published ${fmtDateTime(config.lastPublished)}` : "Not published yet.")}</p><form onSubmit={async event => {
+  const ready = Boolean(config.enabled && config.lastPublished && config.subscriptionUrl);
+  const publish = () => command.run(async () => {
+    await tauri.publishCalendar();
+    const latest = await tauri.calendarPublishing();
+    if (latest.lastError) throw new Error(latest.lastError);
+  }, "Calendar feed published. Your calendar app may take time to fetch it.");
+  return <section><div className="connection-summary"><strong>{!config.enabled ? "Calendar publishing is off" : config.lastError ? "Calendar publishing needs attention" : ready ? "Calendar feed available" : "Calendar feed not published yet"}</strong><p role="status">{config.lastError || (config.lastPublished ? `Last published ${fmtDateTime(config.lastPublished)}` : "No calendar feed published.")}</p></div>
+    <p className="muted">A read-only subscription to your training schedule. Changes in your calendar app do not change your Runalytics plan. Your calendar app controls when it fetches updates.</p>
+    <div className="form-actions">{!config.enabled ? <Button tone="primary" aria-expanded={setup} aria-controls="calendar-setup" onClick={() => { setEnabled(true); setSetup(!setup); }}><IconCalendarShare size={18} />Connect a calendar</Button> : config.lastError || !ready ? <Button tone="primary" busy={command.busy} onClick={() => void publish()}><IconRefresh size={18} />{config.lastError ? "Retry publishing" : "Publish calendar feed"}</Button> : <Button tone="primary" busy={command.busy} onClick={() => void command.run(() => openUrl(config.subscriptionUrl.replace(/^https?:/, "webcal:")))}><IconCalendarShare size={18} />Open in calendar app</Button>}
+      <Button className="connection-disclosure" aria-expanded={options} aria-controls="calendar-options" onClick={() => setOptions(!options)}><IconChevronDown className="disclosure-indicator" size={18} />More options</Button></div>
+    <ErrorNotice error={command.error} />
+    <Disclosure id="calendar-options" open={options} className="connection-options"><div className="form-actions"><Button disabled={!ready} onClick={() => void command.run(async () => { await navigator.clipboard.writeText(config.subscriptionUrl); notify("Calendar link copied."); })}><IconCopy size={18} />Copy calendar link</Button><Button className="connection-disclosure" aria-expanded={setup} aria-controls="calendar-setup" onClick={() => setSetup(!setup)}><IconChevronDown className="disclosure-indicator" size={18} />Connection settings</Button><Button disabled={!inTauri} onClick={() => void command.run(() => revealItemInDir(path))}><IconFolder size={18} />Show calendar file</Button>{config.enabled && <Button tone="danger" onClick={() => setDisconnect(true)}><IconUnlink size={18} />Stop publishing</Button>}</div><p className="muted">A calendar file is a one-time snapshot, not an updating subscription.</p>{inTauri && <p className="file-path">{path}</p>}</Disclosure>
+    <Disclosure id="calendar-setup" open={setup}><section className="settings-section"><h3>Calendar hosting</h3><p className="muted">Use an existing GitHub Gist or a calendar host that accepts uploads. Save the connection, then open the feed in your calendar app.</p><form onSubmit={async event => {
     event.preventDefault();
     if (await command.run(async () => {
       const latest = await tauri.calendarPublishing();
       await tauri.saveCalendarPublishing({...latest,enabled,uploadUrl:upload.trim(),subscriptionUrl:subscription.trim(),username:username.trim()}, clear ? "" : secret || null);
-    }, "Calendar settings saved.")) { setSecret(""); setClear(false); }
-  }}><label className="toggle-setting"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />Publish calendar remotely</label><div className="form-grid"><label className="full">Upload URL<input type="url" required={enabled} value={upload} onChange={event => setUpload(event.target.value)} /></label><label className="full">Subscription URL<input type="url" required={enabled} value={subscription} onChange={event => setSubscription(event.target.value)} /></label><label>Username<input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} /></label><label>Password or token<input type="password" autoComplete="new-password" value={secret} onChange={event => setSecret(event.target.value)} placeholder={config.hasPassword ? "Saved in Keychain; leave blank to keep" : "Not configured"} /></label></div><label className="toggle-setting"><input type="checkbox" checked={clear} onChange={event => setClear(event.target.checked)} />Remove saved credential</label><Button type="submit" tone="primary" busy={command.busy}>Save calendar settings</Button></form><ErrorNotice error={command.error} /><div className="form-actions"><Button busy={command.busy} onClick={() => void command.run(tauri.publishCalendar, "Calendar refreshed.")}><IconRefresh size={18} />Refresh calendar</Button><Button disabled={!ready} onClick={() => void command.run(async () => { await navigator.clipboard.writeText(config.subscriptionUrl); notify("Subscription URL copied."); })}><IconCopy size={18} />Copy subscription</Button><Button disabled={!ready} onClick={() => void command.run(() => openUrl(config.subscriptionUrl.replace(/^https:/, "webcal:")))}>Subscribe</Button></div><InfoDialog title="Local calendar file"><p className="file-path">{path}</p><Button disabled={!inTauri} onClick={() => void command.run(() => revealItemInDir(path))}><IconFolder size={18} />Reveal calendar</Button><ErrorNotice error={command.error} /></InfoDialog></section>;
+    }, "Calendar settings saved.")) { setSecret(""); setClear(false); setSetup(false); }
+  }}><fieldset disabled={command.busy}><label className="toggle-setting"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />Publish calendar remotely</label><div className="form-grid"><label className="full">Upload URL<input type="url" required={enabled} value={upload} onChange={event => setUpload(event.target.value)} /></label><label className="full">Subscription URL<input type="url" required={enabled} value={subscription} onChange={event => setSubscription(event.target.value)} /></label><label>Username<input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} /></label><label>Password or token<input type="password" autoComplete="new-password" value={secret} onChange={event => setSecret(event.target.value)} placeholder={config.hasPassword ? "Saved in Keychain; leave blank to keep" : "Not configured"} /></label></div><label className="toggle-setting"><input type="checkbox" checked={clear} onChange={event => setClear(event.target.checked)} />Remove saved credential</label><Button type="submit" tone="primary" busy={command.busy}><IconDeviceFloppy size={18} />Save calendar settings</Button></fieldset></form></section></Disclosure>
+    <Presence>{disconnect && <Dialog title="Stop calendar publishing?" onClose={() => setDisconnect(false)}><p>Future changes will no longer be published. The existing feed and saved credentials are kept. Remove the subscription in your calendar app separately.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>Keep publishing</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(async () => { const latest = await tauri.calendarPublishing(); await tauri.saveCalendarPublishing({...latest,enabled:false}, null); }, "Calendar publishing stopped.")) { setEnabled(false); setDisconnect(false); } }}>Stop publishing</Button></div></Dialog>}</Presence></section>;
 }
 
 function DeviceSync() {
   const { planCheck } = useWorkspace();
-  const status = useRemote(tauri.planSyncStatus, [planCheck]);
+  const status = useRemote(async () => {
+    const connection = await tauri.planSyncStatus();
+    const ready = connection.config.enabled && connection.config.hasToken && connection.accountLinked;
+    const [checked, current] = await Promise.all([
+      (ready ? tauri.planSyncCheck() : Promise.resolve(null)).then(remote => ({remote, error:null}), error => ({remote:null, error:String(error)})),
+      tauri.currentPlan(),
+    ]);
+    return {...connection, remote:checked.remote, checkError:checked.error, local:current?.[0]};
+  }, [planCheck]);
   const command = useCommand();
   const { notify } = useWorkspace();
   const [conflict, setConflict] = useState<string | null>(null);
+  const [setup, setSetup] = useState(false);
+  const [options, setOptions] = useState(false);
+  const [token, setToken] = useState("");
   const config = status.data?.config;
+  const ready = Boolean(config?.enabled && config.hasToken && status.data?.accountLinked);
+  const remote = status.data?.remote;
+  const remoteStatus = remote?.status;
+  const syncError = config?.lastError || status.data?.checkError;
+  const needsAction = Boolean(syncError || (remoteStatus !== "upToDate" && (remote || status.data?.local)));
+  const sync = () => command.run(async () => {
+    await tauri.planSyncRefresh();
+    const latest = await tauri.planSyncStatus();
+    if (latest.config.lastError) throw new Error(latest.config.lastError);
+  }, "Device sync checked.");
   const pull = (force: boolean) => command.run(async () => {
     const result = await tauri.planSyncPull(force);
     if (result.conflict !== null) { setConflict(result.conflict); return; }
     setConflict(null);
     notify(result.installed ? `Imported ${result.workouts} sessions: ${result.planName}.` : "This device already has the newest plan.");
   });
-  return <section className="settings-section"><h3>Plan sync between devices</h3>
+  return <section>
     <ErrorNotice error={status.error ?? command.error} retry={status.retry} />
     {status.loading ? <Loading /> : config && <>
+      <div className="connection-summary"><strong>{!config.hasToken ? "Device sync not configured" : !config.enabled ? "Device sync paused" : !status.data?.accountLinked ? "Watch account required" : syncError ? "Device sync needs attention" : !remote && !status.data?.local ? "No plan to sync" : ({upToDate:"Plan up to date",unpublished:"Changes waiting to sync",updateAvailable:"A newer plan version is available",otherPlan:"Different plans on your devices",importAvailable:"Your plan is ready to download"})[remoteStatus ?? "unpublished"]}</strong><p role="status">{config.lastChecked ? `Last checked ${fmtDateTime(config.lastChecked)}` : "Not checked yet."}</p></div>
+      {ready && remote && remoteStatus !== "upToDate" && <p>{remote.planName} · {remote.workouts} sessions{status.data?.local && remoteStatus === "otherPlan" ? `; on this device: ${displayPlanName(status.data.local)}.` : "."}</p>}
+      {!status.data?.accountLinked && <a className="desk-button normal context-link" href="#settings/watch">Connect COROS<IconChevronRight size={18} /></a>}
+      <div className="form-actions">{!config.hasToken ? <Button tone="primary" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconLink size={18} />Set up device sync</Button> : ready && needsAction ? <Button tone="primary" busy={command.busy} onClick={() => void (remoteStatus === "otherPlan" || remoteStatus === "updateAvailable" || remoteStatus === "importAvailable" ? pull(false) : sync())}><IconRefresh size={18} />{syncError ? "Retry sync" : remoteStatus === "otherPlan" ? "Review plans" : remoteStatus === "updateAvailable" ? "Update this device" : remoteStatus === "importAvailable" ? "Get my plan" : "Sync now"}</Button> : null}
+        <Button className="connection-disclosure" aria-expanded={options} aria-controls="device-options" onClick={() => setOptions(!options)}><IconChevronDown className="disclosure-indicator" size={18} />More options</Button></div>
       <label className="toggle-setting"><input type="checkbox" disabled={command.busy} checked={config.enabled} onChange={event => {
         const enabled = event.target.checked;
         void command.run(async () => {
@@ -249,19 +305,21 @@ function DeviceSync() {
           if (enabled) window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
         }, "Plan sync preference saved.");
       }} />Sync this plan across devices</label>
-      <p className="muted">{!status.data?.accountLinked ? "Connect the same COROS account on both devices." : !config.hasToken ? "Save a GitHub token with gist scope in calendar publishing on both devices." : "Both devices can edit. The Gist is authoritative when changes conflict."}</p>
-      <dl className="definition-list">
+      <p className="muted">Use the same COROS account and GitHub token on each device. Calendar publishing is not required.</p>
+      <Disclosure id="device-options" open={options} className="connection-options"><div className="form-actions">{!needsAction && <Button disabled={!ready} busy={command.busy} onClick={() => void sync()}><IconRefresh size={18} />Sync now</Button>}<Button className="connection-disclosure" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconChevronDown className="disclosure-indicator" size={18} />Connection settings</Button></div><InfoDialog title="Sync diagnostics"><dl className="definition-list">
         <div><dt>Channel</dt><dd className="file-path">{status.data?.code ?? "Unavailable until COROS is connected"}</dd></div>
         <div><dt>Last checked</dt><dd>{config.lastChecked ? fmtDateTime(config.lastChecked) : "Never"}</dd></div>
         <div><dt>Last published</dt><dd>{config.lastPushed ? fmtDateTime(config.lastPushed) : "Never"}</dd></div>
         <div><dt>Last imported</dt><dd>{config.lastPulled ? fmtDateTime(config.lastPulled) : "Never"}</dd></div>
-      </dl>
-      {config.lastError && <ErrorNotice error={config.lastError} />}
-      <div className="form-actions">
-        <Button disabled={!config.enabled || !config.hasToken || !status.data?.accountLinked} busy={command.busy} onClick={() => void command.run(tauri.planSyncRefresh)}><IconRefresh size={18} />Check now</Button>
-        <Button tone="primary" disabled={!config.enabled || !config.hasToken || !status.data?.accountLinked} busy={command.busy} onClick={() => void command.run(tauri.planSyncPush, "Plan published to the Gist.")}>Publish plan</Button>
-        <Button disabled={!config.enabled || !config.hasToken || !status.data?.accountLinked} busy={command.busy} onClick={() => void pull(false)}>Import plan</Button>
-      </div>
+      </dl></InfoDialog></Disclosure>
+      <Disclosure id="device-setup" open={setup}><section className="settings-section"><h3>GitHub connection</h3><p className="muted">A personal access token with gist scope is needed on each device. It stays in Keychain and is also used by GitHub calendar publishing.</p><form onSubmit={async event => {
+        event.preventDefault();
+        if (await command.run(async () => {
+          await tauri.planSyncConfigure({enabled:config.enabled || !config.hasToken}, token.trim() || null);
+          window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
+        }, "Device sync connection saved.")) { setToken(""); setSetup(false); }
+      }}><label>GitHub token<input type="password" autoComplete="new-password" required={!config.hasToken} value={token} onChange={event => setToken(event.target.value)} placeholder={config.hasToken ? "Saved in Keychain; leave blank to keep" : "Token with gist scope"} /></label><Button type="submit" tone="primary" busy={command.busy}><IconDeviceFloppy size={18} />Save device connection</Button></form></section></Disclosure>
+      {syncError && <ErrorNotice error={syncError} />}
     </>}
     <Presence>{conflict !== null && <Dialog title="Replace the plan on this device?" onClose={() => setConflict(null)}><p>{conflict}</p><p>The published plan will replace this device's local plan. Your recorded activities are kept.</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConflict(null)}>Keep local plan</Button><Button tone="danger" busy={command.busy} onClick={() => void pull(true)}>Replace local plan</Button></div></Dialog>}</Presence>
   </section>;
@@ -332,7 +390,7 @@ export function Help() {
     {title:"A recent workout is missing",text:"Confirm that your watch has synced to COROS, then sync history in Runalytics. Keep the app open until the sync completes.",href:"#settings/watch",action:"Check watch connection"},
     {title:"Move or skip a session",text:"Open a session in Training to choose a new date or skip it. The backend can refuse moves that place hard sessions too close together. A successful change offers Undo.",href:"#training/week",action:"Open training week"},
     {title:"Send a plan to the watch",text:"A saved local plan is not necessarily installed on your watch. Send or update it from Training. Failed publishing can be retried without recreating the plan.",href:"#training/plan",action:"Review plan"},
-    {title:"Bring the plan to another device",text:"Connect the same COROS account and save the same GitHub gist token on each device. Enable plan sync. The computer publishes; the receiving device imports. Replacing a different local plan requires confirmation.",href:"#settings/calendar",action:"Check calendar and devices"},
+    {title:"Bring the plan to another device",text:"Connect the same COROS account and save the same GitHub gist token on each device. Enable device sync. Both devices can edit the plan. Replacing a different local plan requires confirmation.",href:"#settings/devices",action:"Manage device sync"},
     {title:"Understand recovery and risk",text:"These indicators describe trends in synced training and health data. They are not a diagnosis. Log pain and seek medical advice for persistent, severe or concerning symptoms.",href:"#health/overview",action:"View health evidence"},
     {title:"Assistant privacy",text:"Questions can share the selected pain episode and its conversation with your configured provider. Keys are held in the system keychain. Removing the assistant does not delete journal entries; individual conversations can be cleared from their episode.",href:"#settings/assistant",action:"Manage assistant"},
     {title:"Review pace against the prescription",text:"Activity reviews compare recorded laps with planned target ranges. The kilometre split table compares each split with the previous kilometre, not with the target.",href:"#journal",action:"Open activities"},

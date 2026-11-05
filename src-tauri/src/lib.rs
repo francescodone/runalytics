@@ -206,6 +206,7 @@ pub fn run() {
             commands::apply_proposal,
             commands::dismiss_proposal,
             commands::llm_status,
+            calendar_publish::export_connection_settings,
             commands::set_llm_api_key,
             commands::clear_llm_api_key,
             commands::ask_assistant,

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle, fmtDateDMY } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
-import { IconLoader2, IconCheck, IconAlertCircle } from "@tabler/icons-react";
+import { IconLoader2, IconCheck, IconX } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
 import { Notification, NotificationViewport } from "./overlays";
 
@@ -228,7 +228,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }}>{notice.action.label}</button>}><Change identity={notice.text}><span>{notice.text}</span></Change></Notification>}</Presence>
     <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label="Plan sync progress" onDismiss={() => setStageOps({})} countdown={stagesQuiet}>
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
-        {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconAlertCircle size={16} aria-hidden="true" />}
+        {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
         <span>{stageText(line)}</span>
       </li>))}</ul>
     </Notification>}</Presence>

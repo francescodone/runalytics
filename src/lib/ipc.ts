@@ -219,10 +219,12 @@ export function fmtPaceHeld(sKm: number | null | undefined): string {
   return `@ ${fmtPace(sKm)}/km`;
 }
 
-export function fmtDuration(s: number): string {
+export function fmtDuration(s: number, includeSeconds = false): string {
+  if (includeSeconds) s = Math.round(s);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
+  const duration = h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
+  return includeSeconds ? `${duration} ${String(s % 60).padStart(2, "0")}s` : duration;
 }
 
 export function fmtKm(m: number): string {

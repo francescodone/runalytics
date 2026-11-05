@@ -225,6 +225,55 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify glass button refinement",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-glass-final-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'shared flat surfaces engage|dynamic aura tracks|shared aura touch|shared aura color|Prism settled rendering budget|Prism route matrix|Prism enlarged text|buttons preserve geometry|reduced motion keeps feedback|touch surfaces track' --workers=2 --reporter=line --output=/tmp/runalytics-glass-final && git diff --check",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify glass button states",
+			"type": "shell",
+			"command": "npx playwright test tests/prism.spec.mjs --grep 'glass buttons retain material|shared flat surfaces engage|Prism settled rendering budget' --workers=2 --reporter=line --output=/tmp/runalytics-glass-states",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify glass button final matrix",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-glass-verified-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'glass buttons retain material|shared flat surfaces engage|dynamic aura tracks|shared aura touch|shared aura color|Prism route matrix|Prism enlarged text|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-glass-final-matrix && git diff --check",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify unified glass controls",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-unified-glass-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'view controls share glass|glass buttons retain material|shared flat surfaces engage|dynamic aura tracks|shared aura touch|shared aura color|training cards visibly tilt|Prism route matrix|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-unified-glass-verified && git diff --check",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify matching card interactions",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-card-tilt-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'settings match calendar tilt|dynamic aura tracks|training cards visibly tilt|shared aura touch|Prism route matrix|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-card-tilt-final && git diff --check",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify plan card clearance",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-plan-card-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'plan cards remain inside|Prism route matrix|dynamic aura tracks|training cards visibly tilt|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-plan-card-final && git diff --check",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Verify long card depth",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-long-card-depth-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'settings use restrained tilt|dynamic aura tracks|training cards visibly tilt|plan cards remain inside|shared aura touch|Prism route matrix|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-long-card-depth-final && git diff --check",
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

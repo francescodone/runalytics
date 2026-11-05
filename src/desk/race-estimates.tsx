@@ -16,7 +16,7 @@ export function RaceEstimates({ plan, proposedOffset }: { plan: TrainingPlan; pr
     <table><caption className="sr-only">Race estimates from the plan threshold and accepted pace adjustment</caption><thead><tr><th>Distance</th><th>{preview ? "Current" : "Estimated time"}</th>{preview && <th>Proposed</th>}</tr></thead><tbody>{[["5 km",5],["10 km",10],["Half marathon",21.0975],["Marathon",42.195]].map(([label,kilometers]) => {
       const seconds = trainingRaceTime(plan.thresholdSecKm,current,Number(kilometers));
       const proposed = trainingRaceTime(plan.thresholdSecKm,proposedOffset ?? current,Number(kilometers));
-      return <tr key={label}><th scope="row">{label}</th><td data-seconds={seconds}>{seconds ? fmtDuration(seconds) : "Not available"}</td>{preview && <td data-seconds={proposed}>{proposed ? fmtDuration(proposed) : "Not available"}</td>}</tr>;
+      return <tr key={label}><th scope="row">{label}</th><td data-seconds={seconds}>{seconds ? fmtDuration(seconds, Number(kilometers) <= 10) : "Not available"}</td>{preview && <td data-seconds={proposed}>{proposed ? fmtDuration(proposed, Number(kilometers) <= 10) : "Not available"}</td>}</tr>;
     })}</tbody></table>
     <InfoDialog title="Estimate basis"><p>Riegel model (exponent 1.06), treating the plan threshold plus accepted quality-pace offset as a one-hour effort pace. Training performance is not a race result; course, endurance, weather and fatigue can change outcomes.</p></InfoDialog>
   </section>;

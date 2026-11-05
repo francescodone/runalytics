@@ -53,6 +53,14 @@ struct Tokens {
     athlete_id: i64,
 }
 
+pub(crate) fn transfer_credentials() -> Result<Option<serde_json::Value>> {
+    Ok(credentials()?.map(|config| serde_json::json!({
+        "clientId": config.client_id,
+        "clientSecret": config.client_secret,
+        "athleteId": config.tokens.as_ref().map(|tokens| tokens.athlete_id),
+    })))
+}
+
 fn credentials() -> Result<Option<Credentials>> {
     match secure_store::entry(SERVICE, "credentials")
         .map_err(|_| failure("Strava Keychain is unavailable."))?

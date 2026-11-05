@@ -56,6 +56,48 @@ fn credential(config: &Publishing) -> Result<keyring_core::Entry> {
         .map_err(|_| AppError::Other("Calendar Keychain entry unavailable".into()))
 }
 
+#[tauri::command]
+pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Result<serde_json::Value> {
+    let config = load(&state.data_dir)?;
+    let password = if config.has_password {
+        Some(credential(&config)?.get_password().map_err(|_| AppError::Other("Could not read the calendar credential for transfer".into()))?)
+    } else {
+        None
+    };
+    let github = crate::secure_store::entry(crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
+        .map_err(|_| AppError::Other("GitHub Keychain entry unavailable".into()))?;
+    let github_token = match github.get_password() {
+        Ok(token) => Some(token),
+        Err(keyring_core::Error::NoEntry) => None,
+        Err(_) => return Err(AppError::Other("Could not read the GitHub credential for transfer".into())),
+    };
+    let assistant_key = crate::secure_store::entry("com.fradone.runalytics.llm", "api_key")
+        .map_err(|_| AppError::Other("Assistant Keychain entry unavailable".into()))?;
+    let api_key = match assistant_key.get_password() {
+        Ok(key) => Some(key),
+        Err(keyring_core::Error::NoEntry) => None,
+        Err(_) => return Err(AppError::Other("Could not read the assistant credential for transfer".into())),
+    };
+    let settings = state.settings.lock().unwrap().clone();
+    let identity = crate::plan_sync::status(&state)?;
+    Ok(serde_json::json!({
+        "version": 1,
+        "created": Utc::now().timestamp(),
+        "calendar": {
+            "uploadUrl": config.upload_url,
+            "subscriptionUrl": config.subscription_url,
+            "username": config.username,
+            "password": password,
+        },
+        "githubToken": github_token,
+        "strava": crate::strava::transfer_credentials()?,
+        "identity": { "corosCode": identity.code },
+        "assistant": settings.llm_endpoint.map(|endpoint| serde_json::json!({
+            "endpoint": endpoint, "model": settings.llm_model, "apiKey": api_key,
+        })),
+    }))
+}
+
 /// Keep the app's shared GitHub entry in step with what the runner just did to
 /// the publishing credential.
 ///

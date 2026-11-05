@@ -23,6 +23,7 @@ export function Training() {
   const [cursor, setCursor] = useState(today);
   const [selectedDay, setSelectedDay] = useState(today);
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
+  const sessionOrigin = useRef<HTMLButtonElement | null>(null);
   const [create, setCreate] = useState(false);
   const [benchmark, setBenchmark] = useState(false);
   const [cancel, setCancel] = useState(false);
@@ -233,7 +234,7 @@ export function Training() {
         {receipt.data?.length ? <div className="data-table-scroll" tabIndex={0} role="region" aria-label="Plan receipt"><table><caption className="sr-only">How your answers shaped the plan</caption><thead><tr><th>Your input</th><th>What it did</th></tr></thead><tbody>{receipt.data.map((line, index) => <tr key={index}><th scope="row">{line.input}</th><td>{line.sentence}</td></tr>)}</tbody></table></div> : null}
         {defaults.data && <Predictions defaults={defaults.data} />}
         <RaceEstimates plan={plan} />
-        {remotePlan.data && <><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])}</td></tr></tbody></table></div><a className="desk-button normal context-link" href="#settings/calendar">Manage device sync</a></>}
+        {remotePlan.data && <><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Device plan"><table><caption className="sr-only">The plan on your other device</caption><tbody><tr><th scope="row">Device plan</th><td>{capitalizeFirst(({upToDate:"up to date",unpublished:"not yet published",updateAvailable:"update available",otherPlan:"different plan on the other device",importAvailable:"ready to import"})[remotePlan.data.status])}</td></tr></tbody></table></div><a className="desk-button normal context-link" href="#settings/devices">Manage device sync</a></>}
         <Button tone="danger" onClick={() => { cancelPlanId.current = plan.id; setCancel(true); }}>End current plan</Button>
       </> : <p className="muted">Your recent mileage and threshold pace establish the starting load. Plan generation remains local.</p>}</Disclosure></section>
     </div> : <>
@@ -245,17 +246,17 @@ export function Training() {
             <SelectionGroup><div className="mobile-date-ribbon" role="region" tabIndex={0} aria-label="Days this week">{days.map(date => <button key={date} data-drop-day={date} onClick={() => selectDate(date)} aria-pressed={date === selectedDay} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>{date === selectedDay && <SelectionMarker />}<span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong><i className={(events.data ?? []).some(event => event.date === date) ? "has-session" : ""} /></button>)}</div></SelectionGroup>
             <div className="week-board">{days.map(date => <section className={`day-lane ${date === today() ? "is-today" : ""}`} data-drop-day={date} key={date} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>
               <header><span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong>{date === today() && <small>Today</small>}</header>
-              <div className="day-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={event.id === selected?.id} onSelect={() => { setSelected(event); setSelectedDay(event.date); }} />)}
+              <div className="day-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={event.id === selected?.id} onSelect={origin => { sessionOrigin.current = origin; setSelected(event); setSelectedDay(event.date); }} />)}
               {!(events.data ?? []).some(event => event.date === date) && <p className="rest-label">Rest day</p>}</div>
             </section>)}</div>
           </> : <div className="month-board" role="region" tabIndex={0} aria-label="Month dates"><div className="month-labels">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div><div className="month-dates">{days.map(date => <div className={`month-day ${date.slice(0, 7) !== cursor.slice(0, 7) ? "outside-month" : ""}`} data-drop-day={date} key={date}>
             {compact ? <button type="button" className="month-number" data-date={date} onClick={() => selectDate(date)} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`} aria-pressed={date === selectedDay} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}<i aria-hidden="true">{(events.data ?? []).filter(event => event.date === date).length || ""}</i></button> : <time className="month-number" data-date={date} dateTime={date} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}</time>}
-            <div className="month-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={() => { setSelected(event); setSelectedDay(event.date); }} />)}</div>
+            <div className="month-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={origin => { sessionOrigin.current = origin; setSelected(event); setSelectedDay(event.date); }} />)}</div>
           </div>)}</div></div>}
-          <Change identity={selectedDay} className="day-itinerary"><h3>{selectedDay === today() ? "Today" : dayName(selectedDay)}, {shortDate(selectedDay)}</h3>{(events.data ?? []).filter(event => event.date === selectedDay).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={() => setSelected(event)} />)}{!(events.data ?? []).some(event => event.date === selectedDay) && <p className="muted">No sessions scheduled. Time to recover.</p>}</Change>
+          <Change identity={selectedDay} className="day-itinerary"><h3>{selectedDay === today() ? "Today" : dayName(selectedDay)}, {shortDate(selectedDay)}</h3>{(events.data ?? []).filter(event => event.date === selectedDay).map(event => <SessionTile key={event.id} event={event} active={selected?.id === event.id} onSelect={origin => { sessionOrigin.current = origin; setSelected(event); }} />)}{!(events.data ?? []).some(event => event.date === selectedDay) && <p className="muted">No sessions scheduled. Time to recover.</p>}</Change>
           </Change>
         </div>
-        <Presence>{selected && <Inspector key="session" title="Session" modal onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selectedEvent ?? selected} stale={events.data !== undefined && !selectedEvent} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
+        <Presence>{selected && <Inspector key="session" title="Session" modal origin={sessionOrigin.current} onClose={() => setSelected(null)}><Change identity={`${selected.id}:${selectedDay}`}><SessionDetail event={selectedEvent ?? selected} stale={events.data !== undefined && !selectedEvent} plan={plan} proposedDate={selectedDay} onDone={() => setSelected(null)} /></Change></Inspector>}</Presence>
       </div>}
     </>}
     </Change>
@@ -300,14 +301,14 @@ function PlanRoadmap({ identity, children }: { identity: string; children: React
   return <div className="plan-roadmap" ref={roadmap} role="region" aria-label="Plan weeks" tabIndex={0}>{children}</div>;
 }
 
-function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active: boolean; onSelect: () => void }) {
+function SessionTile({ event, active, onSelect }: { event: CalendarEvent; active: boolean; onSelect: (origin: HTMLButtonElement) => void }) {
   const movable = Boolean(event.workoutId && event.activityId == null && event.kind !== "race" && event.status !== "skipped");
-  return <button className={`session-tile kind-${event.kind} ${movable ? "movable" : ""} ${active ? "selected" : ""}`} aria-pressed={active} onClick={() => {
+  return <button className={`session-tile kind-${event.kind} ${movable ? "movable" : ""} ${active ? "selected" : ""}`} aria-pressed={active} onClick={click => {
     // A pointer-drag that just released ends with a click on this tile — on
     // touch, a synthetic one the browser fires itself. Either way the runner
     // moved the session; they did not ask to open it.
     if (performance.now() - dragEndedAt < 250) return;
-    onSelect();
+    onSelect(click.currentTarget);
   }} data-workout-id={movable ? event.workoutId : undefined} data-session-date={event.date}>
     <span className="session-type"><span className="session-kind">{kindName(event.kind)}</span>{event.activityId != null && <IconCheck size={15} aria-label="Completed" />}{event.status === "skipped" && <IconX size={15} aria-label="Skipped" />}</span>
     <strong>{sessionTitle(event.title)}</strong><span>{event.distanceM != null ? fmtKm(event.distanceM) : fmtTimeRange(estimatedTimeRange(event)) ?? (event.durationMin != null ? `${Math.round(event.durationMin)} min` : "Recovery")}</span>
@@ -423,7 +424,7 @@ function ResetWeek({ weekStart, planId, onClose }: { weekStart: string; planId?:
 }
 
 function Predictions({ defaults }: { defaults: PlanDefaults }) {
-  return <section className="watch-predictions"><h3>Watch predictions</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Watch predictions"><table><caption className="sr-only">Predicted race times from your current fitness</caption><tbody>{[["5 km", defaults.predict5kS], ["10 km", defaults.predict10kS], ["Half marathon", defaults.predictHalfS], ["Marathon", defaults.predictMarathonS]].map(([label, seconds]) => <tr key={label as string}><th scope="row">{label}</th><td>{typeof seconds === "number" ? fmtDuration(seconds) : "Not available"}</td></tr>)}</tbody></table></div></section>;
+  return <section className="watch-predictions"><h3>Watch predictions</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label="Watch predictions"><table><caption className="sr-only">Predicted race times from your current fitness</caption><tbody>{[["5 km", defaults.predict5kS], ["10 km", defaults.predict10kS], ["Half marathon", defaults.predictHalfS], ["Marathon", defaults.predictMarathonS]].map(([label, seconds]) => <tr key={label as string}><th scope="row">{label}</th><td>{typeof seconds === "number" ? fmtDuration(seconds, label === "5 km" || label === "10 km") : "Not available"}</td></tr>)}</tbody></table></div></section>;
 }
 
 function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: () => void }) {

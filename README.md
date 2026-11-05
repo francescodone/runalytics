@@ -59,9 +59,16 @@ distributed.
   a week-by-week roadmap with inputs, predictions, publishing and management.
   Each visit to Plan centers the current week. Creation is unavailable while a
   plan is active. **End current plan** removes only the current plan and its
-  sessions; **Remove all saved plans** in Settings also removes older plans,
+  sessions; **Clear plans and scheduled training** in Settings also removes older plans,
   drafts and pending plan offers. Both require confirmation and preserve
   recorded activities, health history and pain entries.
+  Clearing is not local-only: it attempts to publish the cleared plan to the
+  existing GitHub Gist when device sync is enabled; other devices receive it
+  on their next successful sync. It also attempts COROS schedule cancellation
+  and refreshes the local calendar file and any enabled remote calendar feed.
+  The Gist and COROS plan entries themselves are not deleted. Calendar apps
+  fetch updates on their own schedule; imported file snapshots are unchanged.
+  Remote cleanup can fail after local deletion, so check sync results afterward.
 - **Adaptive adjustments**: after every sync, poor recovery (sleep / RHR / HRV
   / ACWR) or a struggled session softens the next hard workout — never the
   other way around.
@@ -84,6 +91,20 @@ distributed.
   Undo, skip/restore them, preview a week reset and match recorded activities.
   An ICS feed can be published automatically to your HTTPS/WebDAV host.
   Push workouts to COROS's training schedule from Training.
+- **Connection transfer**: Settings > Transfer connections offers
+  **Create transfer QR** and **Import transfer QR**. Choose a private passphrase
+  of at least 12 characters on the old device, then scan or upload the encrypted
+  QR image on the new device and enter the same passphrase. Review before
+  replacing settings. Calendar hosting credentials, the GitHub sync token and
+  saved Strava application Client ID/Secret are included; COROS/Strava sessions
+  and training history are not. The review shows actual URLs, username and
+  Strava Client ID, with secrets masked and replacement/removal effects stated.
+  Older QR images without Strava credentials leave Strava unchanged. Imports leave
+  publishing and device sync paused. Sign in to the same COROS account before
+  enabling sync. Camera scanning is available on iPhone and supported browsers;
+  native macOS uses image upload. Keep both the image and passphrase private and
+  delete the image after use. Transfer images remain reusable until deleted or
+  the included credentials are revoked.
 - **Pain journal**: a dedicated Health view supports region selection, intensity,
   onset, notes, follow-up, resolve/reopen and confirmed deletion. Proposed plan
   changes require review. Optional assistant conversations require consent and

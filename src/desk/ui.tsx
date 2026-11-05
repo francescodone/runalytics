@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
-import { motion, useDragControls, useIsPresent } from "motion/react";
+import { motion, useAnimationControls, useDragControls, useIsPresent } from "motion/react";
 import { markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
 
@@ -84,15 +84,39 @@ export function InfoDialog({ title, children, wide = false, className = "" }: { 
   return <div className={`dialog-action ${className}`}><Button aria-haspopup="dialog" onClick={() => setOpen(true)}><span>{title}</span><IconChevronRight size={18} aria-hidden="true" /></Button><Presence>{open && <Dialog title={title} wide={wide} onClose={() => setOpen(false)}>{children}</Dialog>}</Presence></div>;
 }
 
-export function Inspector({ title, children, onClose, modal = false }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean }) {
+export function Inspector({ title, children, onClose, modal = false, origin }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean; origin?: HTMLElement | null }) {
   const host = useRef<HTMLElement>(null);
   const close = useRef(onClose);
   const surface = useSurfaceMotion("inspector");
   const drag = useDragControls();
   const present = useIsPresent();
+  const morphControls = useAnimationControls();
+  const [collapsed, setCollapsed] = useState<{ x: number; y: number; scaleX: number; scaleY: number; borderRadius: string } | null>(null);
+  const morph = Boolean(modal && origin && !surface.reduced);
+  useLayoutEffect(() => {
+    if (!morph || !origin?.isConnected) return;
+    const element = host.current!;
+    const source = origin.getBoundingClientRect();
+    const target = element.getBoundingClientRect();
+    if (!source.width || !source.height || !target.width || !target.height) return;
+    const shape = {
+      x: source.x + source.width / 2 - target.x - target.width / 2,
+      y: source.y + source.height / 2 - target.y - target.height / 2,
+      scaleX: source.width / target.width,
+      scaleY: source.height / target.height,
+      borderRadius: getComputedStyle(origin).borderRadius,
+    };
+    const visibility = origin.style.visibility;
+    const radius = getComputedStyle(element).borderRadius;
+    setCollapsed(shape);
+    origin.style.visibility = "hidden";
+    morphControls.set({ ...shape, opacity: 1 });
+    void morphControls.start({ x: 0, y: 0, scaleX: 1, scaleY: 1, borderRadius: radius, opacity: 1, transition: tempo.spring });
+    return () => { origin.style.visibility = visibility; };
+  }, [morph, origin, morphControls]);
   close.current = onClose;
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const opener = origin ?? document.activeElement as HTMLElement | null;
     const element = host.current!;
     const mobile = matchMedia("(max-width: 800px)");
     const inertElements = new Map<HTMLElement, boolean>();
@@ -118,13 +142,15 @@ export function Inspector({ title, children, onClose, modal = false }: { title: 
     };
     update(); mobile.addEventListener("change", update); element.addEventListener("keydown", keys); element.focus({ preventScroll: true });
     return () => { restore(); mobile.removeEventListener("change", update); element.removeEventListener("keydown", keys); if (opener?.isConnected) opener.focus({ preventScroll: true }); };
-  }, [title, modal]);
+  }, [title, modal, origin]);
   return <>{modal && <div className="inspector-backdrop" aria-hidden="true" data-state={present ? "open" : "closing"} onClick={() => { if (present) onClose(); }} />}
   <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-state={present ? "open" : "closing"}
-    initial={surface.initial} animate={surface.animate} exit={surface.exit}
+    initial={morph ? false : surface.initial} animate={morph ? morphControls : surface.animate} exit={morph && collapsed ? { ...collapsed, opacity: 1, transition: { duration: tempo.exit, ease: tempo.leave } } : surface.exit}
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
+    <motion.div initial={morph ? { opacity: 0 } : false} animate={{ opacity: 1 }} exit={morph ? { opacity: 0 } : undefined} transition={{ duration: tempo.feedback, delay: present && morph ? tempo.press : 0 }}>
     <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label="Back" onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
+    </motion.div>
   </motion.aside></>;
 }
 export function Metric({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {

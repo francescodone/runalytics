@@ -253,14 +253,12 @@ export interface TrainingPlan {
 }
 
 /// How Runalytics names a plan: the runner's label when there is one,
-/// otherwise what the plan is for and when it ends. Mirrors the backend's
-/// display_name ("Race Half marathon plan ending 21 Feb 2027") so no
-/// surface invents its own wording.
+/// otherwise what the plan is for and when it ends.
 export function displayPlanName(plan: TrainingPlan): string {
   const name = plan.name?.trim();
   if (name) return name;
   const kindLabel =
-    plan.kind === "improvement" ? "Improvement" : plan.kind === "maintenance" ? "Maintenance" : "Race";
+    plan.kind === "improvement" ? "improvement" : plan.kind === "maintenance" ? "maintenance" : "race";
   const distanceLabels: Record<string, string> = {
     "5K": "5K", "10K": "10K", "21K": "Half marathon", "42K": "Marathon",
   };
@@ -270,7 +268,7 @@ export function displayPlanName(plan: TrainingPlan): string {
     month: "short",
     year: "numeric",
   });
-  return `${kindLabel} ${distance} plan ending ${end}`;
+  return `${distance} ${kindLabel} plan · ends ${end}`;
 }
 
 export interface PlanWorkout {

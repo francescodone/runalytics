@@ -13,6 +13,13 @@ export const deskFixture = `(function () {
   let deskMessages = [];
   let deskPublishing = {enabled:false, uploadUrl:'https://example.test/calendar.ics', subscriptionUrl:'https://example.test/calendar.ics', username:'synthetic', hasPassword:true, lastPublished:'2026-10-29T12:00:00Z', lastError:null};
   let deskSync = {config:{enabled:true,gistId:'synthetic-gist',hasToken:true,canPublish:false,lastPushed:'2026-10-29T12:00:00Z',lastPulled:null,installedRev:7,lastError:null},accountLinked:true,code:'synthetic-account-channel'};
+  const connectionParams = new URLSearchParams(location.search);
+  if (connectionParams.has('calendarReady') || connectionParams.has('calendarError')) deskPublishing.enabled=true;
+  if (connectionParams.has('calendarError')) deskPublishing.lastError='Calendar host unavailable';
+  if (connectionParams.has('syncSetup')) { deskSync.config.enabled=false; deskSync.config.hasToken=false; }
+  if (connectionParams.has('syncPaused')) deskSync.config.enabled=false;
+  if (connectionParams.has('noAccount')) deskSync.accountLinked=false;
+  if (connectionParams.has('syncError')) deskSync.config.lastError='Device channel unavailable';
   let deskKey = true;
   let deskConnected = true;
   let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,lastMessage:null,lastAttemptAt:null};
@@ -118,13 +125,14 @@ export const deskFixture = `(function () {
       return true;
     }
     if (cmd === 'plan_sync_configure') { deskSync.config.enabled = args.config.enabled; if (args.token) deskSync.config.hasToken=true; return deskSync; }
-    if (cmd === 'plan_sync_check') return {status:'upToDate',planName:'Synthetic plan',workouts:33,syncedAt:Math.floor(Date.now()/1000)};
+    if (cmd === 'plan_sync_check') return {status:connectionParams.get('syncState') ?? (connectionParams.has('syncConflict') ? 'otherPlan' : 'upToDate'),planName:'Synthetic plan',workouts:33,syncedAt:Math.floor(Date.now()/1000)};
     if (cmd === 'plan_sync_push') return deskSync.config;
     if (cmd === 'plan_sync_pull') return {installed:!!args.force,planName:'Synthetic plan',workouts:33,conflict:new URLSearchParams(location.search).has('syncConflict') && !args.force ? 'Different synthetic plan on this device.' : null};
     if (cmd === 'calendar_publishing') return deskPublishing;
+    if (cmd === 'export_connection_settings') return {version:1,created:Math.floor(Date.now()/1000),calendar:{uploadUrl:deskPublishing.uploadUrl,subscriptionUrl:deskPublishing.subscriptionUrl,username:deskPublishing.username,password:'synthetic-calendar-secret'},githubToken:'synthetic-github-token',strava:{clientId:'12345',clientSecret:'synthetic-strava-secret'},identity:{corosCode:'synthetic-account-channel'},assistant:{endpoint:'https://assistant.example.test/v1',model:'transfer-model',apiKey:'synthetic-assistant-secret'}};
     if (cmd === 'save_calendar_publishing') { deskPublishing={...deskPublishing,...args.config,hasPassword:args.password===null ? deskPublishing.hasPassword : args.password!==''}; return deskPublishing; }
     if (cmd === 'ics_path') return '/synthetic/calendar.ics';
-    if (cmd === 'publish_calendar') { deskPublishing.lastPublished=new Date().toISOString(); return 'https://example.test/training.ics'; }
+    if (cmd === 'publish_calendar') { deskPublishing.lastPublished=new Date().toISOString(); deskPublishing.lastError=connectionParams.has('calendarUploadFails') ? 'Calendar upload failed' : null; return 'https://example.test/training.ics'; }
     if (cmd === 'llm_status') { const settings=await window.__TAURI_INTERNALS__.invoke('get_settings'); return {configured:settings.llmEnabled,hasKey:deskKey,endpoint:settings.llmEndpoint,model:settings.llmModel}; }
     if (cmd === 'clear_llm_api_key') { deskKey=false; return null; }
     if (cmd === 'set_llm_api_key') { deskKey=true; return null; }

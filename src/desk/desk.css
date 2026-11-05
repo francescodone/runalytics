@@ -1,4 +1,9 @@
 * { box-sizing: border-box; letter-spacing: 0; }
+html { scrollbar-color: color-mix(in srgb, var(--desk-action) 55%, var(--desk-surface)) transparent; }
+@supports not (scrollbar-color: auto) {
+   ::-webkit-scrollbar-thumb { background-color: color-mix(in srgb, var(--desk-action) 55%, var(--desk-surface)); border-radius: var(--radius-pill); }
+   ::-webkit-scrollbar-track { background-color: transparent; }
+}
 /* The gradient is painted on the body box, so the body must always cover the
    viewport: a short page would otherwise clip the background to its content
    and leave the canvas colour below. dvh with a vh fallback for older WebKit. */
@@ -72,8 +77,8 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .button-progress { position: absolute; inset: 0; display: grid; place-items: center; }
 .desk-button[aria-busy="true"] .button-content { opacity: 0; }
 .desk-button[aria-busy="true"] { opacity: 1; cursor: progress; }
-.desk-workspace { position: relative; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; scroll-padding-block: var(--section-gap); padding: var(--section-gap) var(--page-gutter); background: var(--desk-surface); background: color-mix(in srgb, var(--desk-surface) 92%, transparent); border-radius: var(--radius-overlay); }
-.desk-workspace, .plan-roadmap, .activity-library, .desk-inspector, .desk-dialog { scrollbar-width: thin; scrollbar-color: var(--control-edge) transparent; }
+.desk-workspace { position: relative; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; scroll-padding-block: var(--section-gap); padding: var(--section-gap) var(--page-gutter); background: var(--desk-surface); background: color-mix(in srgb, var(--desk-surface) 92%, transparent); border: var(--space-2) solid transparent; border-radius: var(--radius-overlay); }
+.desk-workspace, .plan-roadmap, .activity-library, .desk-inspector, .desk-dialog { scrollbar-width: thin; }
 .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--section-gap); }
 .workspace-heading h1 { overflow-wrap: anywhere; }
 .workspace-heading h1:focus-visible { outline: none; }
@@ -114,7 +119,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .training-context h2 { font-size: var(--text-display); font-weight: var(--weight-bold); margin: var(--space-2) 0 0; }
 .training-context > div > .muted { font-size: var(--text-detail); }
 .training-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); flex: none; max-width: 100%; }
-.desk-toolbar { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2); background: var(--desk-soft); border: 0; border-radius: var(--radius-panel); margin-bottom: var(--space-6); }
+.desk-toolbar { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2); background: var(--navigation-parent-surface); border: 0; border-radius: var(--radius-panel); margin-bottom: var(--space-6); }
 .horizon-switch { display: flex; gap: var(--space-1); margin-right: auto; }
 .horizon-switch a { display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-size); padding: var(--space-2) var(--space-5); text-decoration: none; color: var(--desk-muted); border-radius: var(--radius-card); }
 .horizon-switch a[aria-current] { color: var(--desk-ink); background: var(--desk-surface); box-shadow: var(--shadow-control); font-weight: var(--weight-semibold); }
@@ -219,9 +224,9 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
    week's own planned mileage: a full bar means the week was completed. */
 .roadmap-track { position: relative; }
 .roadmap-track i { display: block; background: var(--desk-action); height: 100%; min-width: 2px; border-radius: inherit; }
-.plan-studio .roadmap-row { min-height: 72px; margin-bottom: 0; border-bottom: 1px solid var(--desk-line); border-radius: 0; background: transparent; font-size: var(--text-body); font-variant-numeric: tabular-nums; }
+.plan-studio .roadmap-row { min-height: 88px; margin-bottom: var(--space-2); border: 0; border-radius: var(--radius-card); font-size: var(--text-body); font-variant-numeric: tabular-nums; }
 .plan-studio .roadmap-row:last-child { border-bottom: 0; }
-.plan-studio .roadmap-row.is-current { background: var(--desk-selection); border-radius: var(--radius-small); }
+.plan-studio .roadmap-row.is-current { background: var(--desk-selection); }
 .plan-studio .roadmap-week { font-weight: var(--weight-semibold); }
 .plan-studio .roadmap-row small, .plan-studio .roadmap-row em { font-size: var(--text-detail); }
 .plan-studio .roadmap-row > strong { font-size: var(--text-body); }
@@ -307,6 +312,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .review-panel { min-width: 0; }
 .review-panel > .review-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .review-section { margin-top: var(--space-8); padding-top: var(--space-6); border-top: 1px solid var(--desk-line); }
+.review-panel[id$="-context"] .section-heading { padding-inline-end: var(--space-2); }
 /* What the plan prescribed for the session this run matched — the same
    description the exported calendar event carries, kept quiet so the recorded
    numbers above it stay the headline. */
@@ -449,6 +455,8 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .proposal-prompt { display: flex; justify-content: space-between; align-items: center; gap: var(--space-6); margin: var(--space-6) 0; padding: var(--space-5); background: var(--desk-selection); }.proposal-prompt p { margin: var(--space-2) 0 0; color: var(--desk-muted); font-size: var(--text-detail); }
 .table-date { display: block; color: var(--desk-muted); }.text-button { background: none; border: 0; padding: var(--space-2) 0; min-height: var(--control-size); text-align: center; color: var(--desk-action); }
 .settings-directory, .help-workspace { max-width: 900px; margin: var(--space-3) auto; }
+.settings-group { margin-top: var(--section-gap); }
+.settings-group > h2 { margin: 0; font-size: var(--text-heading); font-weight: var(--weight-medium); }
 .settings-task-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-top: var(--section-inset); }
 .settings-task-list a { display: grid; grid-template-columns: 30px minmax(0, 1fr) 18px; align-items: center; gap: var(--space-4); padding: var(--section-inset); border: 0; border-radius: var(--radius-card); background: color-mix(in srgb, var(--desk-soft) 55%, var(--desk-surface)); color: var(--desk-ink); text-decoration: none; }
 .settings-task-list a > svg:first-child { color: var(--desk-action); }
@@ -457,6 +465,25 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .settings-editor fieldset { border: 0; padding: var(--space-6) 0; margin: 0; border-top: 1px solid var(--desk-line); }.settings-editor legend { padding: 0 var(--space-2) 0 0; font-size: var(--text-body); font-weight: var(--weight-medium); }
 .settings-section { border-top: 1px solid var(--desk-line); margin-top: var(--section-gap); padding-top: var(--section-inset); }.settings-editor .form-actions { justify-content: flex-start; }.settings-editor form > .form-grid { margin: var(--section-inset) 0; }
 .about-settings { display: grid; gap: var(--section-inset); min-width: 0; }
+.settings-editor .connection-options { display: grid; gap: var(--space-5); padding-top: var(--space-6); }
+.settings-editor .connection-options > .form-actions, .settings-editor .connection-options > p { margin: 0; }
+.settings-editor .connection-options .file-path { overflow-wrap: anywhere; }
+.settings-editor .connection-disclosure[aria-expanded="true"] { background-color: var(--state-selected); color: var(--desk-action); border-color: var(--desk-action); }
+.connection-transfer-content { display: grid; gap: var(--space-6); padding-bottom: var(--space-4); }
+.connection-transfer-content p, .connection-transfer-content h3 { margin: 0; }
+.connection-transfer-content form { display: grid; gap: var(--space-6); min-width: 0; }
+.connection-transfer-content form > label { display: grid; gap: var(--space-3); min-width: 0; }
+.connection-transfer-content .form-actions { margin: 0; }
+.connection-transfer-content input[type="file"] { width: 100%; min-width: 0; }
+.transfer-summary { display: grid; gap: var(--space-4); }
+.transfer-summary ul { margin: 0; padding-left: var(--space-6); display: grid; gap: var(--space-3); }
+.transfer-summary li::marker { color: var(--desk-action); }
+.transfer-privacy { color: var(--desk-muted); }
+.transfer-export { display: grid; gap: var(--space-6); min-width: 0; }
+.transfer-export-footer { display: grid; justify-items: start; gap: var(--space-5); }
+.transfer-export-footer > a { text-decoration: none; }
+.transfer-qr { display: block; width: min(100%, 28rem); height: auto; margin: 0 auto; background: var(--desk-surface); }
+.transfer-camera { display: block; width: 100%; max-height: 20rem; object-fit: contain; margin: 0; background: black; }
 .about-settings h3, .about-settings p, .about-settings .form-actions { margin: 0; }
 .about-settings h3 { margin-bottom: var(--space-4); }
 .app-update { display: grid; gap: var(--space-5); min-width: 0; }
@@ -497,7 +524,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .spinner-reverse { animation-direction: reverse; }
 @keyframes desk-spin { to { transform: rotate(360deg); } }
 @media (max-width: 800px) {
-   #desk-root { --shadow-button: none; --shadow-button-hover: none; --shadow-button-pressed: none; --shadow-control: none; --glass-sheen: none; --button-sheen: none; --material-liquid: var(--state-selected); }
+   #desk-root { --shadow-control: none; --glass-sheen: none; --button-sheen: none; --material-liquid: var(--state-selected); }
    .choice-row:has(input[name="theme"]) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
    .choice-row label:has(input[name="theme"][value="system"]) { grid-column: 1 / -1; }
    #desk-root { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0; padding: var(--space-2); }
@@ -576,6 +603,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
    .plan-studio .metrics-line dd { font-size: var(--text-title); overflow-wrap: anywhere; }
    .roadmap-row { grid-template-columns: minmax(0, 1fr) max-content max-content; gap: var(--space-2); min-height: 0; padding: var(--space-3) var(--space-2); font-size: var(--text-detail); }
    .plan-studio .roadmap-row { min-height: 0; }
+   .plan-studio .roadmap-row > span:first-child small, .plan-studio .roadmap-week em { font-size: var(--text-caption); }
    .roadmap-week em { font-size: var(--text-caption); }
    .roadmap-row > span:first-child { grid-area: 1 / 1; min-width: 0; }
    .roadmap-row > strong:nth-of-type(1) { grid-area: 1 / 2; text-align: right; }
@@ -687,14 +715,13 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
    }
    .desk-appbar { border-color: var(--glass-border); box-shadow: var(--shadow-floating); }
    .desk-toolbar, .route-controls {
-      background: var(--material-floating);
-      background-image: var(--material-aura);
-      -webkit-backdrop-filter: var(--glass-filter);
-      backdrop-filter: var(--glass-filter);
+      background: var(--navigation-parent-surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
       border-color: var(--glass-border);
-      box-shadow: var(--shadow-floating);
+      box-shadow: none;
    }
-   .desk-button:not(.primary), .palette-options label { background-color: var(--material-optical); background-image: var(--glass-sheen); }
+   .desk-button:not(.primary), .palette-options label { background-color: var(--control-surface); }
    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { background-color: var(--glass-field); box-shadow: inset 0 1px 2px #00000006; }
    .choice-row, .pace-mode { background-color: var(--glass-content); }
    .setup-band, .proposal-prompt { background: color-mix(in srgb, var(--desk-selection) 68%, transparent); border-block: var(--control-border) solid var(--glass-border); }

@@ -26,6 +26,8 @@ function App() {
   const reduced = useReducedMotion();
   const heading = useRef<HTMLHeadingElement>(null);
   const initial = useRef(true);
+  const appearanceTransition = useRef<ViewTransition | null>(null);
+  const appearanceVersion = useRef(0);
   const settings = useRemote(tauri.getSettings);
   const providers = useRemote(tauri.providerStatus);
   const command = useCommand();
@@ -60,14 +62,29 @@ function App() {
         }
       } catch {}
       const theme = settings.data?.theme ?? cachedTheme;
-      document.documentElement.dataset.deskTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
-      document.documentElement.style.colorScheme = document.documentElement.dataset.deskTheme;
-      document.documentElement.dataset.deskPalette = settings.data?.palette ?? cachedPalette;
+      const resolvedTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      const palette = settings.data?.palette ?? cachedPalette;
+      const root = document.documentElement;
+      const changed = root.dataset.deskTheme !== resolvedTheme || root.dataset.deskPalette !== palette;
+      const version = ++appearanceVersion.current;
+      appearanceTransition.current?.skipTransition();
+      const apply = () => {
+        if (version !== appearanceVersion.current) return;
+        root.dataset.deskTheme = resolvedTheme;
+        root.style.colorScheme = resolvedTheme;
+        root.dataset.deskPalette = palette;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(root).getPropertyValue("--desk-canvas").trim());
+      };
+      if (changed && typeof document.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        appearanceTransition.current = document.startViewTransition(apply);
+      } else {
+        appearanceTransition.current = null;
+        apply();
+      }
       if (document.documentElement.dataset.nativeWindow === "macos" && nativeTheme !== theme) {
         nativeTheme = theme;
         void getCurrentWindow().setTheme(theme === "system" ? null : theme as "light" | "dark").catch(() => { nativeTheme = undefined; });
       }
-      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--desk-canvas").trim());
     };
     paint(); media.addEventListener("change", paint);
     return () => media.removeEventListener("change", paint);

@@ -85,15 +85,18 @@
   --button-highlight: #ffffffb3;
   --button-shade: #171c302b;
   --button-sheen: linear-gradient(165deg, #ffffff45, #ffffff00 45%, #ffffff0a);
+  --button-rim-light: #fff;
+  --button-rim-refraction: color-mix(in srgb, var(--button-accent, var(--desk-action)) 55%, transparent);
   --button-primary-surface: color-mix(in srgb, var(--desk-action) 16%, var(--control-surface));
   --button-primary-ink: color-mix(in srgb, var(--desk-action) 82%, var(--desk-ink));
-  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 var(--button-shade), 0 2px 2px -1px var(--button-shade), 0 5px 12px -7px var(--button-shade);
-  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 var(--button-shade), 0 3px 3px -2px var(--button-shade), 0 10px 18px -9px var(--button-shade);
-  --shadow-button-pressed: inset 0 1px 3px var(--button-shade), inset 0 -1px 0 var(--button-highlight), 0 0 0 0 transparent, 0 0 0 0 transparent;
-  --button-hover-transform: perspective(640px) rotateX(5deg);
-  --button-press-transform: perspective(640px) rotateX(-3deg);
-  --button-hover-offset: 0 -2px;
-  --button-press-offset: 0 1px;
+  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 2px 5px -3px var(--button-shade);
+  --button-glass-filter: blur(12px) saturate(140%);
+  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 3px 6px -4px var(--button-shade), 0 5px 12px -8px color-mix(in srgb, var(--desk-action) 25%, transparent);
+  --shadow-button-pressed: inset 0 2px 4px color-mix(in srgb, var(--button-shade) 60%, transparent), inset 0 -1px 0 var(--button-highlight);
+  --button-hover-transform: none;
+  --button-press-transform: none;
+  --button-hover-offset: 0;
+  --button-press-offset: 0;
   --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 4px 12px -8px #171c3024, 0 24px 56px -28px #171c3030;
   --shadow-overlay: inset 0 1px 0 var(--desk-highlight), 0 8px 24px -8px #171c3029, 0 40px 96px -24px #171c3052;
   --glass-navigation: color-mix(in srgb, var(--desk-surface) 80%, transparent);
@@ -117,7 +120,8 @@
   --material-optical: var(--glass-control);
   --material-liquid: var(--state-selected);
   --material-dense: var(--desk-surface);
-  --control-surface: color-mix(in srgb, var(--desk-soft) 75%, var(--desk-surface));
+  --control-surface: color-mix(in srgb, var(--desk-action) 4%, var(--desk-surface));
+  --navigation-parent-surface: color-mix(in srgb, var(--desk-action) 10%, var(--desk-surface));
   --control-edge: color-mix(in srgb, var(--desk-muted) 36%, var(--desk-surface));
   --state-hover: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface));
   --state-pressed: color-mix(in srgb, var(--desk-action) 20%, var(--desk-surface));
@@ -126,7 +130,7 @@
   --state-primary-hover: color-mix(in srgb, var(--desk-action) 92%, #000);
   --state-primary-pressed: color-mix(in srgb, var(--desk-action) 82%, #000);
   --state-press-scale: .98;
-  --state-hover-scale: 1.015;
+  --state-hover-scale: 1;
   --disabled-opacity: .55;
   --session-tempo: #be781d;
   --session-intervals: #cc565f;
@@ -238,6 +242,9 @@
 :root[data-desk-theme="dark"][data-desk-palette="meadow"] { --desk-action: #a6dfa9; --desk-blue: #cfb6ed; --desk-selection: #293f2d; --session-tempo: #f5adc1; --session-intervals: #a6dfa9; --session-long: #cfb6ed; }
 @media (min-width: 801px) and (max-width: 1180px) { :root { --navigation-width: 88px; --shell-gap: var(--space-4); --shell-inset: var(--space-4); --page-gutter: var(--space-6); } }
 @media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); --text-page: 1.75rem; --text-display: 1.75rem; --text-hero: 2rem; } }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  :root { --material-aura: none; --shadow-button-hover: none; --shadow-button-pressed: none; }
+}
 @media (prefers-contrast: more) { :root { --desk-line: #63736a; } :root[data-desk-theme="dark"] { --desk-line: #b2c0b7; } }
 @media (forced-colors: active) {
   :root { --desk-canvas: Canvas; --desk-surface: Canvas; --desk-ink: CanvasText; --desk-muted: CanvasText; --desk-line: ButtonText; --desk-action: LinkText; --desk-on-action: Canvas; --desk-selection: Canvas; }

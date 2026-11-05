@@ -32,6 +32,107 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   useEffect(() => {
+    const selector = "button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary";
+    const fine = matchMedia("(hover: hover) and (pointer: fine)");
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    let active: HTMLElement | null = null;
+    let pressed: HTMLElement | null = null;
+    let frame = 0;
+    let pointerX = 0;
+    let pointerY = 0;
+    const pulses = new Map<HTMLElement, Animation>();
+    const reset = () => {
+      if (!active) return;
+      active.removeAttribute("data-aura-tracking");
+      active.style.removeProperty("--aura-tilt-x");
+      active.style.removeProperty("--aura-tilt-y");
+      active = null;
+    };
+    const targetControl = (target: EventTarget | null) => {
+      const element = target instanceof Element ? target.closest<HTMLElement>(selector) : null;
+      return element && !element.matches(':disabled, [aria-disabled="true"], :has(:disabled), .is-dragging') ? element : null;
+    };
+    const position = (element: HTMLElement, clientX: number, clientY: number) => {
+      const bounds = element.getBoundingClientRect();
+      const horizontal = Math.max(0, Math.min(1, (clientX - bounds.left) / Math.max(1, bounds.width)));
+      const vertical = Math.max(0, Math.min(1, (clientY - bounds.top) / Math.max(1, bounds.height)));
+      element.style.setProperty("--aura-x", `${horizontal * 100}%`);
+      element.style.setProperty("--aura-y", `${vertical * 100}%`);
+      element.style.setProperty("--aura-tilt-x", `${(0.5 - vertical) * 1.2}deg`);
+      element.style.setProperty("--aura-tilt-y", `${(horizontal - 0.5) * 1.2}deg`);
+    };
+    const move = (event: PointerEvent) => {
+      if (!fine.matches || event.pointerType === "touch") return;
+      const control = targetControl(event.target);
+      if (control !== active) { reset(); active = control; }
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (frame || !active) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!active?.isConnected) { reset(); return; }
+        position(active, pointerX, pointerY);
+        active.dataset.auraTracking = "true";
+      });
+    };
+    const release = () => {
+      pressed?.removeAttribute("data-aura-pressed");
+      pressed = null;
+    };
+    const press = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const control = targetControl(event.target);
+      if (!control) return;
+      release();
+      pressed = control;
+      control.dataset.auraPressed = "true";
+      position(control, event.clientX, event.clientY);
+      pulses.get(control)?.cancel();
+      if (reduced.matches) return;
+      const pulse = control.animate([
+        { backgroundSize: "100% 100%" },
+        { backgroundSize: "155% 155%", offset: .35 },
+        { backgroundSize: "100% 100%" },
+      ], { duration: tempo.surface * 1000, easing: "ease-out" });
+      pulses.set(control, pulse);
+      pulse.finished.then(() => { if (pulses.get(control) === pulse) pulses.delete(control); }, () => {});
+    };
+    const leave = (event: PointerEvent) => { if (!event.relatedTarget) reset(); };
+    const focus = (event: FocusEvent) => {
+      const control = targetControl(event.target);
+      if (!control?.matches(":focus-visible")) return;
+      reset();
+      control.style.setProperty("--aura-x", "50%");
+      control.style.setProperty("--aura-y", "50%");
+    };
+    const clear = () => {
+      reset();
+      release();
+      for (const pulse of pulses.values()) pulse.cancel();
+      pulses.clear();
+    };
+    document.addEventListener("pointermove", move, { passive: true });
+    document.addEventListener("pointerdown", press, true);
+    document.addEventListener("pointerup", release, true);
+    document.addEventListener("pointerout", leave);
+    document.addEventListener("pointercancel", clear);
+    document.addEventListener("focusin", focus);
+    window.addEventListener("blur", clear);
+    reduced.addEventListener("change", clear);
+    return () => {
+      cancelAnimationFrame(frame);
+      clear();
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerdown", press, true);
+      document.removeEventListener("pointerup", release, true);
+      document.removeEventListener("pointerout", leave);
+      document.removeEventListener("pointercancel", clear);
+      document.removeEventListener("focusin", focus);
+      window.removeEventListener("blur", clear);
+      reduced.removeEventListener("change", clear);
+    };
+  }, []);
+  useEffect(() => {
     const selector = "[data-entrance], .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-context > *, .health-history > *, .trend-chart, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, fieldset, .connection-summary, .form-grid, .form-actions, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-labels, .month-day, .day-lane > header, .mobile-date-ribbon, .pain-episode > header, .episode-notes, .episode-actions, .episode-chat > h3, .episode-chat > form, .chat-message, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .dialog-action > .desk-button, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > header";
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
