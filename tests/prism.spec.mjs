@@ -986,11 +986,13 @@ for (const theme of ["light", "dark"]) {
           inset: bounds.left,
           radius: getComputedStyle(element).borderTopLeftRadius,
           headerRadius: getComputedStyle(header, "::before").borderTopLeftRadius,
+          headerLeft: header.getBoundingClientRect().left + parseFloat(getComputedStyle(header, "::before").left),
+          headerRight: header.getBoundingClientRect().right - parseFloat(getComputedStyle(header, "::before").right),
           headerShadow: getComputedStyle(header, "::before").boxShadow,
           overflow: document.documentElement.scrollWidth > innerWidth,
         };
       });
-      expect(shell).toEqual({ inset: 8, radius: "32px", headerRadius: "32px", headerShadow: "none", overflow: false });
+      expect(shell).toEqual({ inset: 8, radius: "48px", headerRadius: "0px", headerLeft: 0, headerRight: width, headerShadow: "none", overflow: false });
       await page.screenshot({ path: testInfo.outputPath("flat-mobile-journal.png") });
       await navigation.getByRole("link", { name: "Training", exact: true }).click();
       await expect(page.locator(".day-itinerary")).toBeVisible();

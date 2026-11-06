@@ -1,3 +1,10 @@
+## Full-Width Mobile Header, 2026-11-06
+
+The compact header background extends to both viewport edges while the white
+workspace retains its 8px inset and 48px corners. Six synthetic-IPC Chromium
+checks passed at 320, 390 and 768px in light and dark themes; a 390px training
+screenshot was inspected. Native iPhone rendering was not tested.
+
 ## Mobile Training Controls, 2026-11-06
 
 At widths up to 480px, the training horizon uses three equal-width controls
