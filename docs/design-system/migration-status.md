@@ -1,3 +1,11 @@
+## Mobile Shell Top Inset, 2026-11-06
+
+The compact shell top inset is 16px; its bottom inset, 48px corners and island
+position are unchanged. Header blur still reaches the viewport top. Production
+build, four synthetic-IPC header and geometry checks, and 37 responsive route,
+short viewport and navigation checks passed. A 390px screenshot was inspected;
+native iPhone rendering and physical display clearance were not verified.
+
 ## Mobile Shell Safe Areas, 2026-11-05
 
 The compact workspace and topbar share a 48px corner radius. The topbar glass

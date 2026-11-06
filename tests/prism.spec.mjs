@@ -1243,6 +1243,9 @@ test("Prism mobile shell follows safe-area geometry", async ({ page }) => {
     const result = {
       radius: getComputedStyle(workspace).borderTopLeftRadius,
       headerRadius: getComputedStyle(header).borderTopLeftRadius,
+      top: workspace.getBoundingClientRect().top,
+      headerTop: header.getBoundingClientRect().top,
+      shellBottom: innerHeight - workspace.getBoundingClientRect().bottom,
       blur: getComputedStyle(header, "::before").backdropFilter,
       blurTop: header.getBoundingClientRect().top + parseFloat(getComputedStyle(header, "::before").top),
       bottom: innerHeight - nav.getBoundingClientRect().bottom,
@@ -1252,6 +1255,9 @@ test("Prism mobile shell follows safe-area geometry", async ({ page }) => {
   });
   expect(geometry.radius).toBe("48px");
   expect(geometry.headerRadius).toBe(geometry.radius);
+  expect(geometry.top).toBe(16);
+  expect(geometry.headerTop).toBe(geometry.top);
+  expect(geometry.shellBottom).toBe(8);
   expect(geometry.blur).toContain("blur(");
   expect(geometry.blurTop).toBe(0);
   expect(geometry.bottom).toBeGreaterThanOrEqual(4);
