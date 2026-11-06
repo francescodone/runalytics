@@ -47,6 +47,7 @@ export function Journal() {
   const activities = useRemote(tauri.allActivities);
   const scores = useRemote(tauri.runScores);
   const matches = useRemote(tauri.matchedSessions);
+  const [reviewOrigin, setReviewOrigin] = useState<HTMLElement | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sport, setSport] = useState("");
@@ -84,11 +85,11 @@ export function Journal() {
       <section className="activity-library" tabIndex={0} aria-label="Activity history" aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>Most recent first</span></div>
         <Change identity={`${search}:${sport}:${provider}:${from}:${until}`}>
         {!filtered.length && <Empty title={activities.data?.length ? "No matching activities" : "Your training story starts here"}>{activities.data?.length ? "Try another date or clear the filters." : "Sync your watch to bring your completed activities here."}</Empty>}
-        {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={() => navigate("journal", String(activity.id))}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong>{matchOf(activity) && <small className="activity-purpose">{matchOf(activity)?.purpose}</small>}<small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
+        {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={event => { setReviewOrigin(event.currentTarget); navigate("journal", String(activity.id)); }}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
         </Change>
       </section>}
     </div>
-    <Presence>{selected && <Inspector key="review" title="Activity review" onClose={() => navigate("journal")}><Change identity={selected.id} className="activity-transition" stagger><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Change></Inspector>}</Presence>
+    <Presence>{selected && <Inspector key="review" title="Activity review" origin={reviewOrigin} onClose={() => navigate("journal")}><Change identity={selected.id} className="activity-transition" stagger><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Change></Inspector>}</Presence>
     {!selected && <div className="journal-placeholder"><IconRun size={32} aria-hidden="true" /><h2>Activity review</h2><p className="muted">No activity selected</p></div>}
   </div>;
 }

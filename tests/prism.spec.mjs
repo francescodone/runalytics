@@ -4,6 +4,217 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const theme of ["light", "dark"]) for (const width of [320, 390, 1440]) {
+  test(`setup messages share app surfaces ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    await page.evaluate(() => window.__TAURI_INTERNALS__.invoke("disconnect_provider", { provider: "coros" }));
+    await page.getByRole("navigation", { name: "Workspaces" }).getByRole("link", { name: "Training", exact: true }).click();
+    const message = page.locator(".setup-band");
+    await expect(message).toBeVisible();
+    await expect(message).toHaveCSS("border-radius", "8px");
+    await expect(message).toHaveCSS("padding", "20px");
+    await expect(message).not.toHaveCSS("background-image", "none");
+    expect(await message.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(message.getByRole("button", { name: "Connect COROS" })).toBeVisible();
+    await message.screenshot({ path: testInfo.outputPath("setup-message.png") });
+    await page.emulateMedia({ contrast: "more" });
+    await expect(message).toHaveCSS("background-image", "none");
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [820, 1440]) {
+    test(`desktop activity morph expands right and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.goto(`/desk.html?theme=${theme}#journal`);
+      const row = page.locator(".activity-row").first();
+      await row.evaluate(element => {
+        element.addEventListener("click", () => {
+          window.__activityMorph = { source: element.getBoundingClientRect().toJSON(), frames: [] };
+          const capture = () => {
+            const inspector = document.querySelector('.desk-inspector[aria-label="Activity review"]');
+            if (inspector) window.__activityMorph.frames.push(inspector.getBoundingClientRect().toJSON());
+            if (window.__activityMorph.frames.length < 40) requestAnimationFrame(capture);
+          };
+          requestAnimationFrame(capture);
+        }, { once: true });
+      });
+      await row.click();
+      const inspector = page.locator('.desk-inspector[aria-label="Activity review"]');
+      await expect.poll(() => page.evaluate(() => window.__activityMorph.frames.length)).toBe(40);
+      const { source, frames } = await page.evaluate(() => window.__activityMorph);
+      expect(Math.abs(frames[0].x - source.x)).toBeLessThan((frames.at(-1).x - source.x) * .15);
+      expect(Math.abs(frames[0].y - source.y)).toBeLessThan(12);
+      expect(frames.at(-1).x).toBeGreaterThan(source.x + source.width);
+      expect(frames[0].height).toBeLessThan(frames.at(-1).height * .5);
+      await expect(row).toBeVisible();
+      await expect(inspector).toBeFocused();
+      await page.screenshot({ path: testInfo.outputPath("activity-morph-open.png") });
+      const closing = await inspector.evaluate(async element => {
+        element.querySelector('button[aria-label="Back"]').click();
+        const frames = [];
+        for (let index = 0; index < 24; index++) {
+          await new Promise(requestAnimationFrame);
+          if (element.isConnected) frames.push(element.getBoundingClientRect().toJSON());
+        }
+        return frames;
+      });
+      expect(closing.some(frame => frame.x < frames.at(-1).x - 30 && frame.height < frames.at(-1).height * .8)).toBe(true);
+      await expect(inspector).toHaveCount(0);
+      await expect(row).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(inspector).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(inspector).toHaveCount(0);
+      await expect(row).toBeFocused();
+    });
+  }
+}
+
+test("desktop activity morph respects reduced motion", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/desk.html#journal");
+  const row = page.locator(".activity-row").first();
+  await row.click();
+  const inspector = page.locator('.desk-inspector[aria-label="Activity review"]');
+  await expect(inspector).toHaveCSS("transform", "none");
+  await expect(row).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(inspector).toHaveCount(0);
+  await expect(row).toBeFocused();
+});
+
+test.describe("compact navigation latency", () => {
+  test.use({ hasTouch: true });
+
+  for (const width of [320, 390, 768]) for (const theme of ["light", "dark"]) for (const reducedMotion of ["no-preference", "reduce"]) {
+  test(`mobile horizon is ready within two frames of touch navigation ${width}px ${theme} ${reducedMotion}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto(`/desk.html?theme=${theme}#training/month`);
+    await expect(page.locator(".month-board")).toBeVisible();
+    await page.evaluate(() => {
+      window.addEventListener("hashchange", () => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const ribbon = document.querySelector(".mobile-date-ribbon");
+          window.__mobileHorizonReady = Boolean(ribbon && ribbon.getBoundingClientRect().width > 0 && !ribbon.closest("[inert]"));
+        }));
+      }, { once: true });
+    });
+    await page.getByRole("link", { name: "Week", exact: true }).tap();
+    await expect.poll(() => page.evaluate(() => window.__mobileHorizonReady)).toBe(true);
+    await expect(page.locator('[data-reveal="waiting"], [data-reveal="visible"]')).toHaveCount(0);
+    if (width === 390 && reducedMotion === "no-preference") await page.screenshot({ path: testInfo.outputPath("instant-mobile-week.png") });
+  });
+  }
+
+  test("mobile workspaces retain mounted filters when returning", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#journal");
+    await expect(page.locator(".activity-library")).toBeVisible();
+    await page.getByRole("button", { name: "Filters", exact: true }).tap();
+    const search = page.getByRole("searchbox", { name: "Search activities" });
+    await search.fill("easy");
+    await search.evaluate(element => { window.__retainedSearch = element; });
+    await page.getByRole("link", { name: "Training", exact: true }).tap();
+    await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+    await page.getByRole("link", { name: "Activities", exact: true }).tap();
+    await expect(search).toBeVisible();
+    await expect(search).toHaveValue("easy");
+    expect(await search.evaluate(element => element === window.__retainedSearch)).toBe(true);
+    await expect(page.locator('.motion-change[data-transition-state="exiting"]')).toHaveCount(0);
+  });
+
+  test("mobile navigation responds on touch down and cancels without navigating", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#training/week");
+    await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+    const link = page.getByRole("link", { name: "Activities", exact: true });
+    const bounds = await link.boundingBox();
+    const session = await page.context().newCDPSession(page);
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }] });
+    await expect(link).toHaveAttribute("data-aura-pressed", "true");
+    await expect(page).toHaveURL(/#training\/week$/);
+    await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await expect(link).not.toHaveAttribute("data-aura-pressed", "true");
+    await expect(page).toHaveURL(/#training\/week$/);
+    await session.detach();
+    await link.tap();
+    await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+  });
+
+  test("mobile horizon changes reuse the loaded schedule", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#training/week");
+    await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+    const initialCalls = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "calendar_events").length);
+    for (const [name, selector] of [["Month", ".month-board"], ["Plan", ".plan-studio"], ["Week", ".mobile-date-ribbon"]]) {
+      await page.getByRole("link", { name, exact: true }).tap();
+      await expect(page.locator(selector)).toBeVisible();
+      await expect(page.getByText("Loading schedule", { exact: true })).toHaveCount(0);
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "calendar_events").length)).toBe(initialCalls);
+    }
+  });
+
+  test("mobile retained activity history stays visible during revalidation", async ({ page }) => {
+    await page.goto("/desk.html#journal");
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+    await page.getByRole("link", { name: "Training", exact: true }).tap();
+    await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+    await page.evaluate(() => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === "all_activities") await new Promise(resolve => { window.__releaseActivityReload = resolve; });
+        return invoke(command, args);
+      };
+    });
+    await page.getByRole("link", { name: "Activities", exact: true }).tap();
+    await expect.poll(() => page.evaluate(() => typeof window.__releaseActivityReload)).toBe("function");
+    await expect(page.locator(".activity-row:visible")).toHaveCount(9);
+    await expect(page.getByText("Loading training history", { exact: true })).toHaveCount(0);
+    await page.evaluate(() => window.__releaseActivityReload?.());
+  });
+
+  test("mobile retained training adopts refreshed plan data", async ({ page }) => {
+    await page.goto("/desk.html#training/plan");
+    await expect(page.getByRole("button", { name: "Show details", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Activities", exact: true }).tap();
+    await expect(page.locator(".activity-library")).toBeVisible();
+    await page.evaluate(() => {
+      window.__deskRemotePlan = null;
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect.poll(() => page.evaluate(() => window.__deskRemotePlan === undefined)).toBe(true);
+    await page.getByRole("link", { name: "Training", exact: true }).tap();
+    await expect(page.getByRole("button", { name: "Create plan", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "End current plan", exact: true })).toHaveCount(0);
+  });
+
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    test(`mobile rapid changes remain mounted and interruptible ${reducedMotion}`, async ({ page }) => {
+      await page.emulateMedia({ reducedMotion });
+      await page.goto("/desk.html#training/week");
+      await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+      const result = await page.evaluate(async () => {
+        const host = document.querySelector(".training-toolbar").nextElementSibling;
+        const frames = [];
+        for (const horizon of ["month", "plan", "week", "month", "week"]) {
+          document.querySelector(`.horizon-switch a[href="#training/${horizon}"]`).click();
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          frames.push({ sameHost: host === document.querySelector(".training-toolbar").nextElementSibling, opacity: Number(getComputedStyle(host).opacity), transform: getComputedStyle(host).transform, filter: getComputedStyle(host).filter, exits: document.querySelectorAll('[data-transition-state="exiting"]').length });
+        }
+        return { frames, animations: host.getAnimations().length };
+      });
+      expect(result.frames.every(frame => frame.sameHost && frame.opacity >= .9 && frame.transform === "none" && frame.filter === "none" && frame.exits === 0)).toBe(true);
+      if (reducedMotion === "reduce") expect(result.animations).toBe(0);
+      await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+      await expect(page.locator(".month-board, .plan-studio")).toHaveCount(0);
+    });
+  }
+});
+
 for (const reducedMotion of ["no-preference", "reduce"]) {
   test(`appearance changes respect motion preference ${reducedMotion}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion });
@@ -40,17 +251,20 @@ for (const theme of ["light", "dark"]) {
       const tile = page.locator("[data-morph-source]");
       await expect(tile).toBeVisible();
       await tile.scrollIntoViewIfNeeded();
-      const frames = await tile.evaluate(async element => {
+      await tile.evaluate(element => {
         const source = element.getBoundingClientRect().toJSON();
-        element.click();
         const frames = [];
-        for (let index = 0; index < 32; index++) {
-          await new Promise(requestAnimationFrame);
+        window.__morphFrames = { source, frames };
+        const capture = () => {
           const modal = document.querySelector('.desk-inspector[aria-label="Session"]');
           if (modal) frames.push(modal.getBoundingClientRect().toJSON());
-        }
-        return { source, frames };
+          if (frames.length < 32) requestAnimationFrame(capture);
+        };
+        element.addEventListener("click", () => requestAnimationFrame(capture), { once: true });
       });
+      await tile.click();
+      await expect.poll(() => page.evaluate(() => window.__morphFrames.frames.length)).toBe(32);
+      const frames = await page.evaluate(() => window.__morphFrames);
       expect(frames.frames.length).toBeGreaterThan(10);
       const first = frames.frames[0];
       const last = frames.frames.at(-1);
@@ -413,7 +627,7 @@ for (const theme of ["light", "dark"]) {
     await page.goto(`/desk.html?theme=${theme}#journal`);
     const toolbar = page.locator(".journal-sidebar > .desk-toolbar");
     await expect(toolbar).toBeVisible();
-    await expect(toolbar).toHaveCSS("background-image", "none");
+    await expect(toolbar).toHaveCSS("background-image", /linear-gradient/);
     await expect(toolbar).toHaveCSS("box-shadow", "none");
     const controls = [page.locator('.desk-navigation a[href="#journal"]'), toolbar.locator("button").first(), page.locator(".activity-row").first()];
     for (const control of controls) {
@@ -441,7 +655,7 @@ for (const theme of ["light", "dark"]) {
       await expect(control).not.toHaveCSS("background-image", "none");
       await control.evaluate(element => element.blur());
     }
-    await expect(toolbar).toHaveCSS("background-image", "none");
+    await expect(toolbar).toHaveCSS("background-image", /linear-gradient/);
     await page.locator(".activity-row").first().hover();
     await page.screenshot({ path: testInfo.outputPath("shared-aura.png") });
     await page.emulateMedia({ contrast: "more" });
@@ -789,7 +1003,7 @@ for (const theme of ["light", "dark"]) {
       await expect(page.locator(".activity-row")).toHaveCount(9);
       const frame = await workspace.boundingBox();
       const island = await navigation.boundingBox();
-      expect(frame.y + frame.height - island.y - island.height).toBeGreaterThanOrEqual(8);
+      expect(frame.y + frame.height - island.y - island.height).toBeGreaterThanOrEqual(4);
       expect(island.x - frame.x).toBeGreaterThanOrEqual(8);
       expect(frame.x + frame.width - island.x - island.width).toBeGreaterThanOrEqual(8);
       const brand = await header.locator(".desk-brand").boundingBox();
@@ -964,15 +1178,37 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
 
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 768]) {
+    test(`mobile controls share raised depth ${theme} ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto(`/desk.html?theme=${theme}#training`);
+      const action = page.getByRole("button", { name: "Sync activities", exact: true });
+      const horizon = page.locator(".horizon-switch a").first();
+      await expect(action).toBeVisible();
+      await expect(horizon).toBeVisible();
+      const shadow = await action.evaluate(element => getComputedStyle(element).boxShadow);
+      expect(shadow).not.toBe("none");
+      await expect(horizon).toHaveCSS("box-shadow", shadow);
+      await action.evaluate(element => { element.disabled = true; });
+      await expect(action).toHaveCSS("box-shadow", "none");
+      await action.evaluate(element => { element.disabled = false; });
+      await page.emulateMedia({ contrast: "more" });
+      await expect(action).toHaveCSS("box-shadow", "none");
+      await expect(horizon).toHaveCSS("box-shadow", "none");
+    });
+
     test(`Prism flat mobile surfaces ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 844 });
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.goto(`/desk.html?theme=${theme}#journal`);
       const rows = page.locator(".activity-row");
       await expect(rows).toHaveCount(9);
+      await expect(page.locator(".journal-sidebar > .desk-toolbar")).not.toHaveCSS("background-image", "none");
       await expect(rows.last()).toHaveCSS("border-bottom-width", "0px");
-      await expect(rows.first()).toHaveCSS("border-bottom-width", "1px");
-      await expect(rows.first()).toHaveCSS("border-radius", "8px");
+      await expect(rows.first()).toHaveCSS("border-bottom-width", "0px");
+      expect(await rows.first().evaluate(element => getComputedStyle(element).borderRadius)).toBe(await rows.first().evaluate(element => getComputedStyle(element).getPropertyValue("--radius-card").trim()));
+      await expect(rows.first()).toHaveCSS("margin-bottom", "8px");
+      await expect(rows.first()).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const navigation = page.getByRole("navigation", { name: "Workspaces" });
       await expect(navigation).toHaveCSS("box-shadow", "none");
       const active = navigation.locator("a[aria-current]");
@@ -992,12 +1228,37 @@ for (const theme of ["light", "dark"]) {
           overflow: document.documentElement.scrollWidth > innerWidth,
         };
       });
-      expect(shell).toEqual({ inset: 8, radius: "48px", headerRadius: "0px", headerLeft: 0, headerRight: width, headerShadow: "none", overflow: false });
+      expect(shell).toEqual({ inset: 0, radius: "0px", headerRadius: "0px", headerLeft: 0, headerRight: width, headerShadow: "none", overflow: false });
       await page.screenshot({ path: testInfo.outputPath("flat-mobile-journal.png") });
       await navigation.getByRole("link", { name: "Training", exact: true }).click();
       await expect(page.locator(".day-itinerary")).toBeVisible();
+      await expect(page.locator(".training-toolbar")).not.toHaveCSS("background-image", "none");
+      expect(await page.locator(".training-toolbar").evaluate(element => {
+        const parent = element.getBoundingClientRect();
+        const inset = parseFloat(getComputedStyle(element).paddingLeft);
+        return inset >= 8 && [...element.querySelectorAll("a, button")].every(control => {
+          const bounds = control.getBoundingClientRect();
+          return bounds.left >= parent.left + inset - 1 && bounds.right <= parent.right - inset + 1
+            && bounds.top >= parent.top + inset - 1 && bounds.bottom <= parent.bottom - inset + 1;
+        });
+      })).toBe(true);
       await assertLayout(page, `flat mobile ${theme} ${width}`);
       await page.screenshot({ path: testInfo.outputPath("flat-mobile-training.png") });
+      await navigation.getByRole("link", { name: "Health", exact: true }).click();
+      await expect(page.locator(".health-toolbar")).not.toHaveCSS("background-image", "none");
+      await expect(page.locator(".health-toolbar")).toHaveCSS("overflow", "clip");
+      const healthTabs = page.locator(".health-toolbar .horizon-switch");
+      await expect(healthTabs).toHaveCSS("overflow-x", "auto");
+      const lastHealthTab = healthTabs.locator("a").last();
+      await lastHealthTab.focus();
+      await expect(lastHealthTab).toBeFocused();
+      expect(await lastHealthTab.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        const parent = element.closest(".health-toolbar").getBoundingClientRect();
+        return bounds.left >= parent.left && bounds.right <= parent.right;
+      })).toBe(true);
+      await page.emulateMedia({ contrast: "more" });
+      await expect(page.locator(".health-toolbar")).toHaveCSS("background-image", "none");
     });
   }
 }
@@ -1268,7 +1529,7 @@ test("Prism mobile shell follows safe-area geometry", async ({ page }) => {
     const header = document.querySelector(".desk-appbar");
     const nav = document.querySelector(".desk-navigation");
     const style = document.createElement("style");
-    style.textContent = ".desk-navigation { bottom: max(calc(2 * var(--space-2)), calc(34px - var(--space-5))) !important; }";
+    style.textContent = ".desk-navigation { bottom: max(var(--space-1), calc(34px - var(--space-5))) !important; }";
     document.head.append(style);
     const result = {
       radius: getComputedStyle(workspace).borderTopLeftRadius,
@@ -1283,11 +1544,11 @@ test("Prism mobile shell follows safe-area geometry", async ({ page }) => {
     style.remove();
     return result;
   });
-  expect(geometry.radius).toBe("48px");
+  expect(geometry.radius).toBe("0px");
   expect(geometry.headerRadius).toBe(geometry.radius);
-  expect(geometry.top).toBe(16);
+  expect(geometry.top).toBe(0);
   expect(geometry.headerTop).toBe(geometry.top);
-  expect(geometry.shellBottom).toBe(8);
+  expect(geometry.shellBottom).toBe(0);
   expect(geometry.blur).toContain("blur(");
   expect(geometry.blurTop).toBe(0);
   expect(geometry.bottom).toBeGreaterThanOrEqual(4);

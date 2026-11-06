@@ -46,14 +46,15 @@ export function Training() {
   // touches: a leading or trailing week with no day inside the selected month
   // is another month's training and used to render as a full ghost row.
   const monthWeeks = (() => {
-    if (horizon !== "month") return 1;
     const firstOfMonth = dateValue(`${cursor.slice(0, 7)}-01`);
     const lead = firstOfMonth.getDay() === 0 ? 6 : firstOfMonth.getDay() - 1;
     const daysInMonth = new Date(firstOfMonth.getFullYear(), firstOfMonth.getMonth() + 1, 0).getDate();
     return Math.ceil((lead + daysInMonth) / 7);
   })();
-  const days = Array.from({ length: monthWeeks * 7 }, (_, index) => shiftDate(first, index));
-  const events = useRemote(() => tauri.calendarEvents(first, days[days.length - 1]), [first, horizon]);
+  const days = Array.from({ length: horizon === "month" ? monthWeeks * 7 : 7 }, (_, index) => shiftDate(first, index));
+  const scheduleFirst = monday(`${cursor.slice(0, 7)}-01`);
+  const scheduleLast = shiftDate(scheduleFirst, monthWeeks * 7 - 1);
+  const events = useRemote(() => tauri.calendarEvents(scheduleFirst, scheduleLast), [scheduleFirst, scheduleLast]);
   const selectedEvent = events.data?.find(event => event.id === selected?.id);
   const plan = current.data?.[0];
   const workouts = current.data?.[1] ?? [];
@@ -185,7 +186,7 @@ export function Training() {
     const value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
     setCursor(value); setSelectedDay(value);
   };
-  const shown = events.data ?? [];
+  const shown = (events.data ?? []).filter(event => event.date >= first && event.date <= days[days.length - 1]);
   const done = shown.filter(event => event.activityId != null);
   const visibleWeeks = new Set(days.map(date => monday(date)));
   const plannedM = (weekProgress.data ?? []).filter(entry => visibleWeeks.has(entry.weekStart)).reduce((total, entry) => total + entry.plannedM, 0);

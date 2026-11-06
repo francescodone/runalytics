@@ -1,3 +1,127 @@
+## Immediate Compact Navigation, 2026-11-06
+
+At widths up to 800px, shared view changes update their contents in place without
+waiting for exits, remounting the transition container or replaying staggered
+reveals. A brief opacity-only fade remains nonblocking and is omitted for reduced
+motion. Visited compact workspaces retain state through React Activity; hidden
+effects are suspended, and resumed routes and data revalidate. Week, Month and
+Plan share a bounded calendar request; summaries still use the visible dates.
+Desktop view transitions and overlay motion remain on their existing paths.
+
+Verification: production build, TypeScript diagnostics and whitespace checks
+passed. The isolated synthetic-IPC Chromium regression run passed 85 of 87
+checks, including the route matrix at 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light/dark. Touch
+navigation reached Week within two animation frames at 320, 390 and 768px in
+both themes and motion preferences. Coverage also included rapid switching,
+mounted filter retention, held-request revalidation, remote plan endings,
+calendar totals, Undo and calendar overlay focus. Separate held-touch press and
+cancel checks passed. Light/dark 390px screenshots were inspected.
+
+The two regression timeouts expected a Log pain action on Health > Pace insights;
+that action is in the pain journal. Earlier shared-port runs were interrupted by
+preview-server conflicts; the reported run used an isolated port. Native iPhone
+WebView rendering, physical touch latency and provider integration were not tested.
+
+## Setup And Proposal Messages, 2026-11-06
+
+Setup and proposal messages use shared neutral parent material, the palette
+aura, a full subtle border, 8px corners and consistent token spacing. Message
+text wraps without shrinking actions. Six synthetic-IPC Chromium setup checks
+passed at 320, 390 and 1440px in light and dark, including high-contrast fallback.
+The production build passed and the 390px light screenshot was inspected.
+Native-device rendering and proposal workflows were not tested.
+
+## Mobile Parent Auras, 2026-11-06
+
+Mobile training controls share an 8px parent inset across both rows rather than
+padding only the horizon row. Six synthetic-IPC Chromium checks passed at 320,
+390 and 768px in light and dark, asserting every button stays inside that inset.
+The production build passed and the 390px light screenshot was inspected.
+
+Grouped toolbar, choice and pace-mode parents clip overflow to their rounded
+boundaries at every width. Inner health tabs remain horizontally scrollable;
+six synthetic-IPC Chromium checks passed at 320, 390 and 768px in light and
+dark, including keyboard access to the final tab.
+
+Compact training and health toolbar parents retain the shared material aura,
+matching the activity filter toolbar. High-contrast and reduced-transparency
+fallbacks remain unchanged. Six synthetic-IPC Chromium mobile surface checks
+passed at 320, 390 and 768px in light and dark, including parent aura presence
+and the health toolbar's high-contrast fallback. The 390px light training
+screenshot was inspected. Native iPhone rendering and physical touch were not
+tested.
+
+## Map Startup And Attribution, 2026-11-06
+
+Raster paint and the themed background are included in the initial MapLibre
+style, avoiding a default-color frame before load. Native attribution starts
+collapsed once its credits populate; its toggle and contributor link remain
+available. The production build and two focused synthetic-IPC Chromium checks
+passed at 390 and 1440px, including initial paint, attribution toggling and all
+six palettes in light/dark. Light desktop and dark mobile screenshots were
+inspected. A later rerun failed on a concurrently added attribution-icon CSS
+assertion; the broader map regression run was not confirmed. Native macOS/iOS
+and offline archive loading were not tested.
+
+## Map Attribution Icon, 2026-11-06
+
+Shared glass background-image rules exclude MapLibre's attribution toggle so
+its built-in info icon remains visible at rest, hover, keyboard focus and press.
+Two synthetic-IPC Chromium map checks passed at 390 and 1440px, including
+attribution expansion/collapse and light/dark map checks across all six palettes.
+Native-device rendering and physical touch were not tested.
+
+## Desktop Activity Morph, 2026-11-06
+
+Clicking an activity uses the shared inspector source morph into the right-hand
+review pane; Back and Escape reverse it and restore row focus. The desktop row
+remains visible, and the exiting inspector retains its grid cell. Compact
+activity inspectors keep their existing behavior; reduced motion omits the morph.
+The production build and five synthetic-IPC Chromium activity checks passed at
+820 and 1440px in light and dark, including reduced motion and keyboard return.
+A 1440px light screenshot was inspected. The broader route/calendar morph run
+passed 42 of 43 checks; the 320px light calendar closing-width assertion failed
+in that run and passed on an isolated rerun.
+Native macOS rendering was not tested.
+
+## Mobile Activity Cards, 2026-11-06
+
+Activity rows on compact screens use the same card material, radius and spacing
+as plan weeks. The production build and six synthetic-IPC Chromium checks passed
+at 320, 390 and 768px in light and dark themes. A 320px light screenshot was
+inspected. The broader route matrix did not return a final result; native iPhone
+rendering and physical touch behavior were not tested.
+
+## Edge-to-Edge Mobile Shell, 2026-11-06
+
+The compact workspace and header extend to the viewport edges, and the
+navigation island sits 4px above the bottom when no safe-area inset is present.
+The existing safe-area adjustment remains in place. Fifteen synthetic-IPC
+Chromium geometry and workflow checks passed at 320, 390 and 768px, plus
+740x390 landscape, in light and dark themes; a 34px bottom inset was simulated.
+The broader responsive task passed 31 checks before 15 connection failures
+when its preview server stopped; the full matrix remains unverified.
+Native iPhone rendering and physical home-indicator interaction were not tested.
+
+## Grouped Control Aura, 2026-11-06
+
+Grouped control surfaces use the notification's shared material aura. Compact
+training and health toolbars remain transparent, and accessibility fallbacks
+remain opaque. The production build and focused synthetic-IPC Chromium aura
+checks passed in light and dark; the light screenshot was inspected. The route
+matrix passed in the initial run, but a repeat lost its preview server connection.
+Native rendering was not tested.
+
+## Mobile Control Depth, 2026-11-06
+
+Shared mobile action and selection controls use a stronger raised bevel while
+retaining their existing pressed, disabled and high-contrast treatments.
+The production build passed. Synthetic-IPC Chromium checks covered the raised
+controls at 320, 390 and 768px in light and dark, plus navigation, touch and
+route layouts. A 390px training screenshot was inspected. The existing 320px
+200% text roadmap-row overflow still fails; native iPhone rendering was not tested.
+
 ## Full-Width Mobile Header, 2026-11-06
 
 The compact header background extends to both viewport edges while the white
@@ -842,6 +966,19 @@ Reduced motion and opaque/high-contrast fallbacks retain visible navigation.
   opaque high-contrast topbar visibility.
 - Prism route matrix in both themes: 320, 360, 375, 390, 414, 430, 600, 768,
   820, 1024, 1280, 1366, 1440, 1600, 1920, and 2560px.
+
+## Activities Width, 2026-11-06
+
+Desktop Activities reduces its outer inline gutter by 8px on each side, widening
+the filter bar, activity list and right-hand detail area symmetrically. Existing
+list hover clearance, column proportions and mobile padding are unchanged.
+
+Verification: production build passed; five desktop activity morph checks passed
+(820/1440px, light/dark, plus reduced motion); all 32 Prism route matrix checks
+passed at the widths above in both themes. Inspected the 1440px dark activity
+detail screenshot. An initial matrix attempt lost its preview server; the full
+rerun used the persistent preview task. These are synthetic browser checks, not
+physical iPhone or native integration verification.
 - Existing visual/axe matrix: 320, 390, 768, and 1440px, light/dark.
 - Enlarged text at 200%: 320, 820, and 1440px. Intermediate/short viewports:
   537x740, 913x480, and 667x375.

@@ -92,7 +92,7 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
   const present = useIsPresent();
   const morphControls = useAnimationControls();
   const [collapsed, setCollapsed] = useState<{ x: number; y: number; scaleX: number; scaleY: number; borderRadius: string } | null>(null);
-  const morph = Boolean(modal && origin && !surface.reduced);
+  const morph = Boolean((modal || !surface.compact) && origin && !surface.reduced);
   useLayoutEffect(() => {
     if (!morph || !origin?.isConnected) return;
     const element = host.current!;
@@ -109,11 +109,11 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
     const visibility = origin.style.visibility;
     const radius = getComputedStyle(element).borderRadius;
     setCollapsed(shape);
-    origin.style.visibility = "hidden";
+    if (modal) origin.style.visibility = "hidden";
     morphControls.set({ ...shape, opacity: 1 });
     void morphControls.start({ x: 0, y: 0, scaleX: 1, scaleY: 1, borderRadius: radius, opacity: 1, transition: tempo.spring });
     return () => { origin.style.visibility = visibility; };
-  }, [morph, origin, morphControls]);
+  }, [morph, origin, morphControls, modal]);
   close.current = onClose;
   useEffect(() => {
     const opener = origin ?? document.activeElement as HTMLElement | null;

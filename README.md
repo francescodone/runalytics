@@ -38,13 +38,18 @@ distributed.
   presentation uses locally bundled Outfit, neutral light and graphite dark
   surfaces, a coral default accent and six accent palettes. Rounded controls,
   evenly spaced day lanes and a centered floating mobile navigation share the
-  same geometry and spacing tokens. The shell stays within the viewport; its
+  same geometry and spacing tokens. The mobile workspace extends to the viewport edges; its
   workspace and height-bounded activity and plan lists own scrolling. Navigation
   and tabs use the same hover, pressed and selected treatments as buttons.
   Information buttons open dialogs with a blurred backdrop, contained keyboard
-  focus and nested scroll locks. Content reveals once on viewport entry,
-  settling from a brief blur and small staggered offsets. Outgoing views scatter
-  before removal; focus or a press immediately clears an incoming reveal.
+  focus and nested scroll locks. Desktop content reveals once on viewport entry,
+  settling from a brief blur and small staggered offsets. Desktop outgoing views
+  scatter before removal; focus or a press immediately clears an incoming reveal.
+  Compact view changes update in place with a brief nonblocking fade, without
+  waiting for exits or staggered reveals. Visited mobile workspaces retain local
+  state while hidden effects are suspended; returning revalidates their data.
+  Week, Month and Plan reuse the loaded calendar range instead of fetching again
+  for each horizon switch.
   Charts have no persistent blur layers. Reduced motion removes blur and movement;
   reduced transparency, increased contrast and forced colors have explicit
   fallbacks. The font is OFL-licensed. Shared visual and motion contracts live in

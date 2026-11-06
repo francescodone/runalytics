@@ -8,7 +8,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:1500",
     browserName: "chromium",
-    channel: "chrome",
+    channel: process.env.PLAYWRIGHT_WEBKIT ? undefined : "chrome",
     viewport: { width: 390, height: 844 },
     colorScheme: "light",
     reducedMotion: "reduce",

@@ -3,7 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle, fmtDateDMY } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
 import { IconLoader2, IconCheck, IconX } from "@tabler/icons-react";
-import { actionOrigin, Change, Presence, tempo } from "./interaction";
+import { actionOrigin, Change, Presence } from "./interaction";
 import { Notification, NotificationViewport } from "./overlays";
 
 export type Workspace = "training" | "journal" | "health" | "settings" | "help";
@@ -32,6 +32,7 @@ export function useRoute() {
   const [route, setRoute] = useState(readRoute);
   useEffect(() => {
     const changed = () => setRoute(readRoute());
+    changed();
     window.addEventListener("hashchange", changed);
     return () => window.removeEventListener("hashchange", changed);
   }, []);
@@ -44,7 +45,11 @@ type Notice = { text: string; action?: { label: string; run: () => Promise<unkno
 /// while the runner is reaching for it. The hold is read from the live element
 /// when the timer fires rather than tracked in state, because a notice removed
 /// under a resting pointer never gets the leave event that would clear a flag.
-const NOTICE_MS = tempo.notice;
+const noticeDuration = () => {
+  const duration = getComputedStyle(document.documentElement).getPropertyValue("--notice-duration").trim();
+  const value = parseFloat(duration);
+  return Number.isFinite(value) ? value * (duration.endsWith("ms") ? 1 : 1000) : 6000;
+};
 const NOTICE_HOLD_POLL_MS = 500;
 
 /// One mirror report from the backend's `plan://stage` channel. `target`
@@ -193,7 +198,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
       setNotice(null);
     };
-    timer = window.setTimeout(expire, NOTICE_MS);
+    timer = window.setTimeout(expire, noticeDuration());
     return () => window.clearTimeout(timer);
   }, [notice, acting]);
   // The stage toast keeps itself open while any line is still working, and
@@ -214,7 +219,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
       setStageOps({});
     };
-    timer = window.setTimeout(expire, NOTICE_MS);
+    timer = window.setTimeout(expire, noticeDuration());
     return () => window.clearTimeout(timer);
   }, [stagesQuiet, stageOps]);
   return <Context.Provider value={{ revision, planCheck, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>

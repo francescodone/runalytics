@@ -185,7 +185,7 @@ progress { accent-color: var(--desk-action); }
 .pace-mode button:is(:not(:disabled), [aria-pressed="true"]) { background: transparent; border-color: transparent; border-radius: var(--radius-pill); box-shadow: none; color: var(--desk-muted); }
 .pace-mode button[aria-pressed="true"] { color: var(--desk-action); }
 .pace-mode button .selection-marker { background: var(--state-selected); box-shadow: var(--shadow-control); }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label, .session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary) {
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label, .session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary):not(:where(.maplibregl-ctrl-attrib-button)) {
   background-image: none;
   box-shadow: none;
 }
@@ -243,7 +243,7 @@ progress { accent-color: var(--desk-action); }
 :is(.session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary) {
   transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-press) var(--motion-settle), transform var(--motion-feedback) var(--motion-settle);
 }
-:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):focus-visible {
+:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.maplibregl-ctrl-attrib-button)):focus-visible {
   background-image: var(--material-aura);
   box-shadow: var(--shadow-button-hover);
 }
@@ -253,16 +253,16 @@ progress { accent-color: var(--desk-action); }
   outline-offset: var(--focus-offset);
 }
 @media (hover: hover) and (pointer: fine) {
-  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) {
+  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.maplibregl-ctrl-attrib-button)):hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) {
     background-image: var(--material-aura);
     box-shadow: var(--shadow-button-hover);
   }
 }
-:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) {
+:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.maplibregl-ctrl-attrib-button)):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) {
   background-image: var(--material-aura);
   box-shadow: var(--shadow-button-pressed);
 }
-:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
+:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.maplibregl-ctrl-attrib-button)):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
   background-image: var(--material-aura);
   transition: --aura-strength var(--motion-change) var(--motion-settle), background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-press) var(--motion-settle), transform var(--motion-feedback) var(--motion-settle);
 }
@@ -298,6 +298,10 @@ progress { accent-color: var(--desk-action); }
   .notification-viewport { left: auto; right: max(calc(var(--shell-inset) + var(--space-4)), calc((100vw - var(--content-max)) / 2 + var(--shell-inset) + var(--space-4))); bottom: calc(var(--shell-inset) + var(--space-4)); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap) - 2 * var(--space-4))); }
 }
 @media (max-width: 800px) {
+  :is(.desk-button, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) {
+    --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -2px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 3px 6px -3px var(--button-shade);
+    --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -2px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 4px 8px -3px var(--button-shade);
+  }
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
   .dialog-surface { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
   .dialog-grip { display: grid; place-items: center; height: 24px; touch-action: none; cursor: grab; }

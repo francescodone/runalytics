@@ -1,10 +1,11 @@
-import { useEffect, useRef } from "react";
+import { Activity, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IconCalendarWeek, IconRun, IconHeart, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
+import type { Workspace } from "./data";
 import { ErrorNotice, IconButton } from "./ui";
 import "./desk.css";
 import { Training } from "./training";
@@ -24,6 +25,8 @@ function App() {
   const route = useRoute();
   const compact = useCompactLayout();
   const reduced = useReducedMotion();
+  const [visitedWorkspaces, setVisitedWorkspaces] = useState<Workspace[]>([route.workspace]);
+  if (compact && !visitedWorkspaces.includes(route.workspace)) setVisitedWorkspaces([...visitedWorkspaces, route.workspace]);
   const heading = useRef<HTMLHeadingElement>(null);
   const initial = useRef(true);
   const appearanceTransition = useRef<ViewTransition | null>(null);
@@ -115,7 +118,7 @@ function App() {
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
       <div className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? "COROS connected" : "Local training workspace"}</span></div>
       <ErrorNotice error={command.error} />
-      <Change identity={route.workspace}>{route.workspace === "training" ? <Training /> : route.workspace === "journal" ? <Journal /> : route.workspace === "health" ? <Health /> : route.workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Change>
+      <Change identity={route.workspace}>{compact ? visitedWorkspaces.map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>) : route.workspace === "training" ? <Training /> : route.workspace === "journal" ? <Journal /> : route.workspace === "health" ? <Health /> : route.workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Change>
     </main>
   </>;
 }

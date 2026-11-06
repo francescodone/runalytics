@@ -501,7 +501,7 @@ test.describe("motion system", () => {
         await page.goto("/desk.html#health/overview");
         const verdict = page.locator(".health-verdict");
         await expect(verdict).toBeVisible();
-        if (reducedMotion === "no-preference") {
+        if (reducedMotion === "no-preference" && width > 800) {
           await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "animationend").length)).toBe(1);
           const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
           expect(events[1].width).toBeCloseTo(events[0].width, 3);
@@ -548,7 +548,7 @@ test.describe("motion system", () => {
   }
 
   test("viewport reveals wait for entry, run once, and settle on focus or preference changes", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 600 });
+    await page.setViewportSize({ width: 820, height: 600 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#settings");
     const lastTask = page.locator(".settings-task-list > a").last();
@@ -612,7 +612,7 @@ test.describe("motion system", () => {
       await expect(page.locator(".activity-library")).toBeVisible();
       await expect(page.locator('[data-transition-state="exiting"]')).toHaveCount(0);
       const exits = await page.evaluate(() => window.__scatterExits);
-      if (reducedMotion === "reduce") {
+      if (reducedMotion === "reduce" || await page.evaluate(() => matchMedia("(max-width: 800px)").matches)) {
         expect(exits).toEqual([]);
       } else {
         expect(exits.length).toBeGreaterThan(1);
@@ -871,6 +871,11 @@ for (const width of [390, 1440]) {
     await page.route("**/src/desk/map.tsx*", async route => {
       const response = await route.fetch();
       await route.fulfill({ response, body: `${await response.text()}
+        const originalRender = maplibregl.Map.prototype._render;
+        maplibregl.Map.prototype._render = function(...args) {
+          if (!window.__initialMapStyle) window.__initialMapStyle = this.getStyle();
+          return originalRender.apply(this, args);
+        };
         const originalPaint = maplibregl.Map.prototype.setPaintProperty;
         maplibregl.Map.prototype.setPaintProperty = function(...args) {
           window.__themeMap = this;
@@ -881,6 +886,30 @@ for (const width of [390, 1440]) {
     await page.goto("/desk.html#journal/1");
     const finish = page.getByRole("img", { name: "Route finish", exact: true });
     await expect(finish).toBeVisible();
+    const initialPaint = await page.evaluate(() => window.__initialMapStyle.layers.find(layer => layer.id === "base").paint);
+    expect(initialPaint).toMatchObject({ "raster-saturation": -.85, "raster-brightness-min": .3, "raster-brightness-max": 1, "raster-opacity": .88 });
+    expect(await page.evaluate(() => window.__initialMapStyle.layers[0].id)).toBe("map-background");
+    const attribution = page.locator(".maplibregl-ctrl-attrib");
+    const attributionToggle = attribution.locator("summary");
+    await expect(attributionToggle).toHaveCSS("background-image", /url\("data:image\/svg\+xml/);
+    await attributionToggle.hover();
+    await expect(attributionToggle).toHaveCSS("background-image", /url\("data:image\/svg\+xml/);
+    await attributionToggle.focus();
+    await expect(attributionToggle).toHaveCSS("background-image", /url\("data:image\/svg\+xml/);
+    await page.mouse.down();
+    try {
+      await expect(attributionToggle).toHaveCSS("background-image", /url\("data:image\/svg\+xml/);
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(attribution).toHaveAttribute("open", "");
+    await attributionToggle.click();
+    await expect(attribution).not.toHaveAttribute("open", "");
+    await attribution.locator("summary").click();
+    await expect(attribution).toHaveAttribute("open", "");
+    await expect(attribution.getByRole("link", { name: "OpenStreetMap contributors" })).toBeVisible();
+    await attribution.locator("summary").click();
+    await expect(attribution).not.toHaveAttribute("open", "");
     await expect(finish).toHaveCSS("border-radius", "50%");
     await expect(finish).toHaveCSS("width", "24px");
     await expect(finish).toHaveCSS("height", "24px");
@@ -2061,28 +2090,27 @@ for (const width of [390, 1440]) {
       await page.getByRole("button", { name: "Filters", exact: true }).click();
       await page.locator(".activity-library").evaluate(library => {
         window.__resultArrival = [];
-        const observer = new MutationObserver(records => {
-          for (const record of records) {
-            for (const node of record.addedNodes) {
-              if (!(node instanceof HTMLElement) || !node.matches(".motion-change")) continue;
-              const sample = () => {
-                const style = getComputedStyle(node);
-                window.__resultArrival.push({ opacity: Number(style.opacity), transform: style.transform, filter: style.filter });
-                if (Number(style.opacity) < 1) requestAnimationFrame(sample);
-              };
-              sample();
-              observer.disconnect();
+        window.__resultHost = library.querySelector(".motion-change");
+        document.addEventListener("change", () => {
+          const sample = () => {
+            const node = library.querySelector('.motion-change:not([inert])');
+            if (node) {
+              const style = getComputedStyle(node);
+              window.__resultArrival.push({ opacity: Number(style.opacity), transform: style.transform, filter: style.filter });
             }
-          }
-        });
-        observer.observe(library, { childList: true });
+            if (window.__resultArrival.length < 20) requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }, { once: true });
       });
       await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
       await expect(page.locator(".activity-row")).toHaveCount(6);
+      await expect.poll(() => page.evaluate(() => window.__resultArrival.length)).toBe(20);
       await expect.poll(() => page.evaluate(() => window.__resultArrival.at(-1)?.opacity)).toBe(1);
       const frames = await page.evaluate(() => window.__resultArrival);
       expect(frames.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(reducedMotion === "no-preference");
       expect(frames.every(frame => frame.transform === "none" && frame.filter === "none")).toBe(true);
+      if (width <= 800) expect(await page.locator(".activity-library > .motion-change").evaluate(element => element === window.__resultHost)).toBe(true);
       await page.getByRole("button", { name: "Reset filters" }).click();
       await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("garmin");
       await page.getByRole("button", { name: "Reset filters" }).click();
@@ -2738,6 +2766,33 @@ for (const width of [320, 1440]) {
 }
 
 const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
+
+test("sync countdown survives an unavailable startup duration token", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = CSSStyleDeclaration.prototype.getPropertyValue;
+    let intercepted = false;
+    CSSStyleDeclaration.prototype.getPropertyValue = function (property) {
+      if (property === "--notice-duration" && !intercepted) {
+        intercepted = true;
+        window.__noticeTokenIntercepted = true;
+        return "";
+      }
+      return original.call(this, property);
+    };
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html");
+  expect(await page.evaluate(() => window.__noticeTokenIntercepted)).toBe(true);
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "sync", target: "op", state: "working" });
+  await emitStage(page, { op: "sync", target: "strava", state: "working" });
+  await emitStage(page, { op: "sync", target: "strava", state: "done", detail: "Strava finished" });
+  await emitStage(page, { op: "sync", target: "op", state: "done" });
+  await expect(toast.locator(".stage-ring")).toBeVisible();
+  await page.waitForTimeout(1000);
+  await expect(toast).toContainText("Strava finished");
+  await expect(toast).toBeHidden({ timeout: 10000 });
+});
 
 for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
   test(`strava stage reports pending and failed work without blocking dismissal ${width}px ${theme}`, async ({ page }) => {

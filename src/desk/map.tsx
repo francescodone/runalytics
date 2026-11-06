@@ -38,15 +38,28 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     const tiles = offline ? [`pmtiles://${convertFileSrc(settings.pmtilesPath!)}/{z}/{x}/{y}`] : ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"];
     let instance: maplibregl.Map;
     let fellBack = false;
+    let action = themeColor("--desk-action", "#16634b");
+    let outline = themeColor("--desk-surface", "#ffffff");
+    const basePaint = () => {
+      const dark = document.documentElement.dataset.deskTheme === "dark";
+      return { "raster-saturation": -.85, "raster-brightness-min": dark ? .06 : .3, "raster-brightness-max": dark ? .32 : 1, "raster-opacity": .88 };
+    };
     try {
-      instance = new maplibregl.Map({ container: host.current, attributionControl: { compact: true }, style: { version: 8, sources: { base: { type: "raster", tiles, tileSize: 256, attribution: offline ? "PMTiles" : '<a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>' } }, layers: [{ id: "base", type: "raster", source: "base" }] }, center: coordinates[0], zoom: 12, canvasContextAttributes: { preserveDrawingBuffer: true } });
+      instance = new maplibregl.Map({ container: host.current, attributionControl: { compact: true }, style: { version: 8, sources: { base: { type: "raster", tiles, tileSize: 256, attribution: offline ? "PMTiles" : '<a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>' } }, layers: [{ id: "map-background", type: "background", paint: { "background-color": mixHex(outline, action, .12) } }, { id: "base", type: "raster", source: "base", paint: basePaint() }] }, center: coordinates[0], zoom: 12, canvasContextAttributes: { preserveDrawingBuffer: true } });
     } catch { setFailed(true); return; }
+    const collapseInitialAttribution = () => {
+      const attribution = host.current?.querySelector(".maplibregl-ctrl-attrib:not(.maplibregl-attrib-empty)");
+      if (!attribution) return;
+      attribution.removeAttribute("open");
+      attribution.classList.remove("maplibregl-compact-show");
+      instance.off("sourcedata", collapseInitialAttribution);
+    };
+    instance.on("sourcedata", collapseInitialAttribution);
+    collapseInitialAttribution();
     map.current = instance;
     fit.current = () => instance.fitBounds(bounds, { padding: 40, maxZoom: 16, duration: 0 });
     let animationFrame = 0;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let action = themeColor("--desk-action", "#16634b");
-    let outline = themeColor("--desk-surface", "#ffffff");
     let routeProgress = 0;
     const revealRoute = (progress: number) => {
       routeProgress = progress;
@@ -58,11 +71,7 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     const paintTheme = () => {
       action = themeColor("--desk-action", "#16634b");
       outline = themeColor("--desk-surface", "#ffffff");
-      const dark = document.documentElement.dataset.deskTheme === "dark";
-      instance.setPaintProperty("base", "raster-saturation", -.85);
-      instance.setPaintProperty("base", "raster-brightness-min", dark ? .06 : .3);
-      instance.setPaintProperty("base", "raster-brightness-max", dark ? .32 : 1);
-      instance.setPaintProperty("base", "raster-opacity", .88);
+      for (const [property, value] of Object.entries(basePaint())) instance.setPaintProperty("base", property, value);
       instance.setPaintProperty("map-background", "background-color", mixHex(outline, action, .12));
       if (instance.getLayer("route")) {
         instance.setPaintProperty("route", "line-color", action);
@@ -80,8 +89,6 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     };
     reducedMotion.addEventListener("change", finishForReducedMotion);
     instance.on("load", () => {
-      instance.addLayer({ id: "map-background", type: "background" }, "base");
-      paintTheme();
       if (heat) {
         instance.addSource("history", {type:"geojson",data:{type:"FeatureCollection",features:points.map(point => ({type:"Feature",properties:{weight:"weight" in point ? point.weight : 1},geometry:{type:"Point",coordinates:[point.lon,point.lat]}}))}});
         instance.addLayer({id:"history",type:"heatmap",source:"history",paint:{"heatmap-weight":["get","weight"],"heatmap-intensity":1,"heatmap-radius":18,"heatmap-opacity":.75,"heatmap-color":heatColors()}});

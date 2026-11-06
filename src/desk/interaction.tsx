@@ -137,6 +137,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    const compact = matchMedia("(max-width: 800px)");
     let sequence = 0;
     const settleElement = (element: HTMLElement) => {
       observer.unobserve(element);
@@ -156,7 +157,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
         const group = element.closest(".motion-change[data-stagger]");
         const staggerIndex = group ? [...group.querySelectorAll('[data-reveal]:not([data-reveal="container"])')].indexOf(element) : order++;
         element.style.setProperty("--reveal-delay", `${Math.min(Math.max(0, staggerIndex), 3) * tempo.stagger}s`);
-        element.dataset.reveal = reduced.matches || element.contains(document.activeElement) ? "settled" : "visible";
+        element.dataset.reveal = reduced.matches || compact.matches || element.contains(document.activeElement) ? "settled" : "visible";
       }
     }, { threshold: .08, rootMargin: "0px 0px -24px 0px" });
     const register = (root: ParentNode) => {
@@ -171,7 +172,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
           ancestor.dataset.reveal = "container";
         }
         element.style.setProperty("--scatter-direction", String(sequence++ % 3 - 1));
-        if (reduced.matches || element.contains(document.activeElement) || element.matches(".activity-row, .roadmap-row")) { settleElement(element); continue; }
+        if (reduced.matches || compact.matches || element.contains(document.activeElement) || element.matches(".activity-row, .roadmap-row")) { settleElement(element); continue; }
         element.dataset.reveal = "waiting";
         pending.add(element);
         observer.observe(element);
@@ -199,12 +200,14 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     document.addEventListener("focusin", settleInteraction);
     document.addEventListener("pointerdown", settleInteraction, true);
     const settleMotion = () => {
-      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      if (reduced.matches || compact.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
     };
     reduced.addEventListener("change", settleMotion);
+    compact.addEventListener("change", settleMotion);
     return () => {
       document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
       observer.disconnect(); mutations.disconnect(); reduced.removeEventListener("change", settleMotion);
+      compact.removeEventListener("change", settleMotion);
       document.removeEventListener("animationend", settle); document.removeEventListener("animationcancel", settle);
       document.removeEventListener("focusin", settleInteraction); document.removeEventListener("pointerdown", settleInteraction, true);
     };
@@ -313,7 +316,23 @@ function ChangeContents({ children, className, stagger }: { children: ReactNode;
   </motion.div>;
 }
 
+function CompactChange({ children, identity, className }: { children: ReactNode; identity: string | number; className: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const previousIdentity = useRef(identity);
+  const reduced = useReducedMotion();
+  useLayoutEffect(() => {
+    const changed = previousIdentity.current !== identity;
+    previousIdentity.current = identity;
+    if (!changed || reduced) return;
+    const animation = host.current?.animate([{ opacity: .92 }, { opacity: 1 }], { duration: tempo.feedback * 1000, easing: "ease-out" });
+    return () => animation?.cancel();
+  }, [identity, reduced]);
+  return <div ref={host} className={`motion-change ${className}`} data-transition-state="present">{children}</div>;
+}
+
 export function Change({ children, identity, className = "", stagger = false }: { children: ReactNode; identity: string | number; className?: string; stagger?: boolean }) {
+  const compact = useCompactLayout();
+  if (compact) return <CompactChange identity={identity} className={className}>{children}</CompactChange>;
   return (
     <AnimatePresence mode="wait" initial={false}>
       <ChangeContents key={identity} className={className} stagger={stagger}>{children}</ChangeContents>
