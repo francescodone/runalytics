@@ -1147,6 +1147,33 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
+for (const width of [320, 390]) {
+  test(`Prism mobile training controls ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/desk.html#training/week");
+    const toolbar = page.locator(".training-toolbar");
+    const horizon = toolbar.getByRole("navigation", { name: "Training horizon" });
+    await expect(horizon.getByRole("link", { name: "Week" })).toHaveAttribute("aria-current", "page");
+    const geometry = await toolbar.evaluate(element => {
+      const links = [...element.querySelectorAll(".horizon-switch a")].map(item => item.getBoundingClientRect());
+      const buttons = [...element.querySelectorAll(".date-controls button")].map(item => item.getBoundingClientRect());
+      return { links: links.map(rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })), buttons: buttons.map(rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })) };
+    });
+    expect(geometry.links.every(rect => rect.height >= 44 && rect.width >= 44)).toBe(true);
+    expect(geometry.buttons.every(rect => rect.height >= 44 && rect.width >= 44)).toBe(true);
+    expect(geometry.buttons[0].y).toBeGreaterThan(geometry.links[0].y);
+    expect(Math.abs(geometry.links[0].width - geometry.links[2].width)).toBeLessThan(1);
+    await toolbar.getByRole("button", { name: "Next week" }).click();
+    await toolbar.getByRole("button", { name: "Today" }).click();
+    await horizon.getByRole("link", { name: "Month" }).click();
+    await expect(toolbar.getByRole("button", { name: "Previous month" })).toBeVisible();
+    await horizon.getByRole("link", { name: "Plan" }).click();
+    await expect(horizon.getByRole("link", { name: "Plan" })).toHaveAttribute("aria-current", "page");
+    await page.screenshot({ path: testInfo.outputPath("training-controls.png") });
+    await assertLayout(page, `mobile training controls ${width}`);
+  });
+}
+
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 375, 390, 768]) {
     test(`Prism mobile today-first training ${theme} ${width}px`, async ({ page }, testInfo) => {
@@ -1176,7 +1203,8 @@ for (const theme of ["light", "dark"]) {
         const actions = bounds(".training-secondary-actions");
         return { alignment: horizon.y - dates.y, sessionBottom: session.bottom, navigationTop: navigation.y, bottomGap: innerHeight - navigation.bottom, actionsTop: actions.y, tintedGlass: getComputedStyle(document.querySelector(".desk-navigation")).getPropertyValue("--glass-navigation") !== getComputedStyle(document.documentElement).getPropertyValue("--glass-navigation"), controls: [...document.querySelectorAll(".training-toolbar a, .training-toolbar button")].map(element => element.getBoundingClientRect().height) };
       });
-      expect(Math.abs(geometry.alignment)).toBeLessThan(1);
+      if (width <= 480) expect(geometry.alignment).toBeLessThan(0);
+      else expect(Math.abs(geometry.alignment)).toBeLessThan(1);
       expect(geometry.sessionBottom).toBeLessThan(geometry.navigationTop);
       expect(geometry.actionsTop).toBeGreaterThan(geometry.sessionBottom);
       expect(geometry.bottomGap).toBe(4);

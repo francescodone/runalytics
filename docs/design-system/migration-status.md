@@ -1,3 +1,13 @@
+## Mobile Training Controls, 2026-11-06
+
+At widths up to 480px, the training horizon uses three equal-width controls
+above a full-width date-navigation row. The production build and synthetic-IPC
+Chromium control and navigation checks passed at 320 and 390px. A 320px week
+screenshot was inspected. The broader route matrix did not return a final result;
+native iPhone rendering and physical touch behavior were not tested. An existing
+today-first check also failed on its unrelated 4px bottom-navigation inset
+expectation, which currently measures 16px.
+
 ## Mobile Shell Top Inset, 2026-11-06
 
 The compact shell top inset is 16px; its bottom inset, 48px corners and island
