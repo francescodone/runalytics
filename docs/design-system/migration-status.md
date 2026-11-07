@@ -1,3 +1,20 @@
+## Reference Button States, 2026-11-07
+
+Shared action and selection controls use softer raised shadows, filled selected
+states without a persistent accent border, and a continuous accent outline on
+hover or held press. Selection remains distinct from hover; existing palette,
+keyboard focus, disabled, reduced-motion and high-contrast behavior is retained.
+
+Verification: production build, editor diagnostics and whitespace checks passed.
+All 17 focused synthetic-IPC Chromium checks passed, including Speed/Long states
+at 320, 390 and 1440px in light/dark, continuous outlines at 320 and 1440px,
+selection switching, keyboard activation, held-touch feedback and shared control
+geometry. Desktop light/dark and mobile dark state screenshots were inspected.
+The earlier broader matrix passed 46 of 47 checks; the existing 320px enlarged-text
+roadmap overflow remains. A separate 19-check run passed 17, with two existing
+motion tests failing because they seek Log pain on Pace insights instead of the
+pain journal. Native macOS/iPhone rendering and physical touch were not tested.
+
 ## Immediate Compact Navigation, 2026-11-06
 
 At widths up to 800px, shared view changes update their contents in place without

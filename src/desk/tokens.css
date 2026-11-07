@@ -89,9 +89,9 @@
   --button-rim-refraction: color-mix(in srgb, var(--button-accent, var(--desk-action)) 55%, transparent);
   --button-primary-surface: color-mix(in srgb, var(--desk-action) 16%, var(--control-surface));
   --button-primary-ink: color-mix(in srgb, var(--desk-action) 82%, var(--desk-ink));
-  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 2px 5px -3px var(--button-shade);
+  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
   --button-glass-filter: blur(12px) saturate(140%);
-  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 3px 6px -4px var(--button-shade), 0 5px 12px -8px color-mix(in srgb, var(--desk-action) 25%, transparent);
+  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
   --shadow-button-pressed: inset 0 2px 4px color-mix(in srgb, var(--button-shade) 60%, transparent), inset 0 -1px 0 var(--button-highlight);
   --button-hover-transform: none;
   --button-press-transform: none;

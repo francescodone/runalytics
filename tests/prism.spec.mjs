@@ -369,7 +369,7 @@ for (const theme of ["light", "dark"]) {
     }
   });
 
-  for (const width of [320, 1440]) test(`glass button borders follow pointer and press ${theme} ${width}px`, async ({ page }, testInfo) => {
+  for (const width of [320, 1440]) test(`glass button borders stay continuous on hover and press ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/desk.html?theme=${theme}#settings/thresholds`);
     const control = page.getByRole("button", { name: "Restore defaults", exact: true });
@@ -380,16 +380,16 @@ for (const theme of ["light", "dark"]) {
       const style = getComputedStyle(element, "::after");
       return { image: style.backgroundImage, opacity: style.opacity, mask: style.maskComposite.split(", "), events: style.pointerEvents, padding: style.padding, inset: style.inset };
     });
-    expect(await reflection()).toMatchObject({ opacity: "0", mask: ["exclude", "exclude"], events: "none", padding: "1px", inset: "-1px" });
+    expect(await reflection()).toMatchObject({ opacity: "0", mask: ["exclude", "exclude"], events: "none", padding: "2px", inset: "-1px" });
     await control.hover({ position: { x: 8, y: size.height / 2 } });
     await expect.poll(async () => (await reflection()).opacity).toBe("0.8");
     await expect(control).toHaveAttribute("data-aura-tracking", "true");
     const first = await reflection();
-    expect(first.image).toContain("radial-gradient");
+    expect(first.image).toContain("linear-gradient");
     await expect.poll(() => control.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeLessThan(15);
     await control.hover({ position: { x: size.width - 8, y: size.height / 2 } });
     await expect.poll(() => control.evaluate(element => parseFloat(element.style.getPropertyValue("--aura-x")))).toBeGreaterThan(85);
-    expect((await reflection()).image).not.toBe(first.image);
+    expect((await reflection()).image).toBe(first.image);
     await page.mouse.down();
     await expect.poll(async () => (await reflection()).opacity).toBe("1");
     await page.screenshot({ path: testInfo.outputPath("glass-rim-pressed.png") });
@@ -411,6 +411,37 @@ for (const theme of ["light", "dark"]) {
     await control.evaluate(element => { element.disabled = true; });
     await control.hover();
     expect(await control.evaluate(element => getComputedStyle(element, "::after").content)).toBe("none");
+  });
+
+  for (const width of [320, 390, 1440]) test(`reference button selection remains distinct from hover ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#health/pace`);
+    const group = page.getByRole("group", { name: "Pace workout type" });
+    const speed = group.getByRole("button", { name: "Speed", exact: true });
+    const long = group.getByRole("button", { name: "Long", exact: true });
+    await expect(speed).toHaveAttribute("aria-pressed", "true");
+    await expect(long).toHaveAttribute("aria-pressed", "false");
+    await page.mouse.move(0, 0);
+    const dimensions = await group.boundingBox();
+    const rim = control => control.evaluate(element => getComputedStyle(element, "::after").opacity);
+    expect(await rim(speed)).toBe("0");
+    await expect(speed.locator(".selection-marker")).toBeVisible();
+    await expect(long.locator(".selection-marker")).toHaveCount(0);
+    await group.screenshot({ path: testInfo.outputPath("speed-selected.png") });
+    for (const [control, label] of [[speed, "speed"], [long, "long"]]) {
+      await control.hover();
+      await expect.poll(() => rim(control)).toBe("0.8");
+      await expect(speed).toHaveAttribute("aria-pressed", "true");
+      await expect(speed.locator(".selection-marker")).toBeVisible();
+      await group.screenshot({ path: testInfo.outputPath(`${label}-hovered.png`) });
+    }
+    await long.click();
+    await page.mouse.move(0, 0);
+    await expect(long).toHaveAttribute("aria-pressed", "true");
+    await expect(speed).toHaveAttribute("aria-pressed", "false");
+    await expect(long.locator(".selection-marker")).toBeVisible();
+    expect(await group.boundingBox()).toEqual(dimensions);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
   test(`glass buttons retain material and keyboard feedback ${theme}`, async ({ page }, testInfo) => {

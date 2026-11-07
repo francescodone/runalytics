@@ -79,8 +79,8 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root { --control-surface: color-mix(in srgb, var(--desk-action) 4%, var(--desk-surface)); }
 }
-:is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is([aria-current], [aria-selected="true"], [aria-pressed="true"]) { color: var(--desk-action); border-color: var(--desk-action); background: var(--state-selected); }
-.desk-navigation a[aria-current] { color: var(--desk-blue); border-color: var(--desk-blue); background: color-mix(in srgb, var(--desk-blue) 14%, var(--desk-surface)); }
+:is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is([aria-current], [aria-selected="true"], [aria-pressed="true"]) { color: var(--desk-action); border-color: transparent; background: var(--state-selected); }
+.desk-navigation a[aria-current] { color: var(--desk-blue); border-color: transparent; background: color-mix(in srgb, var(--desk-blue) 14%, var(--desk-surface)); }
 :is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker) .selection-marker { inset: 0; height: auto; background: var(--state-selected); transition: background-color var(--motion-feedback) var(--motion-settle); box-shadow: none; }
 .horizon-switch a, .pace-mode button { font-weight: var(--weight-semibold); }
 .desk-navigation a { font-weight: var(--weight-semibold); }
@@ -277,10 +277,10 @@ progress { accent-color: var(--desk-action); }
     content: "";
     position: absolute;
     inset: calc(-1 * var(--control-border));
-    padding: var(--control-border);
+    padding: calc(2 * var(--control-border));
     border-radius: inherit;
     pointer-events: none;
-    background: radial-gradient(ellipse at var(--aura-x, 50%) var(--aura-y, 50%), var(--button-rim-light), transparent 62%), radial-gradient(ellipse at calc(100% - var(--aura-x, 50%)) calc(100% - var(--aura-y, 50%)), var(--button-rim-refraction), transparent 65%);
+    background: linear-gradient(var(--button-accent, var(--desk-action)), var(--button-accent, var(--desk-action)));
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
@@ -299,8 +299,8 @@ progress { accent-color: var(--desk-action); }
 }
 @media (max-width: 800px) {
   :is(.desk-button, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) {
-    --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -2px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 3px 6px -3px var(--button-shade);
-    --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -2px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 4px 8px -3px var(--button-shade);
+    --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
+    --shadow-button-hover: var(--shadow-button);
   }
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
   .dialog-surface { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
