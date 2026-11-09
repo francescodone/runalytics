@@ -29,6 +29,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(mobile)]
+            app.handle().plugin(tauri_plugin_haptics::init())?;
+
+            #[cfg(target_os = "ios")]
+            app.handle().plugin(tauri_plugin_native_chrome::init())?;
+
             let data_dir = app.path().app_data_dir()?;
             let db_path = data_dir.join("runalytics.sqlite");
             let store = store::Store::open(&db_path)

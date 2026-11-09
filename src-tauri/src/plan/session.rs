@@ -682,15 +682,36 @@ fn main_set(
     available: f64,
     offset: f64,
 ) -> Vec<WorkoutStep> {
+    main_set_with_history(pattern, threshold, band, easy, target, available, offset, false)
+}
+
+fn main_set_with_history(
+    pattern: QualityPattern,
+    threshold: Option<f64>,
+    band: Band,
+    easy: Band,
+    target: f64,
+    available: f64,
+    offset: f64,
+    historical: bool,
+) -> Vec<WorkoutStep> {
     let thr = threshold.unwrap_or(300.0);
     let load_of = |steps: &[WorkoutStep]| set_load(steps, thr);
     if let QualityPattern::Controlled(duration) = pattern {
         let band = shift_band(band, offset.max(0.0));
         let pace = band.1.unwrap_or(310).max(1) as f64;
-        let recovery = 60.0 / easy.1.unwrap_or(370).max(1) as f64 * 1000.0;
+        let raw_recovery = 60.0 / easy.1.unwrap_or(370).max(1) as f64 * 1000.0;
+        let recovery = if historical { raw_recovery } else { (raw_recovery / 100.0).round().max(1.0) * 100.0 };
         let minutes = target.min(30.0).max(0.0);
-        let work_m = ((duration as f64 / pace * 1000.0) / 10.0).floor() * 10.0;
-        let by_load = (minutes * 60.0 / duration as f64).floor();
+        let raw_work = duration as f64 / pace * 1000.0;
+        let work_m = if historical { (raw_work / 10.0).floor() * 10.0 } else { (raw_work / 100.0).round().max(1.0) * 100.0 };
+        let work_seconds = work_m / 1000.0 * pace;
+        let per_rep_load = load_of(&[step("", work_m, band)]);
+        let by_load = if historical {
+            (minutes * 60.0 / duration as f64).floor()
+        } else {
+            (minutes * 60.0 / work_seconds).floor().min((target / per_rep_load).floor())
+        };
         let by_room = ((available + recovery) / (work_m + recovery)).floor();
         let repeats = by_load.min(by_room).clamp(0.0, 20.0) as u32;
         return if repeats == 0 || work_m <= 0.0 { Vec::new() } else {
@@ -935,7 +956,7 @@ fn build_details(
             let main = threshold
                 .and(load)
                 .map(|load| {
-                    main_set(
+                    main_set_with_history(
                         pattern,
                         threshold,
                         band,
@@ -943,18 +964,25 @@ fn build_details(
                         load,
                         f64::INFINITY,
                         offset,
+                        workout.done,
                     )
                 })
                 .filter(|main| steps_m(main) <= available + 0.01)
                 .unwrap_or_else(|| {
-                    main_set(
+                    let fit_target = if matches!(pattern, QualityPattern::Controlled(_)) && !workout.done {
+                        load.unwrap_or(f64::INFINITY)
+                    } else {
+                        f64::INFINITY
+                    };
+                    main_set_with_history(
                         pattern,
                         threshold,
                         band,
                         easy_band,
-                        f64::INFINITY,
+                        fit_target,
                         available,
                         offset,
+                        workout.done,
                     )
                 });
             // Mileage beyond the main set lands in the warm-up; the cool-down stays fixed.
@@ -1011,6 +1039,47 @@ mod tests {
     use super::*;
     use crate::types::*;
 
+    #[test]
+    fn controlled_distances_round_to_hundreds_and_respect_actual_work_time() {
+        let steps = main_set(QualityPattern::Controlled(600), Some(300.0), (Some(295), Some(301)), (Some(300), Some(308)), 30.0, f64::INFINITY, 0.0);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].distance_m, 2000.0);
+        assert_eq!(steps[0].recovery_m, 200.0);
+        assert_eq!(steps[0].repeats, 2);
+        assert!(steps[0].distance_m * steps[0].repeats as f64 / 1000.0 * 301.0 <= 1800.0);
+    }
+
+    #[test]
+    fn controlled_rounding_respects_room_and_preserves_historical_calculation() {
+        let pattern = QualityPattern::Controlled(600);
+        let band = (Some(295), Some(301));
+        let easy = (Some(300), Some(308));
+        let rounded = main_set(pattern, Some(300.0), band, easy, 30.0, 4100.0, 0.0);
+        assert_eq!(rounded[0].distance_m, 2000.0);
+        assert_eq!(rounded[0].repeats, 1);
+        assert!(steps_m(&rounded) <= 4100.0);
+        let historical = main_set_with_history(pattern, Some(300.0), band, easy, 30.0, f64::INFINITY, 0.0, true);
+        assert_eq!(historical[0].distance_m, 1990.0);
+        assert!((historical[0].recovery_m - 60_000.0 / 308.0).abs() < 0.001);
+        assert_eq!(historical[0].repeats, 3);
+    }
+
+    #[test]
+    fn controlled_distances_are_hundreds_across_paces_and_offsets() {
+        for duration in [180, 360, 600] {
+            for pace in [230, 301, 390, 900] {
+                for offset in [0.0, 20.0] {
+                    let steps = main_set(QualityPattern::Controlled(duration), Some(300.0), (Some(pace - 5), Some(pace)), (Some(300), Some(308)), 30.0, f64::INFINITY, offset);
+                    for step in steps {
+                        assert!(step.distance_m >= 100.0 && step.distance_m % 100.0 == 0.0);
+                        assert!(step.recovery_m >= 100.0 && step.recovery_m % 100.0 == 0.0);
+                        assert!(step.distance_m * step.repeats as f64 / 1000.0 * (pace as f64 + offset) <= 1800.0);
+                    }
+                }
+            }
+        }
+    }
+
     fn request(distance: RaceDistance, weeks: i64, threshold: f64, baseline: f64) -> PlanRequest {
         PlanRequest {
             training_method: TrainingMethod::Norwegian,
@@ -1025,6 +1094,22 @@ mod tests {
             current_weekly_km: Some(baseline),
             name: None,
         }
+    }
+
+    #[test]
+    fn controlled_plan_reconstruction_keeps_completed_legacy_distances() {
+        let (plan, workouts) = super::super::engine::generate(&request(RaceDistance::K42, 16, 285.0, 50.0), 50.0).unwrap();
+        let mut workout = workouts.into_iter().find(|workout| workout.kind == WorkoutKind::Tempo).unwrap();
+        let upcoming = details_for_plan(&workout, &plan);
+        let upcoming_work = &upcoming.steps[1];
+        assert_eq!(upcoming_work.distance_m % 100.0, 0.0);
+        assert_eq!(upcoming_work.recovery_m % 100.0, 0.0);
+        assert!((upcoming.distance_m() - workout.distance_m.unwrap()).abs() < 0.01);
+        workout.done = true;
+        let completed = details_for_plan(&workout, &plan);
+        let completed_work = &completed.steps[1];
+        assert_ne!(completed_work.recovery_m % 100.0, 0.0);
+        assert!((completed.distance_m() - workout.distance_m.unwrap()).abs() < 0.01);
     }
 
     #[test]

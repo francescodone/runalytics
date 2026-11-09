@@ -1,0 +1,8 @@
+project_id = "runalytics"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+
+[db]
+major_version = 17

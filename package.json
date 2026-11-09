@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "test:ui": "playwright test",
+    "test:native-chrome": "node --experimental-strip-types --test tests/native-chrome.unit.mjs",
+    "test:i18n": "node scripts/check-i18n.mjs && playwright test tests/i18n.spec.mjs",
     "predev": "lsof -ti tcp:1499 | xargs kill -9 2>/dev/null || true",
     "dev": "vite",
     "build": "tsc && vite build",
@@ -18,6 +20,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.13.1",
+    "i18next": "^27.0.1",
     "jsqr": "^1.4.0",
     "maplibre-gl": "^5",
     "motion": "^14.4.0",

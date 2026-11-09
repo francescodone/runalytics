@@ -438,6 +438,7 @@ pub fn schedule_benchmark(
     today: NaiveDate,
     name: &str,
     distance_m: f64,
+    reduce_mileage: bool,
 ) -> Result<PlanWorkout> {
     let (plan, workouts) = store.current_plan()?
         .ok_or_else(|| AppError::Other("Create a training plan first".into()))?;
@@ -486,6 +487,39 @@ pub fn schedule_benchmark(
         recovery.pace_lo_s_km = Some((plan.threshold_sec_km + 45.0).round() as i64);
         recovery.pace_hi_s_km = Some((plan.threshold_sec_km + 75.0).round() as i64);
         changes.push(recovery);
+    }
+    let (week_start, week_end) = iso_week_bounds(date);
+    let original_total: f64 = workouts.iter().filter(|workout| workout.date >= week_start && workout.date <= week_end)
+        .filter_map(|workout| workout.distance_m).sum();
+    let target = original_total * if reduce_mileage { 0.8 } else { 1.0 };
+    let mut adjusted: Vec<PlanWorkout> = workouts.iter().filter(|workout| workout.date >= week_start && workout.date <= week_end
+        && workout.date > today && workout.date != date && !workout.done && workout.status == WorkoutStatus::Planned
+        && workout.kind != WorkoutKind::Race && !completions.iter().any(|entry| entry.0 == workout.id))
+        .map(|workout| changes.iter().find(|change| change.id == workout.id).cloned().unwrap_or_else(|| workout.clone()))
+        .filter(|workout| workout.distance_m.is_some_and(|distance| distance > 0.0)).collect();
+    let editable_total: f64 = adjusted.iter().filter_map(|workout| workout.distance_m).sum();
+    let fixed_total: f64 = workouts.iter().filter(|workout| workout.date >= week_start && workout.date <= week_end
+        && workout.date != date && !adjusted.iter().any(|editable| editable.id == workout.id))
+        .map(|workout| changes.iter().find(|change| change.id == workout.id).unwrap_or(workout))
+        .filter_map(|workout| workout.distance_m).sum::<f64>() + distance_m;
+    if target < fixed_total || (editable_total == 0.0 && (target - fixed_total).abs() > 0.01) {
+        return Err(AppError::Other("The selected mileage cannot be achieved with the remaining editable runs in this week".into()));
+    }
+    if editable_total > 0.0 {
+        let factor = (target - fixed_total) / editable_total;
+        if factor > 1.25 || adjusted.iter().any(|workout| workout.title == "Easy / benchmark recovery"
+            && workout.distance_m.is_some_and(|distance| distance * factor > 5000.0)) {
+            return Err(AppError::Other("The selected mileage cannot be achieved without increasing the remaining runs too much".into()));
+        }
+        for workout in &mut adjusted {
+            workout.distance_m = workout.distance_m.map(|distance| distance * factor);
+            workout.duration_min = workout.duration_min.map(|duration| duration * factor);
+            if let Some(change) = changes.iter_mut().find(|change| change.id == workout.id) {
+                *change = workout.clone();
+            } else {
+                changes.push(workout.clone());
+            }
+        }
     }
     store.save_benchmark_schedule(&changes)?;
     Ok(benchmark)
@@ -1048,7 +1082,7 @@ mod tests {
         store.update_workout(&adjacent).unwrap();
         let before = store.plan_workouts(&plan.id).unwrap();
         let replaced = before.iter().any(|workout| workout.date == date);
-        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0, true).unwrap();
         let after = store.plan_workouts(&plan.id).unwrap();
         assert_eq!(after.len(), before.len() + usize::from(!replaced));
         assert_eq!(after.iter().filter(|workout| workout.date == date).count(), 1);
@@ -1058,7 +1092,7 @@ mod tests {
         assert_eq!(recovery.kind, WorkoutKind::Easy);
         assert_eq!(recovery.distance_m, Some(5000.0));
         assert_eq!(store.current_plan().unwrap().unwrap().0.target_date, plan.target_date);
-        assert!(schedule_benchmark(&store, date, today, "Again", 5000.0).is_err());
+        assert!(schedule_benchmark(&store, date, today, "Again", 5000.0, true).is_err());
     }
 
     #[test]
@@ -1067,14 +1101,14 @@ mod tests {
         let today = Utc::now().date_naive();
         let date = today + Duration::days(14);
         for distance in [f64::NAN, f64::INFINITY, 0.0, 999.0, 21097.5] {
-            assert!(schedule_benchmark(&store, date, today, "Test", distance).is_err());
+            assert!(schedule_benchmark(&store, date, today, "Test", distance, true).is_err());
         }
-        assert!(schedule_benchmark(&store, today - Duration::days(1), today, "Test", 5000.0).is_err());
-        assert!(schedule_benchmark(&store, plan.target_date - Duration::days(7), today, "Test", 5000.0).is_err());
+        assert!(schedule_benchmark(&store, today - Duration::days(1), today, "Test", 5000.0, true).is_err());
+        assert!(schedule_benchmark(&store, plan.target_date - Duration::days(7), today, "Test", 5000.0, true).is_err());
         let mut completed = workouts[0].clone();
         completed.done = true;
         store.update_workout(&completed).unwrap();
-        assert!(schedule_benchmark(&store, completed.date, today, "Test", 5000.0).is_err());
+        assert!(schedule_benchmark(&store, completed.date, today, "Test", 5000.0, true).is_err());
     }
 
     fn insert_run(store: &Store, workout: &PlanWorkout, sport: &str, record: &str) -> i64 {
@@ -1476,7 +1510,7 @@ mod tests {
             .iter()
             .find(|workout| workout.date == date)
             .cloned();
-        schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+        schedule_benchmark(&store, date, today, "parkrun", 5000.0, true).unwrap();
 
         let monday = date - Duration::days(date.weekday().num_days_from_monday() as i64);
         let deviations = week_deviations(&store, monday, today).unwrap();
@@ -1518,7 +1552,7 @@ mod tests {
         let (store, plan, _) = fixture();
         let today = Utc::now().date_naive();
         let date = today + Duration::days(14);
-        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0).unwrap();
+        let benchmark = schedule_benchmark(&store, date, today, "parkrun", 5000.0, true).unwrap();
         let activity = insert_run(&store, &benchmark, "running", "bench-run");
         match_activity(&store, &benchmark.id, activity).unwrap();
 

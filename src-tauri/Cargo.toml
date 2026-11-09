@@ -47,6 +47,9 @@ aws-lc-rs = "1"
 embedded-io-adapters = { version = "0.7", features = ["std"] }
 thiserror = "2"
 
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+tauri-plugin-haptics = "2"
+
 # `keyring` ships no iOS credential store, and its Apple backend refuses to
 # compile on iOS unless the `protected` feature is on. Scoped to iOS so macOS
 # dependency resolution is untouched. iOS code must talk to this store
@@ -55,6 +58,7 @@ thiserror = "2"
 objc2 = "0.6"
 
 [target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-native-chrome = { path = "plugins/tauri-plugin-native-chrome" }
 apple-native-keyring-store = { version = "1", features = ["protected"] }
 objc2 = "0.6"
 block2 = "0.6"

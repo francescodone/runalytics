@@ -4,6 +4,93 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+test("mobile touch clicks give one light haptic for buttons and cards", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+  const page = await context.newPage();
+  await installDeskFixture(page);
+  await page.addInitScript(() => { window.isTauri = true; });
+  await page.goto("/desk.html#health/pace");
+  await expect(page.getByRole("group", { name: "Pace workout type" })).toBeVisible();
+  await page.evaluate(() => {
+    window.__hapticCalls = [];
+    const original = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = (command, args) => {
+      if (command === "plugin:haptics|impact_feedback") {
+        window.__hapticCalls.push(args);
+        return Promise.resolve();
+      }
+      return original(command, args);
+    };
+  });
+  const calls = () => page.evaluate(() => window.__hapticCalls);
+  const long = page.getByRole("button", { name: "Long", exact: true });
+  await long.tap();
+  await expect.poll(calls).toEqual([{ style: "light" }]);
+  await long.press("Enter");
+  expect(await calls()).toHaveLength(1);
+  await long.click();
+  expect(await calls()).toHaveLength(1);
+  await long.evaluate(element => { element.disabled = true; });
+  const disabledBounds = await long.boundingBox();
+  await page.touchscreen.tap(disabledBounds.x + disabledBounds.width / 2, disabledBounds.y + disabledBounds.height / 2);
+  expect(await calls()).toHaveLength(1);
+  await long.evaluate(element => { element.disabled = false; });
+  await page.getByRole("heading", { name: "Health", exact: true }).tap();
+  expect(await calls()).toHaveLength(1);
+  const bounds = await long.boundingBox();
+  const touch = await context.newCDPSession(page);
+  await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bounds.x + 12, y: bounds.y + 12 }] });
+  expect(await calls()).toHaveLength(1);
+  await touch.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+  expect(await calls()).toHaveLength(1);
+  await page.goto("/desk.html#journal");
+  await expect(page.locator(".activity-row").first()).toBeVisible();
+  await page.evaluate(() => {
+    window.__hapticCalls = [];
+    const original = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = (command, args) => {
+      if (command === "plugin:haptics|impact_feedback") { window.__hapticCalls.push(args); return Promise.resolve(); }
+      return original(command, args);
+    };
+  });
+  await page.locator(".activity-row").first().tap();
+  await expect.poll(calls).toEqual([{ style: "light" }]);
+  await context.close();
+});
+
+test("mobile browser haptics use a brief pulse and unsupported hardware stays usable", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await installDeskFixture(page);
+  await page.goto("/desk.html#health/pace");
+  await expect(page.getByRole("group", { name: "Pace workout type" })).toBeVisible();
+  await page.evaluate(() => {
+    window.isTauri = false;
+    window.__vibrationCalls = [];
+    Object.defineProperty(navigator, "vibrate", { configurable: true, value: duration => { window.__vibrationCalls.push(duration); return true; } });
+  });
+  const long = page.getByRole("button", { name: "Long", exact: true });
+  const speed = page.getByRole("button", { name: "Speed", exact: true });
+  await long.tap();
+  expect(await page.evaluate(() => window.__vibrationCalls)).toEqual([8]);
+  await speed.click();
+  expect(await page.evaluate(() => window.__vibrationCalls)).toEqual([8]);
+  await page.evaluate(() => { Object.defineProperty(navigator, "vibrate", { configurable: true, value: undefined }); });
+  await long.tap();
+  await expect(long).toHaveAttribute("aria-pressed", "true");
+  await page.evaluate(() => {
+    window.isTauri = true;
+    const original = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = (command, args) => command === "plugin:haptics|impact_feedback" ? Promise.reject(new Error("Haptics unavailable")) : original(command, args);
+  });
+  await speed.tap();
+  await expect(speed).toHaveAttribute("aria-pressed", "true");
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
 for (const theme of ["light", "dark"]) for (const width of [320, 390, 1440]) {
   test(`setup messages share app surfaces ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
@@ -427,6 +514,24 @@ for (const theme of ["light", "dark"]) {
     expect(await rim(speed)).toBe("0");
     await expect(speed.locator(".selection-marker")).toBeVisible();
     await expect(long.locator(".selection-marker")).toHaveCount(0);
+    const material = control => control.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { face: style.backgroundColor, ink: style.color, image: style.backgroundImage, shadow: style.boxShadow, border: style.borderColor, radius: style.borderRadius };
+    });
+    const selectedMaterial = await material(speed);
+    const inactiveMaterial = await material(long);
+    expect(selectedMaterial.face).not.toBe(inactiveMaterial.face);
+    expect(selectedMaterial.image).toBe("none");
+    expect(selectedMaterial.shadow).not.toContain("inset");
+    expect(inactiveMaterial.shadow).toContain("inset");
+    expect(inactiveMaterial.image).toContain("linear-gradient");
+    expect(selectedMaterial.border).toBe("rgba(0, 0, 0, 0)");
+    expect(inactiveMaterial.radius).toBe("999px");
+    expect(selectedMaterial.ink).toBe(theme === "dark" ? "rgb(150, 196, 255)" : "rgb(41, 104, 186)");
+    if (theme === "dark") {
+      expect(selectedMaterial.face).toBe("rgb(57, 62, 75)");
+      expect(inactiveMaterial.face).toBe("rgb(43, 46, 54)");
+    }
     await group.screenshot({ path: testInfo.outputPath("speed-selected.png") });
     for (const [control, label] of [[speed, "speed"], [long, "long"]]) {
       await control.hover();
@@ -444,6 +549,31 @@ for (const theme of ["light", "dark"]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
+  test(`reference buttons restore selected fill after touch ${theme}`, async ({ browser }, testInfo) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+    const page = await context.newPage();
+    await installDeskFixture(page);
+    await page.goto(`/desk.html?theme=${theme}#health/pace`);
+    const group = page.getByRole("group", { name: "Pace workout type" });
+    const speed = group.getByRole("button", { name: "Speed", exact: true });
+    const long = group.getByRole("button", { name: "Long", exact: true });
+    await expect(speed).toHaveAttribute("aria-pressed", "true");
+    const selectedFace = await speed.evaluate(element => getComputedStyle(element).backgroundColor);
+    await group.scrollIntoViewIfNeeded();
+    const bounds = await long.boundingBox();
+    const touch = await context.newCDPSession(page);
+    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }] });
+    await expect.poll(() => long.evaluate(element => getComputedStyle(element, "::after").opacity)).toBe("1");
+    await group.screenshot({ path: testInfo.outputPath("long-touch-held.png") });
+    await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(long).toHaveAttribute("aria-pressed", "true");
+    await expect(long).toHaveCSS("background-color", selectedFace);
+    await expect(long).toHaveCSS("background-image", "none");
+    await expect.poll(() => long.evaluate(element => getComputedStyle(element, "::after").opacity)).toBe("0");
+    await group.screenshot({ path: testInfo.outputPath("long-touch-selected.png") });
+    await context.close();
+  });
+
   test(`glass buttons retain material and keyboard feedback ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -459,14 +589,14 @@ for (const theme of ["light", "dark"]) {
     });
     await expect(control).toBeVisible();
     await page.mouse.move(0, 0);
-    await expect.poll(alpha).toBeCloseTo(.64, 2);
+    await expect.poll(alpha).toBe(1);
     await control.hover();
-    await expect.poll(alpha).toBeCloseTo(.76, 2);
+    await expect.poll(alpha).toBe(1);
     await expect(control).toHaveCSS("backdrop-filter", /blur\(12px\)/);
     const hoveredShadow = await control.evaluate(element => getComputedStyle(element).boxShadow);
     await page.mouse.down();
     await expect(control).toHaveCSS("scale", "0.98");
-    await expect.poll(alpha).toBeCloseTo(.88, 2);
+    await expect.poll(alpha).toBe(1);
     await expect(control).not.toHaveCSS("box-shadow", hoveredShadow);
     await page.mouse.move(0, 0);
     await page.mouse.up();
@@ -491,27 +621,34 @@ for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: testInfo.outputPath("glass-buttons.png") });
   });
 
-  test(`view controls share glass and settings use restrained tilt ${theme}`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
+  for (const width of [320, 390, 768, 1440]) test(`view controls share reference material and settings use restrained tilt ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#health/pace`);
+    await page.mouse.move(0, 0);
+    const modes = page.getByRole("group", { name: "Pace workout type" });
+    const selectedShadow = await modes.getByRole("button", { name: "Speed", exact: true }).evaluate(element => getComputedStyle(element).boxShadow);
+    const inactiveShadow = await modes.getByRole("button", { name: "Long", exact: true }).evaluate(element => getComputedStyle(element).boxShadow);
     const families = [
-      ["training", ".horizon-switch a"],
-      ["health", ".horizon-switch a"],
-      ["journal/1", ".review-tabs button"],
-      ["health/pace", ".pace-mode button, .pace-session-picker button"],
-      ["settings/appearance", ".palette-options label"],
+      ["training", ".horizon-switch a, .desk-button, .mobile-date-ribbon button"],
+      ...(width <= 800 ? [["training/month", ".month-number"]] : []),
+      ["health", ".horizon-switch a, .desk-button"],
+      ["journal/1", ".review-tabs button, .lap-row-button, .desk-button"],
+      ["health/pace", ".pace-mode button, .pace-session-picker button, .desk-button"],
+      ["settings/appearance", ".palette-options label, .choice-row label, .desk-button"],
+      ["settings/thresholds", ".desk-button"],
     ];
     for (const [route, selector] of families) {
       await page.goto(`/desk.html?theme=${theme}#${route}`);
       await page.mouse.move(0, 0);
-      const reference = page.getByRole("button", { name: "Sync activities", exact: true });
-      await expect(reference).toBeVisible();
-      const shadow = await reference.evaluate(element => getComputedStyle(element).boxShadow);
-      const controls = page.locator(`${selector.split(", ").map(part => `${part}:visible`).join(", ")}`);
+      const controls = page.locator(`${selector.split(", ").map(part => `${part}:visible:not([inert] *)`).join(", ")}`);
       await expect(controls.first()).toBeVisible();
       for (const control of await controls.all()) {
-        await expect(control).toHaveCSS("box-shadow", shadow);
+        if (await control.isDisabled()) continue;
+        const selected = await control.evaluate(element => element.matches('.primary, [aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)'));
+        await expect(control).toHaveCSS("box-shadow", selected ? selectedShadow : inactiveShadow);
+        await expect(control).toHaveCSS("border-radius", "999px");
         await expect(control).toHaveCSS("backdrop-filter", "none");
-        expect(await control.evaluate(element => getComputedStyle(element, "::before").backgroundImage)).toContain("linear-gradient");
+        if (!selected) expect(await control.evaluate(element => getComputedStyle(element).backgroundImage)).toContain("linear-gradient");
       }
       await controls.first().hover();
       await expect(controls.first()).toHaveCSS("backdrop-filter", /blur\(12px\)/);
@@ -519,7 +656,10 @@ for (const theme of ["light", "dark"]) {
       await expect(controls.first()).toHaveCSS("backdrop-filter", "none");
       await expect(controls.first()).toHaveCSS("box-shadow", "none");
       await page.emulateMedia({ contrast: "no-preference" });
+      await page.mouse.move(0, 0);
+      await page.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-")}-buttons.png`) });
     }
+    if (width <= 800) return;
     await page.goto(`/desk.html?theme=${theme}#training`);
     await page.getByRole("link", { name: "Month", exact: true }).click();
     await expect(page.getByRole("link", { name: "Month", exact: true })).toHaveAttribute("aria-current");
@@ -665,9 +805,11 @@ for (const theme of ["light", "dark"]) {
       await page.mouse.move(0, 0);
       await expect(control).toHaveCSS("--aura-strength", "0%");
       if (await control.evaluate(element => element.matches(".desk-button, .desk-navigation a"))) {
-        await expect(control).toHaveCSS("box-shadow", /inset/);
+        const selected = await control.evaluate(element => element.matches('[aria-current], [aria-pressed="true"]'));
+        if (selected) expect(await control.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("inset");
+        else await expect(control).toHaveCSS("box-shadow", /inset/);
         await expect(control).toHaveCSS("backdrop-filter", "none");
-        expect(await control.evaluate(element => getComputedStyle(element, "::before").backgroundImage)).toContain("linear-gradient");
+        if (!selected) expect(await control.evaluate(element => getComputedStyle(element).backgroundImage)).toContain("linear-gradient");
       } else {
         await expect(control).toHaveCSS("box-shadow", "none");
       }

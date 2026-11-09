@@ -14,3 +14,6 @@ Build with `npm run build`; test with `npm run test:ui`. Use the existing Vite
 preview task on port 1500; avoid `npm run dev` because its predev kills listeners.
 Browser tests use synthetic IPC; never describe these as native integration tests.
 Keep backend training algorithms and real credentials outside presentation work.
+
+For GitHub repository settings or the Runalytics Supabase dashboard, read
+`.github/instructions/hosted-services.instructions.md`.

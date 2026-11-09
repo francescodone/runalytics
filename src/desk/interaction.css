@@ -63,7 +63,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label) {
   --state-hover: color-mix(in srgb, var(--button-accent, var(--desk-action)) 2%, var(--control-surface));
   --state-pressed: color-mix(in srgb, var(--button-accent, var(--desk-action)) 4%, var(--control-surface));
-  --state-selected: color-mix(in srgb, var(--button-accent, var(--desk-action)) 12%, var(--control-surface));
+  --state-selected: var(--button-selected-surface);
   --state-primary-hover: color-mix(in srgb, var(--desk-action) 22%, var(--control-surface));
   --state-primary-pressed: color-mix(in srgb, var(--desk-action) 28%, var(--control-surface));
 }
@@ -181,16 +181,14 @@ progress { accent-color: var(--desk-action); }
 }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { box-shadow: var(--shadow-button-pressed); }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { transform: var(--button-press-transform); translate: var(--button-press-offset); }
-.pace-mode { border-radius: var(--radius-pill); }
-.pace-mode button:is(:not(:disabled), [aria-pressed="true"]) { background: transparent; border-color: transparent; border-radius: var(--radius-pill); box-shadow: none; color: var(--desk-muted); }
+.pace-mode { border-radius: var(--radius-pill); background-color: var(--button-parent-surface); background-image: var(--button-sheen); border-color: var(--desk-line); gap: var(--space-2); }
+.pace-mode button { border-radius: var(--radius-pill); color: var(--desk-muted); }
 .pace-mode button[aria-pressed="true"] { color: var(--desk-action); }
-.pace-mode button .selection-marker { background: var(--state-selected); box-shadow: var(--shadow-control); }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label, .session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary):not(:where(.maplibregl-ctrl-attrib-button)) {
   background-image: none;
   box-shadow: none;
 }
 @property --aura-strength { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
-.pace-mode button .selection-marker { box-shadow: none; }
 :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) {
   --material-aura: radial-gradient(ellipse at var(--aura-x, 50%) var(--aura-y, 50%), color-mix(in srgb, var(--desk-ink) 4%, transparent), transparent 68%), linear-gradient(135deg, color-mix(in srgb, var(--desk-highlight) 12%, transparent), transparent 55%);
   background-position: center;
@@ -213,9 +211,6 @@ progress { accent-color: var(--desk-action); }
   @media (hover: hover) and (pointer: fine) {
     :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):hover:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { -webkit-backdrop-filter: var(--button-glass-filter); backdrop-filter: var(--button-glass-filter); }
   }
-  .desk-button:not(.primary) { background-color: color-mix(in srgb, var(--control-surface) 64%, transparent); }
-  .desk-button.primary { background-color: color-mix(in srgb, var(--button-primary-surface) 82%, transparent); }
-  :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)):not(:hover):not(:active) { background-color: color-mix(in srgb, var(--control-surface) 64%, transparent); }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary)[data-aura-tracking="true"]:hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(.is-dragging) {
@@ -236,9 +231,7 @@ progress { accent-color: var(--desk-action); }
 :is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current) { --card-fill: var(--state-selected); }
 :is(.roadmap-row, .activity-row, .settings-task-list a) { --surface-tilt-strength: 3; --surface-perspective: 1200px; }
 @media (max-width: 800px) { .plan-roadmap { padding-inline: var(--space-3); } .activity-library { padding-inline: var(--space-1); } }
-:is(.desk-navigation a, .horizon-switch a, .desk-utilities .desk-button, .pace-mode button, .choice-row label, .palette-options label):is([aria-current], [aria-pressed="true"], :has(:checked)) { box-shadow: none; }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { position: relative; }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { box-shadow: var(--shadow-button); }
 .desk-button .button-content { position: relative; }
 :is(.session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary) {
   transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-press) var(--motion-settle), transform var(--motion-feedback) var(--motion-settle);
@@ -271,6 +264,42 @@ progress { accent-color: var(--desk-action); }
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):hover:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { --aura-strength: 100%; }
 }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { box-shadow: none; }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
+  --state-hover: var(--button-surface);
+  --state-pressed: var(--button-surface);
+  --state-primary-hover: var(--button-selected-surface);
+  --state-primary-pressed: var(--button-selected-surface);
+  background-color: var(--button-surface);
+  background-image: var(--button-sheen), var(--material-aura);
+  border: var(--control-border) solid var(--button-border-color);
+  border-radius: var(--radius-button);
+  color: var(--desk-muted);
+  box-shadow: var(--shadow-button);
+}
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(.primary, [aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)) {
+  background-color: var(--button-selected-surface);
+  background-image: none;
+  color: var(--button-accent, var(--desk-action));
+  box-shadow: var(--shadow-button-selected);
+}
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(:active, :focus-visible, [data-aura-pressed="true"]) {
+  background-color: var(--button-surface);
+  background-image: var(--button-sheen), var(--material-aura);
+  border-color: var(--button-border-color);
+}
+@media (hover: hover) and (pointer: fine) {
+  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):hover {
+    background-color: var(--button-surface);
+    background-image: var(--button-sheen), var(--material-aura);
+    border-color: var(--button-border-color);
+  }
+}
+:is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker, .mobile-date-ribbon) .selection-marker { background: transparent; box-shadow: none; }
+:is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is(:hover, :active) > .selection-marker { background: transparent; }
+.desk-button.danger { color: var(--desk-danger); }
+.desk-notice .desk-button { padding-inline: var(--space-3); border-bottom-color: transparent; }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):focus-visible { outline-color: var(--button-accent); }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label)::before { display: none; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 @supports (mask-composite: exclude) or (-webkit-mask-composite: xor) {
   :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:where(:disabled, [aria-disabled="true"], :has(:disabled)))::after {
@@ -298,10 +327,6 @@ progress { accent-color: var(--desk-action); }
   .notification-viewport { left: auto; right: max(calc(var(--shell-inset) + var(--space-4)), calc((100vw - var(--content-max)) / 2 + var(--shell-inset) + var(--space-4))); bottom: calc(var(--shell-inset) + var(--space-4)); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap) - 2 * var(--space-4))); }
 }
 @media (max-width: 800px) {
-  :is(.desk-button, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) {
-    --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
-    --shadow-button-hover: var(--shadow-button);
-  }
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
   .dialog-surface { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
   .dialog-grip { display: grid; place-items: center; height: 24px; touch-action: none; cursor: grab; }

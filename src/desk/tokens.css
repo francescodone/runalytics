@@ -84,14 +84,20 @@
   --shadow-control: inset 0 1px 0 var(--desk-highlight), inset 0 -1px 0 #171c3008, 0 2px 6px -3px #171c3026;
   --button-highlight: #ffffffb3;
   --button-shade: #171c302b;
-  --button-sheen: linear-gradient(165deg, #ffffff45, #ffffff00 45%, #ffffff0a);
+  --button-sheen: linear-gradient(160deg, #ffffff45, #ffffff00 55%);
+  --button-surface: color-mix(in srgb, var(--desk-muted) 4%, var(--desk-surface));
+  --button-selected-surface: color-mix(in srgb, var(--desk-muted) 18%, var(--desk-surface));
+  --button-parent-surface: color-mix(in srgb, var(--desk-muted) 8%, var(--desk-surface));
+  --button-border-color: transparent;
+  --button-accent: var(--desk-action);
   --button-rim-light: #fff;
   --button-rim-refraction: color-mix(in srgb, var(--button-accent, var(--desk-action)) 55%, transparent);
   --button-primary-surface: color-mix(in srgb, var(--desk-action) 16%, var(--control-surface));
   --button-primary-ink: color-mix(in srgb, var(--desk-action) 82%, var(--desk-ink));
-  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
+  --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 3px -1px color-mix(in srgb, var(--button-shade) 50%, transparent);
   --button-glass-filter: blur(12px) saturate(140%);
-  --shadow-button-hover: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 4px -2px var(--button-shade);
+  --shadow-button-hover: var(--shadow-button);
+  --shadow-button-selected: 0 2px 3px -1px color-mix(in srgb, var(--button-shade) 50%, transparent);
   --shadow-button-pressed: inset 0 2px 4px color-mix(in srgb, var(--button-shade) 60%, transparent), inset 0 -1px 0 var(--button-highlight);
   --button-hover-transform: none;
   --button-press-transform: none;
@@ -190,12 +196,16 @@
   --desk-scrim: #00000070;
   --button-highlight: #ffffff30;
   --button-shade: #00000066;
-  --button-sheen: linear-gradient(165deg, #ffffff14, #ffffff00 45%, #ffffff04);
+  --button-surface: #2b2e36;
+  --button-selected-surface: #393e4b;
+  --button-parent-surface: #282b32;
+  --button-sheen: linear-gradient(160deg, #ffffff0d, #ffffff00 55%);
   --glass-sheen: linear-gradient(155deg, #ffffff08, #ffffff00 48%);
   --shadow-control: inset 0 1px 0 #ffffff26, inset 0 -1px 0 #00000024, 0 2px 6px -2px #00000050;
   --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 2px 6px #00000018, 0 12px 32px -16px #00000060;
   --shadow-overlay: inset 0 1px 0 var(--desk-highlight), 0 8px 24px -8px #00000060, 0 32px 80px -16px #000000a0;
 }
+:root[data-desk-palette="reference"] { --button-accent: var(--desk-blue); }
 :root[data-desk-palette="amethyst"] { --desk-action: #6844ab; --desk-selection: #f0eafb; }
 :root[data-desk-palette="glacier"] { --desk-action: #1d647b; --desk-selection: #e6f3f8; }
 :root[data-desk-palette="evergreen"] { --desk-action: #16634b; --desk-selection: #e3f1e9; }
@@ -243,7 +253,8 @@
 @media (min-width: 801px) and (max-width: 1180px) { :root { --navigation-width: 88px; --shell-gap: var(--space-4); --shell-inset: var(--space-4); --page-gutter: var(--space-6); } }
 @media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); --text-page: 1.75rem; --text-display: 1.75rem; --text-hero: 2rem; } }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-  :root { --material-aura: none; --shadow-button-hover: none; --shadow-button-pressed: none; }
+  :root { --material-aura: none; --button-sheen: none; --button-surface: var(--desk-surface); --button-selected-surface: var(--desk-selection); --button-parent-surface: var(--desk-surface); --button-border-color: var(--desk-line); --shadow-button: none; --shadow-button-selected: none; --shadow-button-hover: none; --shadow-button-pressed: none; }
+  :root[data-desk-theme="dark"] { --button-sheen: none; --button-surface: var(--desk-surface); --button-selected-surface: var(--desk-selection); --button-parent-surface: var(--desk-surface); }
 }
 @media (prefers-contrast: more) { :root { --desk-line: #63736a; } :root[data-desk-theme="dark"] { --desk-line: #b2c0b7; } }
 @media (forced-colors: active) {

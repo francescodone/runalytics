@@ -136,8 +136,8 @@ export const tauri = {
   planSyncRefresh: () => call<boolean>("plan_sync_refresh"),
   moveWorkout: (workoutId: string, date: string) =>
     call<void>("move_workout", { workoutId, date }),
-  scheduleBenchmark: (date: string, name: string, distanceM: number, expectedPlanId?: string) =>
-    call<void>("schedule_benchmark", { date, name, distanceM, expectedPlanId: expectedPlanId ?? null }),
+  scheduleBenchmark: (date: string, name: string, distanceM: number, expectedPlanId?: string, reduceMileage = true) =>
+    call<void>("schedule_benchmark", { date, name, distanceM, expectedPlanId: expectedPlanId ?? null, reduceMileage }),
   // What a "reset this week" would put back, so the confirm sheet can name the
   // sessions before any of them moves.
   weekDeviations: (weekStart: string) =>

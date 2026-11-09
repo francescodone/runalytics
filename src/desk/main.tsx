@@ -13,12 +13,13 @@ import { Journal } from "./journal";
 import { Health } from "./health";
 import { SettingsWorkspace, Help } from "./settings";
 import { Change, MotionSystem, SelectionGroup, SelectionMarker, tempo, useCompactLayout } from "./interaction";
+import { locale, t } from "./i18n";
 import "./interaction.css";
 
 const workspaces = [
-  { id: "training", title: "Training", Icon: IconCalendarWeek },
-  { id: "journal", title: "Activities", Icon: IconRun },
-  { id: "health", title: "Health", Icon: IconHeart },
+  { id: "training", title: t("training"), Icon: IconCalendarWeek },
+  { id: "journal", title: t("journal"), Icon: IconRun },
+  { id: "health", title: t("health"), Icon: IconHeart },
 ] as const;
 
 function App() {
@@ -92,12 +93,12 @@ function App() {
     paint(); media.addEventListener("change", paint);
     return () => media.removeEventListener("change", paint);
   }, [settings.data]);
-  const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? route.workspace[0].toUpperCase() + route.workspace.slice(1);
+  const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? t(route.workspace === "settings" ? "settings" : "help");
   return <>
     <span className="native-window-title" aria-hidden="true">Runalytics</span>
-    <a className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>Skip to workspace</a>
-    <header className="desk-appbar">
-      <a href="#training" className="desk-brand" aria-label="Runalytics training">
+    <a lang={locale} className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>{t("skip")}</a>
+    <header lang={locale} className="desk-appbar">
+      <a href="#training" className="desk-brand" aria-label={t("brand")}>
         <span className="desk-brand-icon" data-entrance aria-hidden="true"><svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor" focusable="false">
           <path d="M32 4C8 4 4 8 4 32s4 28 28 28 28-4 28-28S56 4 32 4Z" />
           <rect x="12" y="12" width="40" height="40" rx="15" fill="var(--desk-on-action)" />
@@ -105,18 +106,18 @@ function App() {
         </svg></span>
         <span className="desk-brand-name" data-entrance>Runalytics</span>
       </a>
-      <SelectionGroup><nav aria-label="Workspaces" className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}><Icon size={21} /></motion.div><span>{label}</span></a>)}</nav></SelectionGroup>
+      <SelectionGroup><nav aria-label={t("workspaces")} className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}><Icon size={21} /></motion.div><span>{label}</span></a>)}</nav></SelectionGroup>
       <div className="desk-utilities">
-        <IconButton label={syncing ? "Syncing activities" : "Sync activities"} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
+        <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");
-          notify(`${report.activitiesNew} new activities, ${report.healthDays} health days synced. ${report.messages.join(" ")}`);
+          notify(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
         })}><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></IconButton>
-        <IconButton label="Help" aria-pressed={route.workspace === "help"} onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
-        <IconButton label="Settings" aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
+        <IconButton label={t("help")} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
+        <IconButton label={t("settings")} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
       </div>
     </header>
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
-      <div className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? "COROS connected" : "Local training workspace"}</span></div>
+      <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span></div>
       <ErrorNotice error={command.error} />
       <Change identity={route.workspace}>{compact ? visitedWorkspaces.map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>) : route.workspace === "training" ? <Training /> : route.workspace === "journal" ? <Journal /> : route.workspace === "health" ? <Health /> : route.workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Change>
     </main>
@@ -124,3 +125,9 @@ function App() {
 }
 
 createRoot(document.getElementById("desk-root")!).render(<MotionSystem><WorkspaceProvider><App /></WorkspaceProvider></MotionSystem>);
+
+if (import.meta.env.DEV && new URLSearchParams(location.search).has("nativeChromeProbe")) {
+  requestAnimationFrame(() => {
+    void import("./native-chrome-probe").then(module => module.startNativeChromeProbe());
+  });
+}

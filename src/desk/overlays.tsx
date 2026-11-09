@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
@@ -64,7 +65,7 @@ export function NotificationViewport({ children }: { children: ReactNode }) {
     update();
     return () => observer.disconnect();
   }, [target]);
-  return createPortal(<div ref={viewport} className="notification-viewport" popover={"showPopover" in HTMLElement.prototype ? "manual" : undefined} aria-label="Notifications" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>{children}</div>, target);
+  return createPortal(<div ref={viewport} className="notification-viewport" popover={"showPopover" in HTMLElement.prototype ? "manual" : undefined} aria-label={t("Notifications")} onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>{children}</div>, target);
 }
 
 export function Notification({ children, label, onDismiss, dismissDisabled, countdown = true, countdownKey, elementRef, actions }: { children: ReactNode; label?: string; onDismiss: () => void; dismissDisabled?: boolean; countdown?: boolean; countdownKey?: string; elementRef?: React.Ref<HTMLDivElement>; actions?: ReactNode }) {
@@ -72,6 +73,6 @@ export function Notification({ children, label, onDismiss, dismissDisabled, coun
   return <motion.div ref={elementRef} className={`desk-notice${label ? " desk-stages" : ""}`} role="status" aria-label={label} aria-atomic="true"
     initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduced ? 0 : 8 }} transition={{ duration: reduced ? tempo.press : tempo.change, ease: tempo.settle }}>
     <div className="notice-content">{children}</div>{actions}
-    <button type="button" className="notice-close" aria-label="Dismiss notification" disabled={dismissDisabled} onClick={onDismiss}><IconX size={18} aria-hidden="true" />{countdown && <svg key={countdownKey} className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg>}</button>
+    <button type="button" className="desk-button icon-button notice-close" aria-label={t("Dismiss notification")} disabled={dismissDisabled} onClick={onDismiss}><IconX size={18} aria-hidden="true" />{countdown && <svg key={countdownKey} className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg>}</button>
   </motion.div>;
 }

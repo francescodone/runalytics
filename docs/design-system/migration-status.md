@@ -1,3 +1,134 @@
+## Native iPhone Chrome Hosting Verification, 2026-11-09
+
+The local iOS Tauri plugin hosts a real UIKit tab bar above the existing
+WKWebView without replacing Tauri's root controller or WebView delegates.
+Its versioned attach command validates document sessions, revisions, tab IDs,
+localized labels and resolved theme. The shared adapter subscribes before
+attachment, validates acknowledgements, serializes updates and teardown, and
+rejects stale or duplicate intents. Listener cleanup supports both the installed
+Swift API's camelCase commands and the JavaScript API's snake-case commands.
+
+Production activation remains off. An explicit development-only URL parameter,
+nativeChromeProbe=1, loads a small hosting probe. After a matching attachment
+acknowledgement it hides the web island, reserves measured native clearance,
+and forwards native selections through the existing React hash navigation.
+It suspends tabs while visible web dialogs or inspectors are present. This is
+a verification probe, not the final shared modal registry or phone-layout
+integration. Native Back/Close and keyboard handling are not implemented.
+
+Real runtime verification passed on iPhone 18 Pro simulator, iOS 27.0, at
+402x874 points in portrait, with the real empty local backend rather than
+synthetic IPC. Native hierarchy captures and LLDB inspection confirmed one
+WKWebView and one UIKit tab bar, identified as runalytics.workspaceTabs.
+Training, Activities and Health taps changed React headings and native selection
+together. Repeated selection of the current tab remained usable after fixing
+the probe to publish a fresh acknowledgement snapshot. Help and Settings
+utility taps passed through the transparent native host; Settings had no false
+primary-tab selection. Opening Help's recovery/risk information dialog removed
+the native tabs, and closing it restored them and subsequent native navigation.
+
+Runtime inspection found that UITabBar.sizeThatFits already included the bottom
+safe-area allowance. Removing an additional 34pt reduced its frame from 117pt
+to 83pt. The rebuilt simulator app confirmed a frame of (0,791,402,83), an 83pt
+bridge inset, and 131px workspace bottom padding including existing 48px content
+spacing. Native buttons remained within the viewport. UIKit hit-testing outside
+the tab bar returned nil from the native overlay and reached WebView content.
+Settings' final item was geometrically reachable above the bar at maximum
+scroll; trusted touch scrolling itself was not verified. A visible home
+indicator was absent from captures, so visual home-indicator clearance is not
+claimed. VoiceOver operation, enlarged native text, keyboard, landscape and
+other widths, physical-device behavior and native Back/Close remain unverified.
+
+The simulator build succeeded through the existing generated Xcode project,
+using the shell's npm PATH and Tauri's live IDE build coordination service.
+The initial development launch displayed Vite HTML at tauri://localhost and
+could not resolve its module URLs. Loading the explicit IPv4 development URL,
+http://127.0.0.1:1500/?nativeChromeProbe=1, through the debugger corrected that
+verification launch. Normal bundled cold-start behavior is not established by
+this workaround. GUI-only Xcode builds still need npm available in their
+build-script environment. The earlier CoreSimulator version mismatch is
+resolved: Xcode MCP can discover and interact with the installed simulators.
+The connected physical iPhone was not installed or modified.
+
+Verification gates passed: Swift/Rust device-target plugin compile, a fully
+linked arm64 simulator build, 12 protocol/lifecycle unit tests, eight scoped
+synthetic-IPC Chromium checks, TypeScript, editor diagnostics and whitespace.
+The browser checks cover transport compatibility, probe activation/fallback,
+tab reselection, modal suspension/restoration and existing navigation/dialog
+regressions; they are distinct from the native simulator evidence above.
+The production frontend build passed, and an asset scan confirmed the
+development probe is absent from shipped JavaScript. Relevant reusable VS Code
+tasks are Build native chrome simulator, Verify native chrome hosting probe,
+and Verify native chrome production isolation. Simulator screenshots,
+hierarchies and LLDB logs are temporary session artifacts, not release assets.
+
+## Application Localization
+
+The production React interface uses bundled i18next catalogs for English,
+Spanish, French, German, Italian, Portuguese, Japanese and Simplified Chinese.
+Each language has its own JSON file with 1,514 matching messages. The system's
+primary language selects the catalog before rendering; unsupported languages
+and missing messages fall back to English. Navigation, workspaces, settings,
+help, forms, dialogs, notices, accessibility labels and known first-party
+generated training text use the shared runtime. Dates and numeric readouts use
+the selected locale without changing ISO inputs or stored values.
+
+User notes, custom names, assistant conversations, external diagnostics and
+provider identifiers are preserved. Calendar exports and provider-side
+descriptions retain their original language. Catalogs work offline; translation
+services are not called at runtime. Initial translations are machine-generated
+and still require native-speaker review, especially training and medical terms.
+
+Verification: production build, catalog parity and interpolation checks, editor
+diagnostics and whitespace checks passed. All 144 selected synthetic-IPC
+Chromium checks passed, including seven translated plan submissions, nineteen
+routes in each non-English language, English workflow regressions, locale
+fallback, date-only handling west of UTC, translated settings at 320, 390 and
+1440px, and the Prism light/dark route matrix from 320 to 2560px. German mobile
+and Chinese desktop screenshots were inspected. An earlier French test was
+interrupted by a development-server page reload; its isolated rerun and final
+suite passed. Native macOS/iPhone locale behavior and linguistic proofreading
+were not verified. See `docs/i18n.md` for maintenance and verification commands.
+
+## Mobile Tap Haptics, 2026-11-07
+
+Completed touch clicks on buttons, clickable cards, navigation and choices request
+one light native impact on iOS/Android. Mobile browsers use an 8ms vibration when
+supported. Feedback is shared by MotionSystem; mouse, keyboard, disabled controls,
+cancelled gestures and noninteractive content do not trigger it. Unsupported or
+failed haptics do not block actions. Native registration and impact permission
+are mobile-only; no extra provider permissions are granted.
+
+Verification: iOS arm64 and macOS cargo checks, the production frontend build,
+editor diagnostics and whitespace checks passed. All 15 focused synthetic-IPC
+Chromium checks passed, including native requests, browser fallback, unsupported
+hardware, button/card taps, touch cancellation, selection, navigation and pending
+button geometry. Android compilation and physical-device vibration strength were
+not tested. Mobile installation must be rebuilt to include the native plugin;
+iOS Safari does not support the browser vibration fallback.
+
+## Reference Button Material Correction, 2026-11-07
+
+Action buttons, icon actions, navigation and review tabs, date controls, pace
+controls and setting choices share one reference material. Inactive faces have
+a neutral sheen and raised edge; selected faces use a solid muted fill without
+an inset bevel. The default palette uses blue selected labels and interaction
+outlines; custom palette accents and destructive colors remain distinct.
+Speed/Long's transparent-face exception and mobile-only shadow overrides are
+removed. Notification actions and compact month dates now use shared button
+classes. Touch release restores the selected fill without sticky hover styling.
+High-contrast and reduced-transparency fallbacks retain opaque, undecorated faces.
+
+Verification: the production build and 68 scoped synthetic-IPC Chromium checks
+passed, covering light/dark route layouts from 320 to 2560px, material families
+at 320, 390, 768 and 1440px, pointer outlines, held touch and release, keyboard
+activation, pending/result geometry, notifications and Undo. After correcting the
+default accent, all 14 reference, pointer, keyboard and touch checks passed again.
+Selected, hovered and mobile states were captured for comparison. Existing 320px
+enlarged-text roadmap overflow and obsolete motion-test expectations are outside
+this verification run. Native macOS/iPhone rendering and physical touch were not
+tested.
+
 ## Reference Button States, 2026-11-07
 
 Shared action and selection controls use softer raised shadows, filled selected

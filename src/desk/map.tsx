@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
@@ -100,11 +101,11 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
       const start = document.createElement("div");
       start.className = "route-marker route-marker-start";
       start.setAttribute("role", "img");
-      start.setAttribute("aria-label", "Route start");
+      start.setAttribute("aria-label", t("Route start"));
       const finish = document.createElement("div");
       finish.className = "route-marker route-marker-end";
       finish.setAttribute("role", "img");
-      finish.setAttribute("aria-label", "Route finish");
+      finish.setAttribute("aria-label", t("Route finish"));
       finish.innerHTML = FLAG_SVG;
       new maplibregl.Marker({ element: start, anchor: "center" }).setLngLat(coordinates[0]).addTo(instance);
       new maplibregl.Marker({ element: finish, anchor: "center" }).setLngLat(coordinates[coordinates.length - 1]).addTo(instance);
@@ -133,5 +134,5 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     resize.observe(host.current);
     return () => { cancelAnimationFrame(animationFrame); themeObserver.disconnect(); reducedMotion.removeEventListener("change", finishForReducedMotion); resize.disconnect(); instance.remove(); map.current = null; };
   }, [track, heat, settings.pmtilesPath]);
-  return <figure className="route-figure"><div ref={host} className="route-map" role="region" aria-label={heat ? "Training route heatmap" : "Recorded GPS route"} /><div className="route-controls"><IconButton label="Zoom in" onClick={() => map.current?.zoomIn({ duration: 0 })}><IconPlus size={18} /></IconButton><IconButton label="Zoom out" onClick={() => map.current?.zoomOut({ duration: 0 })}><IconMinus size={18} /></IconButton><IconButton label={heat ? "Fit training area" : "Fit route"} onClick={() => fit.current()}><IconFocus2 size={18} /></IconButton></div>{failed && <figcaption>Map tiles unavailable. The recorded route remains available when the map renderer is supported.</figcaption>}</figure>;
+  return <figure className="route-figure"><div ref={host} className="route-map" role="region" aria-label={heat ? t("Training route heatmap") : t("Recorded GPS route")} /><div className="route-controls"><IconButton label={t("Zoom in")} onClick={() => map.current?.zoomIn({ duration: 0 })}><IconPlus size={18} /></IconButton><IconButton label={t("Zoom out")} onClick={() => map.current?.zoomOut({ duration: 0 })}><IconMinus size={18} /></IconButton><IconButton label={heat ? t("Fit training area") : t("Fit route")} onClick={() => fit.current()}><IconFocus2 size={18} /></IconButton></div>{failed && <figcaption>{t("Map tiles unavailable. The recorded route remains available when the map renderer is supported.")}</figcaption>}</figure>;
 }

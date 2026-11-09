@@ -456,33 +456,45 @@ fn mean_hr(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<i64
     (seconds > 0.0).then(|| (weighted / seconds).round() as i64)
 }
 
-/// Metres climbed over a stretch of track, summed from consecutive barometric
-/// altitudes inside it. Only positive steps count — a split that netted zero
-/// but climbed a hill and came back down still cost the runner the climb,
-/// which is the question a split's elevation answers. `None` when no sample in
-/// the stretch carries an altitude, so the UI can say "Not recorded" instead
-/// of claiming a flat kilometre the device never measured.
 fn elevation_gain(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<f64> {
-    let start = cum.partition_point(|&c| c < from).saturating_sub(1);
-    let mut gain = None;
-    let mut last: Option<f64> = None;
-    let mut i = start;
-    while i < points.len() && cum[i] <= to {
-        if let Some(alt) = points[i].alt {
-            if let Some(prev) = last {
-                gain = Some(gain.unwrap_or(0.0) + (alt - prev).max(0.0));
+    let mut change = None;
+    let mut previous: Option<(f64, f64)> = None;
+    for (point, &distance) in points.iter().zip(cum) {
+        if let Some(altitude) = point.alt {
+            if let Some((start, start_altitude)) = previous {
+                if distance > start {
+                    let inside = (to.min(distance) - from.max(start)).max(0.0);
+                    if inside > 0.0 {
+                        change = Some(change.unwrap_or(0.0) + (altitude - start_altitude) * inside / (distance - start));
+                    }
+                }
             }
-            last = Some(alt);
+            previous = Some((distance, altitude));
         }
-        i += 1;
     }
-    gain.map(|metres| metres.round())
+    change.map(|metres| metres.round())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn split_elevation_is_signed_and_clipped_at_boundaries() {
+        let mut points = track(&[(100.0, 300.0)]);
+        points.truncate(3);
+        points[0].alt = Some(100.0);
+        points[1].alt = Some(120.0);
+        points[2].alt = Some(90.0);
+        let distances = [0.0, 100.0, 200.0];
+        assert_eq!(elevation_gain(&points, &distances, 0.0, 150.0), Some(5.0));
+        assert_eq!(elevation_gain(&points, &distances, 150.0, 200.0), Some(-15.0));
+        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), Some(-10.0));
+        points[1].alt = None;
+        points[2].alt = None;
+        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), None);
+    }
 
     /// A track built from `(metres, seconds per km)` legs, sampled every 20 m
     /// walking due north so cumulative distance is real.

@@ -4,6 +4,117 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const listenerStyle of ["camel", "snake"]) {
+  test(`native chrome transport uses the installed Tauri listener contract ${listenerStyle}`, async ({ page }) => {
+    await page.goto("/desk.html#training");
+    await expect(page.locator(".desk-navigation")).toBeVisible();
+    const result = await page.evaluate(async style => {
+      const { createNativeChromeBridge, createTauriChromeTransport } = await import("/src/desk/native-chrome.ts");
+      const original = window.__TAURI_INTERNALS__.invoke;
+      const calls = [];
+      const routes = [];
+      const states = [];
+      let handler;
+      let current;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (!command.startsWith("plugin:native-chrome|")) return original(command, args);
+        calls.push(command);
+        if (command.endsWith("register_listener") || command.endsWith("remove_listener")) {
+          if (style === "camel") throw new Error("Unknown native command");
+        }
+        if (command.endsWith("registerListener") || command.endsWith("register_listener")) {
+          handler = args.handler;
+          return null;
+        }
+        if (command.endsWith("|attach")) {
+          current = args;
+          return { protocolVersion: 1, session: args.session, revision: args.revision, bottomInset: 83 };
+        }
+        return null;
+      };
+      const bridge = createNativeChromeBridge(await createTauriChromeTransport(), {
+        onNavigate: workspace => routes.push(workspace),
+        onState: state => states.push(state),
+      });
+      try {
+        const attached = await bridge.update({
+          tabs: [{ id: "training", title: "Training" }, { id: "journal", title: "Activities" }, { id: "health", title: "Health" }],
+          selected: "training", theme: "light",
+        });
+        handler.onmessage({ session: current.session, revision: current.revision, eventId: "native-tap", action: "navigate", workspace: "journal" });
+        await bridge.close();
+        return { attached, calls, routes, states, hash: location.hash };
+      } finally {
+        await bridge.close();
+        window.__TAURI_INTERNALS__.invoke = original;
+      }
+    }, listenerStyle);
+    expect(result.attached).toBe(true);
+    expect(result.routes).toEqual(["journal"]);
+    expect(result.hash).toBe("#training");
+    expect(result.states).toContainEqual({ ready: true, bottomInset: 83 });
+    expect(result.states.at(-1)).toEqual({ ready: false, bottomInset: 0 });
+    expect(result.calls[0]).toBe("plugin:native-chrome|register_listener");
+    expect(result.calls).toContain("plugin:native-chrome|attach");
+    expect(result.calls.at(-1)).toBe(`plugin:native-chrome|${listenerStyle === "camel" ? "removeListener" : "remove_listener"}`);
+    await expect(page.locator(".desk-navigation")).toBeVisible();
+  });
+}
+
+for (const attachment of ["ready", "unavailable"]) {
+  test(`native chrome development probe keeps guarded UI ownership ${attachment}`, async ({ page }) => {
+    await page.addInitScript(mode => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const original = window.__TAURI_INTERNALS__.invoke;
+        window.__nativeProbeAttaches = 0;
+        window.__nativeProbeDetaches = 0;
+        window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+          if (command === "plugin:native-chrome|register_listener") throw new Error("Unknown command");
+          if (command === "plugin:native-chrome|registerListener") { window.__nativeProbeHandler = args.handler; return null; }
+          if (command === "plugin:native-chrome|attach") {
+            window.__nativeProbeAttaches += 1;
+            if (mode === "unavailable") throw new Error("Native host unavailable");
+            window.__nativeProbeSnapshot = args;
+            return { protocolVersion: 1, session: args.session, revision: args.revision, bottomInset: 83 };
+          }
+          if (command === "plugin:native-chrome|detach") { window.__nativeProbeDetaches += 1; return null; }
+          if (command.startsWith("plugin:native-chrome|remove")) return null;
+          return original(command, args);
+        };
+      });
+    }, attachment);
+    await page.goto("/desk.html?nativeChromeProbe=1#training");
+    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", attachment === "ready" ? "ready" : "fallback");
+    if (attachment === "unavailable") {
+      await expect(page.locator(".desk-navigation")).toBeVisible();
+      await expect.poll(() => page.evaluate(() => window.__nativeProbeDetaches)).toBeGreaterThan(0);
+      return;
+    }
+    await expect(page.locator(".desk-navigation")).toBeHidden();
+    const initial = await page.evaluate(() => window.__nativeProbeAttaches);
+    const tap = workspace => page.evaluate(selected => {
+      window.__nativeProbeHandler.onmessage({ ...window.__nativeProbeSnapshot, action: "navigate", workspace: selected, eventId: crypto.randomUUID() });
+    }, workspace);
+    await tap("training");
+    await expect.poll(() => page.evaluate(() => window.__nativeProbeAttaches)).toBeGreaterThan(initial);
+    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await expect(page.locator(".desk-navigation")).toBeHidden();
+    await tap("journal");
+    await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await page.getByRole("button", { name: "Help", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__nativeProbeSnapshot.selected)).toBeNull();
+    await page.getByRole("button", { name: "Understand recovery and risk", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "fallback");
+    await expect.poll(() => page.evaluate(() => window.__nativeProbeDetaches)).toBeGreaterThan(0);
+    await page.getByRole("dialog").getByRole("button", { name: /^Close / }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await expect(page.locator(".desk-navigation")).toBeHidden();
+  });
+}
+
 test("macOS window dragging is limited to empty outer-shell background", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
@@ -1843,17 +1954,19 @@ for (const width of [390, 1440]) {
     const dialog = page.getByRole("dialog", { name: "Schedule race or test", exact: true });
     await expect(dialog.getByLabel("Distance (km)")).toHaveValue("5");
     await expect(dialog.getByLabel("Distance (km)")).toBeDisabled();
+    await expect(dialog.getByLabel("Reduce this week's planned mileage by 20%")).toBeChecked();
     const date = await dialog.getByLabel("Date", { exact: true }).inputValue();
     const expectedPlanId = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[0].id);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "schedule_benchmark").args)).toEqual({ date, name: "parkrun", distanceM: 5000, expectedPlanId });
+    expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "schedule_benchmark").args)).toEqual({ date, name: "parkrun", distanceM: 5000, expectedPlanId, reduceMileage: true });
     await expect(page.locator(".day-itinerary")).toContainText("Benchmark: parkrun");
     await open.click();
     await dialog.getByRole("combobox", { name: "Event", exact: true }).selectOption("trial");
     await dialog.getByLabel("Event name", { exact: true }).fill("3 km fitness test");
     await dialog.getByLabel("Distance (km)").fill("3");
+    await dialog.getByLabel("Reduce this week's planned mileage by 20%").uncheck();
     await page.evaluate(() => { window.__deskFail = "schedule_benchmark"; });
     await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
     await expect(dialog.getByRole("alert")).toContainText("Unable to save right now");
@@ -1862,7 +1975,7 @@ for (const width of [390, 1440]) {
     await page.evaluate(() => { window.__deskFail = ""; });
     await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "schedule_benchmark").pop().args)).toMatchObject({ name: "3 km fitness test", distanceM: 3000 });
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "schedule_benchmark").pop().args)).toMatchObject({ name: "3 km fitness test", distanceM: 3000, reduceMileage: false });
   });
 }
 
@@ -2120,6 +2233,21 @@ for (const width of [390, 1440]) {
     });
   }
 }
+
+test("activity splits display signed net elevation", async ({ page }) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      if (command !== "activity_review") return result;
+      const elevations = [12, -8, 0, null];
+      return { ...result, splits: elevations.map((elevationGainM, index) => ({ ...result.splits[0], km: index + 1, elevationGainM })) };
+    };
+  });
+  await page.goto("/desk.html#journal/1/splits");
+  const cells = page.getByRole("region", { name: "Kilometre splits" }).locator("tbody tr td:nth-of-type(3)");
+  await expect(cells).toHaveText(["+12 m", "-8 m", "0 m", "Not recorded"]);
+});
 
 test("Activities list hides filters until revealed and opens recorded splits", async ({ page }) => {
   await page.goto("/desk.html#journal");

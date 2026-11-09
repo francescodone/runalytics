@@ -1,6 +1,7 @@
+import { t, text, formatLocale, date as fmtDateDMY } from "./i18n";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type DependencyList, type ReactNode } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { tauri, ymdLocal, inTauri, displayTitle, fmtDateDMY } from "../lib/ipc";
+import { tauri, ymdLocal, inTauri, displayTitle } from "../lib/ipc";
 import type { PlanSyncProgress, Settings } from "../lib/types";
 import { IconLoader2, IconCheck, IconX } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence } from "./interaction";
@@ -60,12 +61,12 @@ type StageOp = { lines: StageLine[]; settled: boolean };
 /// What the runner reads for each mirror. The order the backend opens the
 /// lines in (DB first, then calendar, gist, watch) is kept as-is: it is the
 /// chronological order the work actually happens in.
-const STAGE_LABELS: Record<string, string> = { db: "local DB", calendar: "calendar", gist: "gist", coros: "COROS calendar", strava: "Strava" };
+const STAGE_LABELS: Record<string, string> = { db: t("local DB"), calendar: "calendar", gist: "gist", coros: t("COROS calendar"), strava: "Strava" };
 function stageText(line: StageLine): string {
-  const label = STAGE_LABELS[line.target] ?? line.target;
-  if (line.state === "working") return `Updating ${label}…`;
-  if (line.target === "strava" && line.detail) return line.state === "error" ? `Updating Strava failed: ${line.detail}` : line.detail;
-  return line.state === "done" ? `Updated ${label}` : `Updating ${label} failed`;
+  const label = text(STAGE_LABELS[line.target] ?? line.target);
+  if (line.state === "working") return t("Updating {{value0}}…", { value0: label });
+  if (line.target === "strava" && line.detail) return line.state === "error" ? t("Updating Strava failed: {{value0}}", { value0: line.detail }) : text(line.detail);
+  return line.state === "done" ? t("Updated {{value0}}", { value0: label }) : t("Updating {{value0}} failed", { value0: label });
 }
 type WorkspaceContext = { revision: number; planCheck: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
 const Context = createContext<WorkspaceContext>({ revision: 0, planCheck: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
@@ -99,13 +100,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     register("sync://started", () => { receivedEvent = true; setSyncing(true); });
     register<{ok:boolean}>("sync://completed", result => {
       receivedEvent = true; setSyncing(false); setRevision(value => value + 1);
-      if (!result.ok) setNotice({text:"Background sync failed. Check your watch connection and try again."});
+      if (!result.ok) setNotice({text:t("Background sync failed. Check your watch connection and try again.")});
     });
     register<PlanSyncProgress>("plan://sync", progress => setPlanProgress(progress));
     register<{ discarded?: boolean }>("plan://updated", result => {
       planUpdates.current += 1;
       setRevision(value => value + 1);
-      if (result?.discarded) setNotice({ text: "The Gist changed on another device. Its latest plan replaced unpublished local changes." });
+      if (result?.discarded) setNotice({ text: t("The Gist changed on another device. Its latest plan replaced unpublished local changes.") });
     });
     register("plan://checked", () => setPlanCheck(value => value + 1));
     register<StageEvent>("plan://stage", event => setStageOps(previous => {
@@ -225,13 +226,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={{ revision, planCheck, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
     {children}
     <NotificationViewport>
-    <Presence>{notice && <Notification key="notice" elementRef={noticeRef} onDismiss={() => setNotice(null)} dismissDisabled={acting} countdown={!acting} countdownKey={notice.text} actions={notice.action && <button type="button" disabled={acting} onClick={async () => {
+    <Presence>{notice && <Notification key="notice" elementRef={noticeRef} onDismiss={() => setNotice(null)} dismissDisabled={acting} countdown={!acting} countdownKey={text(notice.text)} actions={notice.action && <button type="button" className="desk-button" disabled={acting} onClick={async () => {
         setActing(true);
-        try { await notice.action!.run(); refresh(); setNotices(previous => [{ text: "Change undone." }, ...previous.slice(1)]); }
+        try { await notice.action!.run(); refresh(); setNotices(previous => [{ text: t("Change undone.") }, ...previous.slice(1)]); }
         catch (error) { setNotices(previous => [{ text: String(error) }, ...previous.slice(1)]); }
         finally { setActing(false); }
-      }}>{notice.action.label}</button>}><Change identity={notice.text}><span>{notice.text}</span></Change></Notification>}</Presence>
-    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label="Plan sync progress" onDismiss={() => setStageOps({})} countdown={stagesQuiet}>
+      }}>{notice.action.label}</button>}><Change identity={text(notice.text)}><span>{text(notice.text)}</span></Change></Notification>}</Presence>
+    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => setStageOps({})} countdown={stagesQuiet}>
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
         {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
         <span>{stageText(line)}</span>
@@ -294,8 +295,8 @@ export function shiftDate(date: string, days: number) {
 }
 export function monday(date: string) { return shiftDate(date, -((dateValue(date).getDay() + 6) % 7)); }
 export const shortDate = (date: string) => fmtDateDMY(date);
-export const dayName = (date: string) => dateValue(date).toLocaleDateString("en-GB", { weekday: "short" });
-export const cleanTitle = (title: string) => title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+export const dayName = (date: string) => dateValue(date).toLocaleDateString(formatLocale, { weekday: "short" });
+export const cleanTitle = (title: string) => text(title.replace(/^[^\p{L}\p{N}]+/u, "").trim());
 /// A session name for display: emoji stripped, and the softener's stored
 /// `"(was: …)"` suffix dropped. See `displayTitle` in lib/ipc for why the
 /// suffix stays in the database but never reaches the runner.
@@ -303,8 +304,8 @@ export const sessionTitle = (title: string) => cleanTitle(displayTitle(title));
 /// Upper-cases only the first letter, leaving an already-capitalised or
 /// deliberately-styled label alone; provider codes arrive in any case.
 export const capitalizeFirst = (value: string) =>
-  value.charAt(0).toUpperCase() + value.slice(1);
-export const kindName = (kind: string) => ({ longRun: "Long run", easy: "Easy", tempo: "Tempo", intervals: "Intervals", race: "Race", rest: "Rest", completed: "Recorded" }[kind] ?? kind);
+  text(value.charAt(0).toUpperCase() + value.slice(1));
+export const kindName = (kind: string) => ({ longRun: t("Long run"), easy: t("Easy"), tempo: t("Tempo"), intervals: t("Intervals"), race: t("Race"), rest: t("Rest"), completed: t("Recorded") }[kind] ?? kind);
 export async function patchSettings(patch: Partial<Settings>) {
   const latest = await tauri.getSettings();
   await tauri.saveSettings({ ...latest, ...patch });

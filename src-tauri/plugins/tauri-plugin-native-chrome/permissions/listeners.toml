@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-listeners"
+description = "Listen to native chrome intents and remove listeners."
+commands.allow = ["registerListener", "removeListener"]

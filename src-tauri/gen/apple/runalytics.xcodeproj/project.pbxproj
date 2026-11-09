@@ -389,7 +389,7 @@
 					AuthenticationServices,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fradone.runalytics;
-				PRODUCT_NAME = Runalytics;
+				PRODUCT_NAME = "Runalytics";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
@@ -557,7 +557,7 @@
 					AuthenticationServices,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fradone.runalytics;
-				PRODUCT_NAME = Runalytics;
+				PRODUCT_NAME = "Runalytics";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;

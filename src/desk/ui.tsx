@@ -1,3 +1,4 @@
+import { t, text, number } from "./i18n";
 import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
 import { motion, useAnimationControls, useDragControls, useIsPresent } from "motion/react";
@@ -44,9 +45,9 @@ export function IconButton({ label, children, ...props }: ButtonHTMLAttributes<H
   </Button>;
 }
 export function ErrorNotice({ error, retry }: { error: string | null; retry?: () => void }) {
-  return <Presence>{error && <motion.div key="error" className="error-notice" role="alert" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconAlertCircle size={20} aria-hidden="true" /><p>{error}</p>{retry && <Button onClick={retry}>Try again</Button>}</motion.div>}</Presence>;
+  return <Presence>{error && <motion.div key="error" className="error-notice" role="alert" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconAlertCircle size={20} aria-hidden="true" /><p>{text(error)}</p>{retry && <Button onClick={retry}>{t("Try again")}</Button>}</motion.div>}</Presence>;
 }
-export function Loading({ label = "Loading your training" }: { label?: string }) {
+export function Loading({ label = t("Loading your training") }: { label?: string }) {
   return <div className="desk-loading" role="status"><IconLoader2 className="spinner" aria-hidden="true" /><span>{label}</span></div>;
 }
 export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
@@ -76,7 +77,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     onDragEnd={(_, info) => { if (info.offset.y > 96 || info.offset.y > 24 && info.velocity.y > 650) onClose(); }}
     onClick={event => { if (present && event.target === dialog.current) onClose(); }}>
     <div className="dialog-grip" aria-hidden="true" onPointerDown={event => { if (surface.compact && !surface.reduced) drag.start(event); }}><span /></div>
-    <div className="dialog-surface"><header><h2 tabIndex={-1}>{title}</h2><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
+    <div className="dialog-surface"><header><h2 tabIndex={-1}>{title}</h2><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
   </motion.dialog>;
 }
 export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {
@@ -149,10 +150,10 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
     <motion.div initial={morph ? { opacity: 0 } : false} animate={{ opacity: 1 }} exit={morph ? { opacity: 0 } : undefined} transition={{ duration: tempo.feedback, delay: present && morph ? tempo.press : 0 }}>
-    <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={`Close ${title}`} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label="Back" onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
+    <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label={t("Back")} onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
     </motion.div>
   </motion.aside></>;
 }
 export function Metric({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {
-  return <div className="desk-metric"><dt>{label}</dt><dd>{value}{unit && <small>{unit}</small>}</dd></div>;
+  return <div className="desk-metric"><dt>{label}</dt><dd>{typeof value === "number" ? number(value) : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;
 }

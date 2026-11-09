@@ -1255,6 +1255,7 @@ pub async fn schedule_benchmark(
     name: String,
     distance_m: f64,
     expected_plan_id: Option<String>,
+    reduce_mileage: Option<bool>,
 ) -> Result<()> {
     let _sync_guard = state.sync_lock.lock().await;
     check_expected_plan(&state, expected_plan_id.as_deref())?;
@@ -1264,7 +1265,7 @@ pub async fn schedule_benchmark(
     let scheduled = {
         let _guard = state.calendar_lock.lock().await;
         calendar::schedule_benchmark(&state.store, crate::store::parse_date_pub(&date)?,
-            chrono::Local::now().date_naive(), &name, distance_m)
+            chrono::Local::now().date_naive(), &name, distance_m, reduce_mileage.unwrap_or(true))
     };
     match &scheduled {
         Ok(_) => stage(&app, "benchmark", Stage::Db, "done", None),

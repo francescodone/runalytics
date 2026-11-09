@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "native-chrome",
+  "description": "Opt-in iPhone workspace navigation prototype",
+  "windows": ["main"],
+  "platforms": ["iOS"],
+  "permissions": [
+    "native-chrome:allow-attach",
+    "native-chrome:allow-detach",
+    "native-chrome:allow-listeners"
+  ]
+}

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, MotionConfig, motion, useIsPresent, useReducedMotion } from "motion/react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import "./tokens.css";
 
 const tokenStyle = getComputedStyle(document.documentElement);
@@ -31,6 +32,36 @@ export function actionOrigin() {
 }
 
 export function MotionSystem({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const selector = 'button, a[href], summary, [role="button"], .choice-row label, .palette-options label';
+    const coarse = matchMedia("(pointer: coarse)");
+    let touched: Element | null = null;
+    const clear = () => { touched = null; };
+    const start = (event: PointerEvent) => {
+      touched = event.pointerType === "touch" && event.target instanceof Element ? event.target.closest(selector) : null;
+    };
+    const click = (event: MouseEvent) => {
+      const control = event.target instanceof Element ? event.target.closest(selector) : null;
+      if (!coarse.matches || !event.isTrusted || event.detail === 0 || !control || control !== touched) return;
+      clear();
+      if (control.closest('[inert], [aria-disabled="true"]') || control.matches(':disabled, :has(:disabled), .is-dragging')) return;
+      if (isTauri()) {
+        void invoke("plugin:haptics|impact_feedback", { style: "light" }).catch(() => {});
+      } else {
+        try { navigator.vibrate?.(8); } catch {}
+      }
+    };
+    document.addEventListener("pointerdown", start, true);
+    document.addEventListener("pointercancel", clear, true);
+    document.addEventListener("click", click, true);
+    window.addEventListener("blur", clear);
+    return () => {
+      document.removeEventListener("pointerdown", start, true);
+      document.removeEventListener("pointercancel", clear, true);
+      document.removeEventListener("click", click, true);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
   useEffect(() => {
     const selector = "button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary";
     const fine = matchMedia("(hover: hover) and (pointer: fine)");

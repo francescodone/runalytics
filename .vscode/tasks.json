@@ -274,6 +274,68 @@
 			"command": "npm run build > /tmp/runalytics-long-card-depth-build.log 2>&1 && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'settings use restrained tilt|dynamic aura tracks|training cards visibly tilt|plan cards remain inside|shared aura touch|Prism route matrix|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-long-card-depth-final && git diff --check",
 			"isBackground": false,
 			"group": "test"
+		},
+		{
+			"label": "Verify mobile tap haptics",
+			"type": "shell",
+			"command": "npx playwright test tests/prism.spec.mjs --grep 'mobile touch clicks give|mobile browser haptics' --workers=1 --reporter=line --output=/tmp/runalytics-mobile-haptics",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify mobile haptics integration",
+			"type": "shell",
+			"command": "cargo check --manifest-path src-tauri/Cargo.toml --lib --target aarch64-apple-ios && cargo check --manifest-path src-tauri/Cargo.toml --lib && npm run build > /tmp/runalytics-haptics-build.log 2>&1 && tail -2 /tmp/runalytics-haptics-build.log && npx playwright test tests/prism.spec.mjs tests/desk.spec.mjs --grep 'mobile touch clicks give|mobile browser haptics|reference button selection|reference buttons restore|shared aura touch release|buttons preserve geometry|compact navigation island responds' --workers=2 --reporter=dot --output=/tmp/runalytics-haptics-regressions && git --no-pager diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify localization",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-i18n-build.log 2>&1 && node scripts/check-i18n.mjs && npm run test:ui -- tests/i18n.spec.mjs tests/desk.spec.mjs tests/prism.spec.mjs --grep 'shell language|translated |locale runtime|date-only|localized settings|Prism route matrix|settings|connection transfer|clear plans|notifications remain|plan creation|training method chooser|benchmark scheduling|schedule mutations|matching uses|pain logging|proposal requires|map theme overrides|original entry routes|buttons preserve geometry' --workers=2 --reporter=dot --output=/tmp/runalytics-i18n-verified > /tmp/runalytics-i18n-verified.log 2>&1 && tail -4 /tmp/runalytics-i18n-verified.log && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify native chrome plugin",
+			"type": "shell",
+			"command": "cargo check --manifest-path src-tauri/Cargo.toml -p tauri-plugin-native-chrome --target aarch64-apple-ios --offline > /tmp/runalytics-native-chrome-check.log 2>&1; result=$?; tail -60 /tmp/runalytics-native-chrome-check.log; exit $result",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Norwegian rounding",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan::session::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib laps::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib providers::coros::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib calendar::tests::naming_preserves_completed_prescription_across_training_method_changes --offline && git diff --check",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build native chrome simulator",
+			"type": "shell",
+			"command": "xcodebuild -workspace src-tauri/gen/apple/runalytics.xcworkspace -scheme runalytics_iOS -configuration debug -destination 'id=D3FE815E-6734-4E61-9AB1-E5E863AB73C9' -derivedDataPath /tmp/runalytics-native-chrome-simulator CODE_SIGNING_ALLOWED=NO build > /tmp/runalytics-native-chrome-xcode-build.log 2>&1; build_exit=$?; tail -65 /tmp/runalytics-native-chrome-xcode-build.log; exit \"$build_exit\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Verify native chrome hosting probe",
+			"type": "shell",
+			"command": "npm run test:native-chrome && npx tsc --noEmit && npm run test:ui -- tests/desk.spec.mjs tests/prism.spec.mjs --grep 'native chrome|original entry routes|compact navigation island|nested information dialogs retain' --workers=2 --reporter=dot --output=/tmp/runalytics-native-chrome-host-probe",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify native chrome production isolation",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-native-hosting-production.log 2>&1 && tail -4 /tmp/runalytics-native-hosting-production.log && node --input-type=module -e 'import {readdirSync,readFileSync} from \"node:fs\"; const included=readdirSync(\"dist/assets\").filter(name=>name.endsWith(\".js\")&&readFileSync(`dist/assets/${name}`,\"utf8\").includes(\"nativeChromeProbe\")); if(included.length)throw new Error(`Development probe in production assets: ${included.join(\", \")}`); console.log(\"Production probe isolation passed\");' && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }
