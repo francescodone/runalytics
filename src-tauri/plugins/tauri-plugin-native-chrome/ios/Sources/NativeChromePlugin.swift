@@ -121,7 +121,8 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
             view.tabBar.delegate = self
             let symbols = ["calendar", "figure.run", "heart"]
             view.tabBar.items = next.tabs.enumerated().map { index, tab in
-                let item = UITabBarItem(title: tab.title, image: UIImage(systemName: symbols[index]), tag: index)
+                let item = UITabBarItem(title: nil, image: UIImage(systemName: symbols[index]), tag: index)
+                item.accessibilityLabel = tab.title
                 item.accessibilityIdentifier = "runalytics.tab.\(tab.id)"
                 return item
             }
