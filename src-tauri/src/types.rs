@@ -502,10 +502,9 @@ pub struct KmSplit {
     /// dropped — a direction, not a verdict, which is why the UI prints it in
     /// plain ink rather than borrowing the traffic-light tones.
     pub delta_prev_s_km: Option<f64>,
-    /// Metres climbed inside this kilometre, summed from the barometric
-    /// altitude of its samples. `None` when the device recorded no altitudes
-    /// (or the track synced before altitudes were stored) — the UI prints
-    /// "Not recorded" rather than a flattering zero.
+    /// Signed net altitude change in metres, interpolated at split boundaries.
+    /// The wire name is retained for IPC compatibility; unlike activity-level
+    /// gain, descents are negative. `None` when altitude change is unavailable.
     pub elevation_gain_m: Option<f64>,
     /// The band of the prescribed work lap this kilometre fell inside, when
     /// the run had a prescription. Only the work has a band, so a kilometre

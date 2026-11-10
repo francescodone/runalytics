@@ -352,6 +352,14 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify signed split elevation",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib laps::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

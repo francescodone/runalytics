@@ -351,7 +351,7 @@ pub fn kilometre_splits(points: &[TrackPoint]) -> Vec<KmSplit> {
                     duration_s: secs,
                     avg_pace_s_km: Some(secs / metres * 1000.0),
                     avg_hr: mean_hr(points, &cum, from, to),
-                    elevation_gain_m: elevation_gain(points, &cum, from, to),
+                    elevation_gain_m: elevation_change(points, &cum, from, to),
                     delta_prev_s_km: None,
                     band_lo_s_km: None,
                     band_hi_s_km: None,
@@ -456,7 +456,7 @@ fn mean_hr(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<i64
     (seconds > 0.0).then(|| (weighted / seconds).round() as i64)
 }
 
-fn elevation_gain(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<f64> {
+fn elevation_change(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Option<f64> {
     let mut change = None;
     let mut previous: Option<(f64, f64)> = None;
     for (point, &distance) in points.iter().zip(cum) {
@@ -465,7 +465,7 @@ fn elevation_gain(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Opt
                 if distance > start {
                     let inside = (to.min(distance) - from.max(start)).max(0.0);
                     if inside > 0.0 {
-                        change = Some(change.unwrap_or(0.0) + (altitude - start_altitude).max(0.0) * inside / (distance - start));
+                        change = Some(change.unwrap_or(0.0) + (altitude - start_altitude) * inside / (distance - start));
                     }
                 }
             }
@@ -481,19 +481,51 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn split_elevation_counts_climbs_and_clips_at_boundaries() {
+    fn split_elevation_is_signed_and_clips_at_boundaries() {
         let mut points = track(&[(100.0, 300.0)]);
         points.truncate(3);
         points[0].alt = Some(100.0);
         points[1].alt = Some(120.0);
         points[2].alt = Some(90.0);
         let distances = [0.0, 100.0, 200.0];
-        assert_eq!(elevation_gain(&points, &distances, 0.0, 150.0), Some(20.0));
-        assert_eq!(elevation_gain(&points, &distances, 150.0, 200.0), Some(0.0));
-        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), Some(20.0));
+        assert_eq!(elevation_change(&points, &distances, 0.0, 150.0), Some(5.0));
+        assert_eq!(elevation_change(&points, &distances, 150.0, 200.0), Some(-15.0));
+        assert_eq!(elevation_change(&points, &distances, 0.0, 200.0), Some(-10.0));
+        points[2].alt = Some(100.0);
+        assert_eq!(elevation_change(&points, &distances, 0.0, 200.0), Some(0.0));
         points[1].alt = None;
         points[2].alt = None;
-        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), None);
+        assert_eq!(elevation_change(&points, &distances, 0.0, 200.0), None);
+    }
+
+    #[test]
+    fn out_and_back_splits_include_descents_and_balance_to_zero() {
+        let mut points = track(&[(1200.0, 300.0)]);
+        let distances = cumulative(&points);
+        for (point, distance) in points.iter_mut().zip(distances) {
+            point.alt = Some(100.0 + distance / 10.0);
+        }
+        let return_points: Vec<_> = points[..points.len() - 1]
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(index, point)| TrackPoint {
+                ts: 360 + (index as i64 + 1) * 6,
+                ..point.clone()
+            })
+            .collect();
+        points.extend(return_points);
+
+        let splits = kilometre_splits(&points);
+        assert_eq!(splits.len(), 3);
+        assert_eq!(splits[0].elevation_gain_m, Some(100.0));
+        assert_eq!(splits[1].elevation_gain_m, Some(-60.0));
+        assert_eq!(splits[2].elevation_gain_m, Some(-40.0));
+        assert!(splits[2].meters < 1000.0);
+        assert_eq!(
+            splits.iter().map(|split| split.elevation_gain_m.unwrap()).sum::<f64>(),
+            0.0
+        );
     }
 
     /// A track built from `(metres, seconds per km)` legs, sampled every 20 m
