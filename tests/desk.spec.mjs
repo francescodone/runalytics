@@ -5,6 +5,61 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+test("optional session feedback keeps failed drafts and never defaults to a rating", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/desk.html?feedback#journal/1");
+  const form = page.locator(".activity-review .session-feedback");
+  await expect(form.getByRole("heading", { name: "How was this session?" })).toBeVisible();
+  await expect(form.locator("input:checked")).toHaveCount(0);
+  await expect(form.getByRole("button", { name: "Save feedback" })).toBeDisabled();
+  await form.getByRole("radio", { name: "5 Much too hard" }).check();
+  await page.evaluate(() => window.__deskFail = "save_session_feedback");
+  await form.getByRole("button", { name: "Save feedback" }).click();
+  await expect(form.getByRole("alert")).toContainText("Unable to save right now");
+  await expect(form.getByRole("radio", { name: "5 Much too hard" })).toBeChecked();
+  await page.evaluate(() => window.__deskFail = "");
+  await form.getByRole("button", { name: "Save feedback" }).click();
+  await expect(form.getByRole("status")).toContainText("Weekly mileage is unchanged");
+  await expect(form.getByRole("button", { name: "Save feedback" })).toBeDisabled();
+  await form.getByRole("radio", { name: "3 About right" }).check();
+  await form.getByRole("button", { name: "Save feedback" }).click();
+  await expect(form.getByRole("status")).toHaveText("Feedback saved.");
+  expect(errors).toEqual([]);
+});
+
+test("optional session feedback dismisses without rating and manual controls preserve mileage", async ({ page }) => {
+  await page.goto("/desk.html?feedback#journal/1");
+  const form = page.locator(".activity-review .session-feedback");
+  await form.getByRole("button", { name: "Not now" }).click();
+  const saved = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_session_feedback"));
+  expect(saved).toHaveLength(1);
+  expect(saved[0].args).toMatchObject({ rating: null, dismiss: true });
+  await page.goto("/desk.html?feedback#training/plan");
+  const before = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[1].map(workout => workout.distanceM));
+  await page.getByRole("button", { name: "Make plan slightly easier" }).click();
+  await expect(page.locator(".edit-plan [role=status]")).toContainText("Weekly mileage is unchanged");
+  await page.getByRole("button", { name: "Make plan slightly harder" }).click();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").length)).toBe(2);
+  const after = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[1].map(workout => workout.distanceM));
+  expect(after).toEqual(before);
+  const calls = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty"));
+  expect(calls.map(call => call.args.direction)).toEqual(["easier", "harder"]);
+  expect(calls[1].args.revision).toBeGreaterThan(calls[0].args.revision);
+});
+
+for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`session feedback responsive ${theme} ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto(`/desk.html?feedback&theme=${theme}#journal/1`);
+  const form = page.locator(".activity-review .session-feedback");
+  await expect(form.getByRole("radio", { name: "5 Much too hard" })).toBeVisible();
+  await form.getByRole("radio", { name: "1 Much too easy" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(form.getByRole("radio", { name: "2 Slightly easy" })).toBeChecked();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath(`feedback-${theme}-${width}.png`), fullPage: true });
+});
+
 for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion preserves CSS time units with ${reducedMotion} motion`, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion });
@@ -1534,7 +1589,7 @@ test('graded performance proposals preview race estimates and only change them a
     const {trainingRaceTime}=await import('/src/desk/race-estimates.tsx');
     return [5,10,21.0975,42.195].map(distance=>trainingRaceTime(285,0,distance));
   })).toEqual([1348,2810,6201,12928]);
-  await expect(page.getByRole('region',{name:'Proposed session changes'})).toContainText('10.3 km');
+  await expect(page.getByRole('region',{name:'Proposed session changes'})).toContainText('10.0 km');
   await expect(page.getByRole('region',{name:'Proposed session changes'})).toContainText('4:30 - 4:40/km');
   expect(await page.evaluate(()=>window.__deskCalls.filter(call=>call.command==='apply_proposal'))).toHaveLength(0);
   await page.evaluate(()=>{window.__deskFail='apply_proposal';});

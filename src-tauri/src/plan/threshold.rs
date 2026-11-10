@@ -809,7 +809,7 @@ pub fn athlete_state(evidence: &Evidence, as_of: NaiveDate, fallback_pace: f64) 
         );
     }
     AthleteState {
-        version: 1,
+        version: 2,
         as_of,
         lt1_estimate: lt1,
         lt2_estimate: lt2,

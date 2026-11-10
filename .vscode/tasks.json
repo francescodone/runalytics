@@ -360,6 +360,62 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify session difficulty",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan::difficulty::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify difficulty contracts",
+			"type": "shell",
+			"command": "node scripts/check-i18n.mjs && npx tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml --lib plan::pacing::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify feedback browser workflows",
+			"type": "shell",
+			"command": "npm run build && npm run test:ui -- tests/desk.spec.mjs --grep 'optional session feedback|session feedback responsive' --workers=2 --reporter=dot --output=/tmp/runalytics-feedback-ui",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify difficulty backend regressions",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan:: --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib plan_sync::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib calendar::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib laps::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib providers::coros::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify difficulty persistence",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan::difficulty::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib plan_sync::tests::difficulty_feedback --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib laps::tests --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib providers::coros::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify feedback acceptance",
+			"type": "shell",
+			"command": "npm run test:ui -- tests/desk.spec.mjs tests/prism.spec.mjs --grep 'optional session feedback|session feedback responsive|proposal requires review|failed proposal|schedule mutations|benchmark scheduling|Prism route matrix|Prism intermediate and short viewport' --workers=2 --reporter=dot --output=/tmp/runalytics-feedback-acceptance && npm run test:i18n && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify session feedback final",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib plan:: --offline -q && cargo test --manifest-path src-tauri/Cargo.toml --lib plan_sync::tests --offline -q && cargo test --manifest-path src-tauri/Cargo.toml --lib calendar::tests --offline -q -- --skip benchmark_replaces_session_and_eases_adjacent_load --skip quality_sessions_are_named_and_easy_steps_have_no_upper_bound && npm run build > /tmp/runalytics-feedback-final-build.log 2>&1 && node scripts/check-i18n.mjs && git diff --check && tail -2 /tmp/runalytics-feedback-final-build.log",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

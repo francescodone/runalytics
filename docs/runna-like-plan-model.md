@@ -2,6 +2,12 @@
 
 ## Scope
 
+Optional session feedback and the Edit plan easier/harder controls apply to both
+training methods. They adjust future tempo/interval work lengths at fixed session
+distance, not weekly mileage or the runner's threshold estimate. See
+[Optional Session Feedback](norwegian-threshold-model.md#optional-session-feedback)
+for the shared rating scale, limits, one-shot adaptation and Undo behavior.
+
 Reviewed the [Plan Creation & Management collection](https://support.runna.com/en/collections/16743424-plan-creation-management) and its 27 linked articles on 2026-11-03, plus the linked recovery article. These are public product/coaching descriptions, not a specification of Runna's proprietary generator. The implementation is an independent Runalytics heuristic. It does not claim identical workouts, equivalent outcomes, medical validation, or affiliation with Runna.
 
 New plans can select **Norwegian method** or **Runna-like**. The method is independent of the existing race, improvement, and maintenance goals. Norwegian remains the default for omitted request fields, existing database rows, and older sync payloads. Previously stored workouts are not regenerated when the app upgrades.
@@ -15,12 +21,22 @@ New plans can select **Norwegian method** or **Runna-like**. The method is indep
 | Workout variety | Intervals, tempo, easy runs, and long runs vary with training focus and goal. | Norwegian retains controlled sub-threshold repetitions. Runna-like uses the existing base/build/peak rotation of short/long intervals, cruise, continuous tempo, progressive, ladder, and rolling sessions. Longer race goals emphasize threshold/endurance; shorter goals emphasize speed. |
 | Recovery | Regular deload weeks reduce demand, especially harder sessions. | Reuse three build weeks followed by a recovery week at 70% of the build-volume baseline. Quality is removed in recovery weeks. |
 | Taper | Half marathon and longer, or plans of at least ten weeks, use three weeks; shorter blocks for 10 km or below use two. | Apply those taper lengths to Runna-like race plans, including race week. Reduce quality-work load to 75% in the first week of a three-week taper, then 50%. Taper long runs are easy. Norwegian keeps its previous taper. Improvement and maintenance blocks do not gain a race taper. |
-| Intensity and recovery | Training should be sustainable, and pain/illness should reduce demand. | Both methods retain evidence-based quality-duration caps, the easy/hard budget, spacing around quality and long runs, and injury/fatigue/recovery holds. A second quality day still requires the existing capacity gate. |
+| Intensity and recovery | Training should be sustainable, and pain/illness should reduce demand. | Both methods retain evidence-based quality-duration caps, the easy/hard budget, spacing around quality and long runs, and injury/fatigue/recovery holds. New ambitious Runna-like race/improvement plans request 25% more threshold-equivalent main-set work than moderate plans, before applying the same evidence cap. A second quality day still requires the existing capacity gate. |
 | Pace targets | Current fitness determines training pace, not a desired finish time. | Both methods keep the current evidence anchor between assessments. Changing method does not grant an automatic faster threshold or bypass accepted pace-adjustment controls. |
-| Frequency | Frequency and preferred long-run day shape scheduling. | Keep the existing 3-7 runs/week input and preferred long-run day. Runna-like easy runs may be as short as 3 km rather than the Norwegian generator's 6 km floor; sessions that cannot fit the mileage budget are not forced in. |
+| Frequency | Frequency and preferred long-run day shape scheduling. | Keep the existing 3-7 runs/week input and preferred long-run day. Ambitious Runna-like race/improvement plans can use two quality days from four runs/week during build/peak, provided capacity, mileage, intensity and recovery spacing permit it. A hard long run prevents adding another quality day. Base, recovery, taper and race weeks do not gain a second quality session. Other plans retain the five-run minimum. Runna-like easy runs may be as short as 3 km rather than the Norwegian generator's 6 km floor; sessions that cannot fit the mileage budget are not forced in. |
 | Persistence | A plan choice should remain stable across devices. | Store `trainingMethod` on the request/plan, in SQLite, and on the existing authenticated, opt-in plan-sync channel. Calendar/watch steps reconstruct from the stored method. No new account, telemetry, or third-party data sharing is introduced. |
 
 The numerical progression, recovery, session-size, and quality-load values above are local engineering/coaching choices unless explicitly attributed. Runna does not publish enough detail to reproduce its mileage curves or workout library. The independently capped long-run ceiling applies during build weeks; recovery and taper reductions do not lower the retained build baseline.
+
+## Quality Limits and Compatibility
+
+A fast threshold pace is not evidence of high training-load tolerance. Unverified capacity retains a 15-minute threshold-equivalent main-set cap and does not authorize a second quality day. Repeated overshoots, a recent threshold-load spike, or recovery longer than 48 hours can reduce the cap to 12 minutes. Injury, high fatigue, poor recovery, or sleep below six hours retain easy-only training. The Runna-like plan receipt now reports the cap and its limiting evidence.
+
+For example, at a 3:46/km threshold, a 12-minute load cap reproduces a 3.3 km progressive main set: 1 km at 4:06-4:16/km, 1 km at 3:51-4:01/km, and 1.3 km at 3:41-3:51/km. This is about 13 minutes of running but 12 threshold-equivalent minutes, because the opening blocks are slower than threshold. It is reduced work, not a full sustained threshold session or an incorrect pace anchor.
+
+The wearable-history collector does not currently populate all experience and recovery inputs required for high capacity. Missing values are not fabricated and neither ambition nor weekly mileage alone bypasses that gate. Selecting ambitious therefore does not guarantee two quality sessions or a larger main set when evidence is limiting.
+
+The new load allocation is identified by persisted athlete-state version 2. Version-1 and legacy plans retain their existing reconstructed prescriptions, including completed workouts; upgrades do not regenerate schedules. Norwegian and maintenance load behavior remain unchanged. New allocation requires a newly generated race/improvement plan and sufficient capacity evidence, not merely reopening an existing plan.
 
 ## Deliberate Limits
 

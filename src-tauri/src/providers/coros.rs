@@ -2693,6 +2693,7 @@ Course JSON: {\"dayNo\":4}\n";
             done: false,
             status: WorkoutStatus::Planned,
             moved_at: None,
+            customization: None,
         };
         assert_eq!(
             CorosProvider::course_title(&softened("Easy run (was: Hold My Tempo · 3.0 km tempo)")),

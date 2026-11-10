@@ -1479,6 +1479,60 @@ async fn after_schedule_change(
 
 // ---- settings ---------------------------------------------------------------
 
+#[tauri::command]
+pub async fn session_feedback(state: State<'_, AppState>) -> Result<Option<crate::plan::difficulty::FeedbackContext>> {
+    let _guard = state.sync_lock.lock().await;
+    crate::plan::difficulty::context(&state.store)
+}
+
+#[tauri::command]
+pub async fn save_session_feedback(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    plan_id: String,
+    revision: i64,
+    workout_id: String,
+    rating: Option<u8>,
+    dismiss: bool,
+) -> Result<crate::plan::difficulty::Outcome> {
+    let _guard = state.sync_lock.lock().await;
+    prepare_plan_change(&app, &state).await?;
+    let outcome = crate::plan::difficulty::apply(&state.store, &thresholds(&state), &plan_id, revision, None, Some((&workout_id, rating, dismiss)))?;
+    let _ = app.emit("plan://updated", serde_json::json!({ "local": true }));
+    if after_schedule_change(&app, &state, "feedback").await.is_err() {
+        let _ = app.emit("plan://stage", serde_json::json!({ "op":"feedback", "target":"op", "state":"error", "detail":"Saved locally; publishing will retry on the next sync." }));
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub async fn adjust_plan_difficulty(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    plan_id: String,
+    revision: i64,
+    direction: crate::plan::difficulty::Direction,
+) -> Result<crate::plan::difficulty::Outcome> {
+    let _guard = state.sync_lock.lock().await;
+    prepare_plan_change(&app, &state).await?;
+    let outcome = crate::plan::difficulty::apply(&state.store, &thresholds(&state), &plan_id, revision, Some(direction), None)?;
+    let _ = app.emit("plan://updated", serde_json::json!({ "local": true }));
+    if after_schedule_change(&app, &state, "difficulty").await.is_err() {
+        let _ = app.emit("plan://stage", serde_json::json!({ "op":"difficulty", "target":"op", "state":"error", "detail":"Saved locally; publishing will retry on the next sync." }));
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub async fn undo_plan_difficulty(app: tauri::AppHandle, state: State<'_, AppState>, plan_id: String) -> Result<()> {
+    let _guard = state.sync_lock.lock().await;
+    prepare_plan_change(&app, &state).await?;
+    state.store.undo_difficulty(&plan_id)?;
+    let _ = app.emit("plan://updated", serde_json::json!({ "local": true }));
+    let _ = after_schedule_change(&app, &state, "difficulty").await;
+    Ok(())
+}
+
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -1577,6 +1631,10 @@ async fn apply_workout_edits(
             done: w.done,
             status: w.status,
             moved_at: w.moved_at,
+            customization: if e.kind == w.kind && e.distance_m == w.distance_m
+                && e.pace_lo_s_km == w.pace_lo_s_km && e.pace_hi_s_km == w.pace_hi_s_km {
+                w.customization.clone()
+            } else { None },
         })?;
     }
     let fresh = state.store.plan_workouts(&plan.id)?;
@@ -1729,6 +1787,9 @@ pub async fn apply_proposal(
             .store
             .current_plan()?
             .ok_or_else(|| AppError::Other("no active plan".into()))?;
+        if state.store.plan_workouts(&plan.id)?.iter().any(|workout| workout.customization.as_ref().is_some_and(|value| value.prescription.is_some())) {
+            return Err(AppError::Other("This pacing offer predates your difficulty adjustment. Use Edit plan instead.".into()));
+        }
         if !p.signature.ends_with(&format!(":{}", plan.id))
             || from < Utc::now().date_naive()
             || !offset.is_finite()

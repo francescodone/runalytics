@@ -473,6 +473,7 @@ pub fn schedule_benchmark(
         done: false,
         status: WorkoutStatus::Planned,
         moved_at: existing.and_then(|workout| workout.moved_at),
+        customization: None,
     };
     let mut changes = vec![benchmark.clone()];
     for workout in nearby.into_iter().filter(|workout| workout.date != date && !workout.done
@@ -743,6 +744,7 @@ pub fn reset_week(store: &Store, week_start: NaiveDate, today: NaiveDate) -> Res
             restored.duration_min = original.duration_min;
             restored.pace_lo_s_km = original.pace_lo_s_km;
             restored.pace_hi_s_km = original.pace_hi_s_km;
+            restored.customization = original.customization.clone();
         }
         if drift.restores_date {
             restored.date = drift.planned;
@@ -1474,6 +1476,7 @@ mod tests {
             .update_workout(&PlanWorkout {
                 date: drifted.planned_date + Duration::days(1),
                 moved_at: Some(Utc::now()),
+                customization: None,
                 ..drifted
             })
             .unwrap();

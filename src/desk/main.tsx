@@ -1,3 +1,4 @@
+import { FeedbackReminder } from "./feedback";
 import { Activity, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -134,6 +135,7 @@ function App() {
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
       <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span></div>
       <ErrorNotice error={command.error} />
+      <FeedbackReminder />
       <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
     </main>
   </>;

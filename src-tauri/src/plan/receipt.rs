@@ -111,7 +111,24 @@ pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine
     lines.push(ReceiptLine {
         input: format!("{} per km", fmt_pace(plan.threshold_sec_km as i64)),
         sentence: if plan.training_method == crate::types::TrainingMethod::RunnaLike {
-            "Pace targets reflect your current fitness, not a goal time. Interval and tempo formats vary through the block; quality load remains limited by recovery evidence.".into()
+            let mut explanation = "Pace targets reflect your current fitness, not a goal time. Interval and tempo formats vary through the block.".to_string();
+            if let Some(state) = &plan.threshold_state {
+                let reason = if state.hold_quality {
+                    "Quality is on hold because of recovery or injury signals."
+                } else if state.repeated_overshoots >= 2 {
+                    "Repeated threshold overshoots reduce work rather than reward faster running."
+                } else if state.threshold_load_trend.is_some_and(|trend| trend > 0.2) {
+                    "A recent increase in threshold load limits additional hard work."
+                } else if state.threshold_recovery.is_some_and(|hours| hours > 48.0) {
+                    "Slow recovery limits additional hard work."
+                } else if state.threshold_tolerance.level == crate::plan::threshold::Tolerance::Unknown {
+                    "Training capacity is unverified; ambition does not override this limit."
+                } else {
+                    "Training and recovery evidence set this limit; ambition does not override it."
+                };
+                explanation.push_str(&format!(" Main-set load is capped at {:.0} threshold-equivalent minutes per session. {reason}", state.quality_minutes_cap));
+            }
+            explanation
         } else if let Some(state) = &plan.threshold_state {
             format!("Threshold pace is held between assessments (evidence confidence {:.0}%). Controlled work is capped at {:.0} minutes per session; faster repetitions alone do not raise the target.", state.threshold_confidence * 100.0, state.quality_minutes_cap)
         } else { format!(
@@ -340,6 +357,31 @@ mod tests {
         assert!(all.contains("Moderate"), "the increase method: {all}");
         assert!(all.contains("Saturday"), "the long-run day: {all}");
         assert!(all.contains("40 km"), "the starting volume: {all}");
+    }
+
+    #[test]
+    fn runna_like_receipt_explains_quality_caps_and_limiting_evidence() {
+        let request = PlanRequest {
+            training_method: TrainingMethod::RunnaLike,
+            increase: IncreaseMethod::Ambitious,
+            threshold_sec_km: 226.0,
+            ..request(112)
+        };
+        let (mut plan, workouts) = build(&request);
+        let pacing_line = |plan: &TrainingPlan| receipt(plan, &workouts)[2].sentence.clone();
+        let unknown = pacing_line(&plan);
+        assert!(unknown.contains("15 threshold-equivalent minutes"));
+        assert!(unknown.contains("capacity is unverified"));
+        let state = plan.threshold_state.as_mut().unwrap();
+        state.quality_minutes_cap = 12.0;
+        state.threshold_load_trend = Some(0.5);
+        let reduced = pacing_line(&plan);
+        assert!(reduced.contains("12 threshold-equivalent minutes"));
+        assert!(reduced.contains("increase in threshold load"));
+        let state = plan.threshold_state.as_mut().unwrap();
+        state.quality_minutes_cap = 0.0;
+        state.hold_quality = true;
+        assert!(pacing_line(&plan).contains("Quality is on hold"));
     }
 
     /// The order is the point: the goal decides the length of everything, so a

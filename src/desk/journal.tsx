@@ -9,6 +9,7 @@ import { capitalizeFirst, cleanTitle, navigate, useRemote, useRoute } from "./da
 import { Button, Empty, ErrorNotice, Inspector, Loading, Metric } from "./ui";
 import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker } from "./interaction";
 import { fadeOut, springTransition, tempo } from "./motion";
+import { SessionFeedback } from "./feedback";
 
 const RouteMap = lazy(() => import("./map"));
 
@@ -192,6 +193,7 @@ function ActivityReview({ activity, score, match, tab, onTab }: { activity: Acti
   const settings = useRemote(tauri.getSettings);
   return <article ref={host} className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{match ? cleanTitle(match.title) : capitalizeFirst(activity.sport)}</h2></div>
     <ReviewTabs activityId={activity.id} tab={tab} onSelect={onTab} />
+    <SessionFeedback key={activity.id} activityId={activity.id} />
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label={t("Loading recorded route and splits")} /> : review.data && <Change identity={tab}>
       {tab === "overview" && <ReviewPanel activityId={activity.id} tab="overview">

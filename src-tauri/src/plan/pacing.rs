@@ -373,6 +373,9 @@ fn effective_from(reviews: &[SessionReview]) -> NaiveDate {
 /// lean different ways, an identical offer is already pending or was recently
 /// dismissed, or the plan has nowhere left to move.
 pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Option<PlanProposal>> {
+    if store.plan_workouts(&plan.id)?.iter().any(|workout| workout.customization.as_ref().is_some_and(|value| value.prescription.is_some())) {
+        return Ok(None);
+    }
     if matches!(plan.status, PlanStatus::Aborted | PlanStatus::Completed) {
         return Ok(None);
     }
@@ -452,7 +455,7 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
             ));
         }
     }
-    reason.push_str(" Completed sessions, easy days, long runs, races and the final 14 days before the target date keep their distances. Future quality distance changes by at most 3% up or 5% down, only within the next 14 days. Race estimates use the plan threshold plus the accepted quality offset; watch fitness measurements are never overwritten.");
+    reason.push_str(" Every session keeps its distance. Only future quality pace changes; completed sessions, easy days, long runs and races remain unchanged. Watch fitness measurements are never overwritten.");
     if plan.quality_offset_sec_km != 0.0 {
         reason.push_str(&format!(
             " This is on top of the {:.0} s/km already applied.",
@@ -476,7 +479,7 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     }))
 }
 
-fn progression_allowed(store: &Store, th: &Thresholds) -> Result<bool> {
+pub(super) fn progression_allowed(store: &Store, th: &Thresholds) -> Result<bool> {
     let scores = crate::metrics::compute_scores(store, th)?;
     let load = store.latest_training_load()?.and_then(|load| load.ratio);
     Ok(store.latest_pain()?.is_none()
@@ -491,7 +494,7 @@ pub fn adaptation_edits(
     offset: f64,
     from: NaiveDate,
 ) -> Result<Vec<WorkoutEdit>> {
-    let factor = if offset < plan.quality_offset_sec_km { 1.03 } else { 0.95 };
+    let _ = offset;
     let completions = store.calendar_completions()?;
     Ok(store.plan_workouts(&plan.id)?.into_iter().filter(|workout| {
         is_quality(workout.kind) && !workout.done && workout.status != WorkoutStatus::Skipped
@@ -500,7 +503,7 @@ pub fn adaptation_edits(
             && !completions.iter().any(|entry| entry.0 == workout.id)
     }).filter_map(|workout| {
         let distance = workout.distance_m.filter(|distance| distance.is_finite() && *distance >= 2000.0)?;
-        let updated = (distance * factor / 10.0).round() * 10.0;
+        let updated = distance;
         Some(WorkoutEdit {
             workout_id: workout.id,
             kind: workout.kind,
@@ -1162,7 +1165,7 @@ mod tests {
         store.insert_workouts(&[future.clone(), easy, skipped]).unwrap();
         let offer = build(&store, &plan, &Thresholds::default()).unwrap().unwrap();
         let edit = offer.edits.iter().find(|edit| edit.workout_id == future.id).unwrap();
-        assert_eq!(edit.distance_m, Some(9500.0));
+        assert_eq!(edit.distance_m, Some(10000.0));
         assert!(!offer.edits.iter().any(|edit| edit.workout_id == "adaptive-easy" || edit.workout_id == "adaptive-skip"));
         store.insert_proposal(&offer).unwrap();
         future.date += chrono::Duration::days(1);
@@ -1175,7 +1178,7 @@ mod tests {
         store.accept_pacing_proposal(&plan, &offer).unwrap();
         let (updated, workouts) = store.current_plan().unwrap().unwrap();
         assert_eq!(updated.quality_offset_sec_km, 5.0);
-        assert_eq!(workouts.iter().find(|workout| workout.id == future.id).unwrap().distance_m, Some(9500.0));
+        assert_eq!(workouts.iter().find(|workout| workout.id == future.id).unwrap().distance_m, Some(10000.0));
         assert_eq!(store.proposal_by_id(&offer.id).unwrap().unwrap().status, ProposalStatus::Applied);
         assert!(store.accept_pacing_proposal(&plan, &offer).is_err());
         store.set_plan_quality_offset(&plan.id, 0.0, Utc::now().date_naive()).unwrap();

@@ -57,7 +57,7 @@ use crate::types::{PlanWorkout, TrainingPlan};
 
 /// Version of the on-disk/on-gist wire format. Bump when the DTO shape changes
 /// in a way older apps cannot read.
-const WIRE_VERSION: u32 = 3;
+const WIRE_VERSION: u32 = 4;
 /// Domain separation for both the sync code and the encryption key, so neither
 /// can collide with any other hash or KDF this app might do with the same `sub`.
 const PROTOCOL: &[u8] = b"runalytics.plan.sync.v1";
@@ -226,6 +226,8 @@ struct PlanWire {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkoutWire {
+    #[serde(default)]
+    customization: Option<crate::plan::difficulty::Customization>,
     id: String,
     plan_id: String,
     date: NaiveDate,
@@ -327,6 +329,7 @@ impl PlanWire {
 impl WorkoutWire {
     fn from_workout(w: &PlanWorkout, completion: Option<CompletionWire>) -> Self {
         WorkoutWire {
+            customization: w.customization.clone(),
             id: w.id.clone(),
             plan_id: w.plan_id.clone(),
             date: w.date,
@@ -366,6 +369,7 @@ impl WorkoutWire {
             done: self.done,
             status: self.status,
             moved_at: None,
+            customization: self.customization.clone(),
         }
     }
 }
@@ -793,7 +797,7 @@ fn decode_snapshot(sub: &str, sealed: &str) -> Result<Option<PlanBlob>> {
     if version > u64::from(WIRE_VERSION) {
         return Err(AppError::Other("The synced plan was written by a newer version of Runalytics".into()));
     }
-    if version == 3 && value["state"] == "empty" {
+    if version >= 3 && value["state"] == "empty" {
         return Ok(None);
     }
     let blob: PlanBlob = serde_json::from_value(value)?;
@@ -1760,6 +1764,30 @@ mod tests {
     }
 
     #[test]
+    fn difficulty_feedback_and_frozen_steps_survive_wire_replace_and_restart() {
+        let state = device();
+        let mut blob = wire();
+        let mut workout = blob.workouts[0].to_workout();
+        let plan = blob.plan.to_plan();
+        let details = crate::plan::session::details_for_plan(&workout, &plan);
+        workout.customization = Some(crate::plan::difficulty::Customization {
+            prescription: Some(crate::plan::difficulty::Prescription { version: 1, baseline: details.clone(), current: details.clone() }),
+            rating: Some(4), submitted_at: Some(1794300000), dismissed: true,
+        });
+        blob.workouts[0] = WorkoutWire::from_workout(&workout, None);
+        let encoded = serde_json::to_vec(&blob).unwrap();
+        let decoded: PlanBlob = serde_json::from_slice(&encoded).unwrap();
+        state.store.replace_synced_plan(&plan, &[decoded.workouts[0].to_workout()], decoded.rev, None).unwrap();
+        let reopened = crate::store::Store::open(&state.data_dir.join("store.sqlite")).unwrap();
+        let mut stored = reopened.plan_workouts(&plan.id).unwrap().remove(0);
+        assert_eq!(stored.customization.as_ref().unwrap().rating, Some(4));
+        assert!(stored.customization.as_ref().unwrap().dismissed);
+        stored.done = true;
+        assert_eq!(serde_json::to_value(crate::plan::session::details_for_plan(&stored, &plan)).unwrap(), serde_json::to_value(details).unwrap());
+        std::fs::remove_dir_all(state.data_dir).unwrap();
+    }
+
+    #[test]
     fn unchanged_gist_allows_a_local_edit_against_its_acknowledged_base() {
         let config = super::PlanSync {
             acknowledged_blob: Some(super::blob_fingerprint("shared-base")),
@@ -1855,6 +1883,7 @@ mod tests {
                 name: None,
             },
             workouts: vec![WorkoutWire {
+                customization: None,
                 id: "w-1".into(),
                 plan_id: "plan-1".into(),
                 date: NaiveDate::from_ymd_opt(2026, 10, 26).unwrap(),

@@ -4,6 +4,37 @@ New plans default to this method and can instead select the independent [Runna-l
 
 ## Purpose and Evidence
 
+### Optional Session Feedback
+
+Completed tempo, interval, benchmark and long-run sessions can receive an optional
+rating relative to their prescription: 1 much too easy, 2 slightly easy, 3 about
+right, 4 slightly hard, or 5 much too hard. Easy runs and ordinary races are not
+rated. Recent newly completed recordings receive a nonblocking reminder; Not now
+suppresses it without recording a score. Existing recordings are not backfilled.
+
+The first non-neutral submission requests a small change to future tempo/interval
+work only. Ratings can subsequently be edited or cleared without applying another
+adjustment. Training > Plan > Edit plan offers the same easier/harder actions
+manually. Neither action changes weekly mileage, session dates, run frequency,
+long-run targets, benchmark targets, or the athlete's threshold estimates.
+
+Adjustments resize work in 100 m increments, exchanging work metres with easy
+warm-up metres within each session. They target approximately 5% of quality load,
+allow at most 10% for a rounded step, and stay within 80%-120% of the original
+quality prescription. A single repetition can be adjusted when changing every
+repetition would be too large. Pace and recovery targets stay unchanged. Minimum
+warm-up/cooldown distances, quality-time caps and harder-change weekly intensity
+limits remain enforced. Harder changes also require suitable pain, recovery and
+training-load evidence and do not increase recovery-week or taper work. Missing
+load evidence blocks harder changes, not feedback submission.
+
+Distance rounding and safety limits can leave some or all sessions unchanged;
+the action reports that result. Undo restores only unchanged, still-future,
+uncompleted sessions and does not erase the feedback or rearm its automatic
+adjustment. Adjusted steps and feedback survive plan sync and restart. Both
+devices must support plan wire version 4; older clients refuse the new format.
+Subjective ratings are not included in calendar descriptions or watch workouts.
+
 This is a conservative individualized training heuristic, not an implementation of an elite athlete's schedule, a lactate meter, an injury diagnosis, or a claim that Norwegian training is universally superior. Its scores and policy cutoffs are engineering/coaching assumptions, not clinically validated probabilities or physiological laws.
 
 The useful principle is repeatable work at controlled internal intensity, supported by substantial easy running, recovery, consistency and longitudinal measurement. Double-threshold days are one high-load organizational strategy, not the definition of the method.

@@ -8,6 +8,7 @@ export const deskFixture = `(function () {
   ${dashboardFixture}
   const deskOriginal = window.__TAURI_INTERNALS__.invoke;
   let deskCurrent;
+  let deskFeedback;
   let deskSettings;
   let deskPain = [];
   let deskMessages = [];
@@ -38,13 +39,29 @@ export const deskFixture = `(function () {
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
   window.__deskEmit = (event, payload) => { const listener = listeners.get(event); callbacks.get(listener)?.({event,id:listener,payload}); };
   let proposal = new URLSearchParams(location.search).has('proposal') ? {id:'synthetic-proposal',source:'pain',status:'pending',summary:'Reduce the next quality session',reason:'Synthetic recovery adjustment',createdAt:'2026-10-30',edits:[{workoutId:'synthetic-workout',date:'2026-11-01',oldTitle:'Intervals',oldDistanceM:8000,title:'Easy run',distanceM:4000,kind:'easy'}]} : null;
-  if (new URLSearchParams(location.search).has('pacingProposal')) proposal = {id:'synthetic-pacing',source:'pacing',status:'pending',summary:'Sharpen quality pace by 5 s/km and review future session distances',reason:'Three completed quality sessions consistently faster than their own targets; recovery and load support progression.',createdAt:'2026-10-31',planQualityOffsetSecKm:-5,planQualityOffsetFrom:'2026-11-01',edits:[{workoutId:'synthetic-workout',date:'2026-11-02',oldTitle:'Tempo',oldDistanceM:10000,title:'Tempo',distanceM:10300,kind:'tempo',paceLoSKm:275,paceHiSKm:285}]};
+  if (new URLSearchParams(location.search).has('pacingProposal')) proposal = {id:'synthetic-pacing',source:'pacing',status:'pending',summary:'Sharpen quality pace by 5 s/km without changing mileage',reason:'Three completed quality sessions consistently faster than their own targets; recovery and load support progression.',createdAt:'2026-10-31',planQualityOffsetSecKm:-5,planQualityOffsetFrom:'2026-11-01',edits:[{workoutId:'synthetic-workout',date:'2026-11-02',oldTitle:'Tempo',oldDistanceM:10000,title:'Tempo',distanceM:10000,kind:'tempo',paceLoSKm:275,paceHiSKm:285}]};
   window.__deskCalls = [];
   window.__deskFail = '';
   window.__deskHoldPush = new URLSearchParams(location.search).has('holdPush');
   window.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
     window.__deskCalls.push({command:cmd, args});
     if (cmd === window.__deskFail) throw new Error('Unable to save right now');
+    if (cmd === 'session_feedback') {
+      if (!new URLSearchParams(location.search).has('feedback')) return null;
+      if (deskFeedback !== undefined) return deskFeedback;
+      const pair = await window.__TAURI_INTERNALS__.invoke('current_plan');
+      deskFeedback = {planId:pair[0].id,revision:10,sessions:[{workoutId:'feedback-tempo',activityId:1,title:'Tempo feedback',date:new Date().toISOString().slice(0,10),rating:null,submitted:false,pending:true},{workoutId:'feedback-long',activityId:2,title:'Long run feedback',date:new Date().toISOString().slice(0,10),rating:null,submitted:false,pending:true}]};
+      return structuredClone(deskFeedback);
+    }
+    if (cmd === 'save_session_feedback') {
+      const session=deskFeedback.sessions.find(session=>session.workoutId===args.workoutId);
+      if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');
+      const changed=!args.dismiss && !session.submitted && args.rating!==3 && args.rating!==null ? 2 : 0;
+      if(!args.dismiss){session.rating=args.rating;session.submitted=true;}session.pending=false;deskFeedback.revision++;
+      return {changed,unchanged:0,reason:changed?'Future quality sessions adjusted. Weekly mileage is unchanged.':'Feedback saved.'};
+    }
+    if (cmd === 'adjust_plan_difficulty') { if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');deskFeedback.revision++;return {changed:2,unchanged:0,reason:'Future quality sessions adjusted. Weekly mileage is unchanged.'}; }
+    if (cmd === 'undo_plan_difficulty') { deskFeedback.revision++; return null; }
     if (cmd === 'plugin:updater|check') return window.__deskNoUpdate ? null : {rid:73,currentVersion:'0.25.0',version:'0.26.0'};
     if (cmd === 'plugin:updater|download_and_install') {
       window.__deskUpdateEvent = event => args.onEvent.onmessage(event);

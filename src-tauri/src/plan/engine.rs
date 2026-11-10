@@ -241,6 +241,14 @@ pub(super) fn quality_load_at(d: RaceDistance, baseline_km: f64, progress: f64) 
 
 pub(super) fn quality_load_for_plan(plan: &TrainingPlan, weeks: usize, week: usize) -> f64 {
     let load = quality_load_at(plan.distance, plan.baseline_weekly_km.unwrap_or(0.0), fitness_progress(plan.kind, plan.distance, weeks, week));
+    let load = if plan.training_method == TrainingMethod::RunnaLike
+        && plan.increase == IncreaseMethod::Ambitious
+        && plan.kind != PlanKind::Maintenance
+        && plan.threshold_state.as_ref().is_some_and(|state| state.version >= 2) {
+        load * 1.25
+    } else {
+        load
+    };
     let capped = plan.threshold_state.as_ref().map_or(load, |state| load.min(state.quality_minutes_cap));
     let remaining = weeks.saturating_sub(week);
     if plan.training_method == TrainingMethod::RunnaLike && plan.kind.has_race()
@@ -667,7 +675,11 @@ pub fn generate_with_evidence(
             .filter(|&off| quality_open(off))
             .filter(|_| {
                 plan.threshold_state.as_ref().unwrap().allow_second_quality
-                    && req.weekly_frequency >= 5
+                    && (req.weekly_frequency >= 5
+                        || (req.training_method == TrainingMethod::RunnaLike
+                            && req.increase == IncreaseMethod::Ambitious
+                            && req.kind != PlanKind::Maintenance
+                            && req.weekly_frequency == 4))
                     && matches!(phase, Phase::Build | Phase::Peak)
                     && !tapering
                     && !(long_km > 0.0 && long_pattern.is_hard())
@@ -827,6 +839,7 @@ pub fn generate_with_evidence(
                 done: false,
                 status: WorkoutStatus::default(),
                 moved_at: None,
+                customization: None,
             };
             workout.title = match (kind, quality) {
                 (WorkoutKind::LongRun, _) => {
@@ -877,6 +890,7 @@ pub fn generate_with_evidence(
                     done: false,
                     status: WorkoutStatus::default(),
                     moved_at: None,
+                    customization: None,
                 });
             }
         }
@@ -895,6 +909,7 @@ pub fn generate_with_evidence(
             done: false,
             status: WorkoutStatus::default(),
             moved_at: None,
+            customization: None,
         });
     }
     // An improvement block finishes with a time trial over its target distance:
@@ -917,6 +932,7 @@ pub fn generate_with_evidence(
             done: false,
             status: WorkoutStatus::default(),
             moved_at: None,
+            customization: None,
         });
     }
 
@@ -1691,6 +1707,180 @@ mod tests {
 
     fn is_quality(w: &PlanWorkout) -> bool {
         matches!(w.kind, WorkoutKind::Intervals | WorkoutKind::Tempo)
+    }
+
+    #[test]
+    fn runna_like_ambitious_quality_load_uses_proven_capacity() {
+        let request = PlanRequest {
+            training_method: TrainingMethod::RunnaLike,
+            threshold_sec_km: 226.0,
+            increase: IncreaseMethod::Ambitious,
+            current_weekly_km: Some(40.0),
+            ..req_from_now(RaceDistance::K21, 16)
+        };
+        let (mut plan, _) = generate(&request, 40.0).unwrap();
+        assert!(quality_load_for_plan(&plan, 16, 0) <= 15.0);
+        plan.threshold_state.as_mut().unwrap().quality_minutes_cap = 30.0;
+        let early = quality_load_for_plan(&plan, 16, 0);
+        let late = quality_load_for_plan(&plan, 16, 10);
+        assert!(early >= 22.0, "ambitious opening load: {early}");
+        assert!(late > early && late <= 30.0, "quality progression: {early} -> {late}");
+        plan.threshold_state.as_mut().unwrap().version = 1;
+        let original = quality_load_at(plan.distance, 40.0, 0.0);
+        assert_eq!(quality_load_for_plan(&plan, 16, 0), original);
+        plan.threshold_state.as_mut().unwrap().version = 2;
+        plan.training_method = TrainingMethod::Norwegian;
+        assert_eq!(quality_load_for_plan(&plan, 16, 0), original);
+        plan.training_method = TrainingMethod::RunnaLike;
+        plan.kind = PlanKind::Maintenance;
+        assert_eq!(quality_load_for_plan(&plan, 16, 0), quality_load_at(plan.distance, 40.0, 1.0));
+        plan.kind = PlanKind::Race;
+        plan.threshold_state.as_mut().unwrap().quality_minutes_cap = 12.0;
+        assert_eq!(quality_load_for_plan(&plan, 16, 10), 12.0);
+        plan.threshold_state.as_mut().unwrap().quality_minutes_cap = 0.0;
+        assert_eq!(quality_load_for_plan(&plan, 16, 10), 0.0);
+    }
+
+    fn runna_like_capacity_evidence() -> super::super::threshold::Evidence {
+        use super::super::threshold::*;
+        let today = Utc::now().date_naive();
+        Evidence {
+            observations: vec![ThresholdObservation {
+                date: today,
+                source: MeasurementSource::Watch,
+                lt1: ThresholdPoint::default(),
+                lt2: ThresholdPoint {
+                    pace_s_km: Some(Estimate {
+                        value: 226.0,
+                        confidence: 0.65,
+                        relative_uncertainty: 0.05,
+                        source: "synthetic threshold".into(),
+                    }),
+                    ..Default::default()
+                },
+            }],
+            sessions: [2, 9, 16, 23].into_iter().map(|days| SessionEvidence {
+                date: today - chrono::Duration::days(days),
+                intended: Domain::Threshold,
+                repetitions: vec![Repetition {
+                    duration_s: 360.0,
+                    recovery_s: 60.0,
+                    pace_s_km: Some(226.0),
+                    rpe: Some(6.0),
+                    ..Default::default()
+                }; 5],
+                conditions: Conditions::default(),
+                planned_work_s: Some(1800.0),
+                recovery_hours: Some(24.0),
+                following_performance_declined: Some(false),
+            }).collect(),
+            capacity: Capacity {
+                training_age_years: Some(3.0),
+                weeks_consistent: Some(24.0),
+                weekly_km: Some(40.0),
+                historical_weekly_km: Some(40.0),
+                weekly_sessions: Some(4.0),
+                threshold_months: Some(6.0),
+                easy_time_fraction: Some(0.85),
+                sleep_hours: Some(8.0),
+                fatigue_high: Some(false),
+                injury_active: Some(false),
+                recovery_good: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn runna_like_four_day_ambitious_plan_uses_two_quality_days_when_supported() {
+        let evidence = runna_like_capacity_evidence();
+        for longrun_day in 1..=7 {
+            let request = PlanRequest {
+                training_method: TrainingMethod::RunnaLike,
+                threshold_sec_km: 226.0,
+                weekly_frequency: 4,
+                longrun_day,
+                increase: IncreaseMethod::Ambitious,
+                current_weekly_km: Some(40.0),
+                ..req_from_now(RaceDistance::K21, 16)
+            };
+            let (plan, workouts) = generate_with_evidence(&request, 40.0, &evidence).unwrap();
+            assert!(plan.threshold_state.as_ref().unwrap().allow_second_quality);
+            let mut two_quality_weeks = 0;
+            for (monday, week) in by_week(&workouts) {
+                let quality: Vec<_> = week.iter().filter(|workout| is_quality(workout)).collect();
+                if quality.len() != 2 { continue; }
+                two_quality_weeks += 1;
+                assert_eq!(week.len(), 4);
+                assert_ne!(quality[0].kind, quality[1].kind);
+                assert!(!week_is_down(&plan, monday));
+                let week_index = ((monday - first_monday_of(&plan)).num_days() / 7) as usize;
+                assert!(matches!(phase_at(plan.kind, plan.distance, 16, week_index), Phase::Build | Phase::Peak));
+                assert!(week_index < 13);
+                let long = week.iter().find(|workout| workout.kind == WorkoutKind::LongRun).unwrap();
+                assert_eq!(iso_weekday(long.date), longrun_day);
+                let mut hard_days = vec![quality[0].date, quality[1].date, long.date];
+                hard_days.sort();
+                for (index, date) in hard_days.iter().enumerate() {
+                    for other in &hard_days[index + 1..] {
+                        let gap = (*other - *date).num_days();
+                        assert!(gap >= 2 && 7 - gap >= 2, "hard-day spacing: {hard_days:?}");
+                    }
+                }
+                let mut hard_minutes = 0.0;
+                let mut total_minutes = 0.0;
+                for workout in &week {
+                    let details = super::super::session::details_for_plan(workout, &plan);
+                    for step in &details.steps {
+                        let pace = (step.pace_lo_s_km.unwrap() + step.pace_hi_s_km.unwrap()) as f64 / 2.0;
+                        let minutes = step.distance_m * step.repeats as f64 / 1000.0 * pace / 60.0;
+                        total_minutes += minutes;
+                        if !step.open_ended { hard_minutes += minutes; }
+                        if step.recovery_m > 0.0 {
+                            let pace = (step.recovery_pace_lo_s_km.unwrap() + step.recovery_pace_hi_s_km.unwrap()) as f64 / 2.0;
+                            let minutes = step.recovery_m * step.repeats.saturating_sub(1) as f64 / 1000.0 * pace / 60.0;
+                            total_minutes += minutes;
+                            if pace < plan.threshold_sec_km + 40.0 { hard_minutes += minutes; }
+                        }
+                    }
+                }
+                assert!(hard_minutes / total_minutes <= 0.25, "week {monday}: {hard_minutes}/{total_minutes} hard minutes");
+                for workout in quality {
+                    let details = super::super::session::details_for_plan(workout, &plan);
+                    assert!((details.distance_m() - workout.distance_m.unwrap()).abs() < 0.01);
+                    assert!(details.steps.len() >= 3);
+                }
+            }
+            assert!(two_quality_weeks > 0, "long-run day {longrun_day}: no supported two-quality weeks");
+        }
+    }
+
+    #[test]
+    fn runna_like_ambition_does_not_override_unknown_capacity_or_recovery_holds() {
+        let request = PlanRequest {
+            training_method: TrainingMethod::RunnaLike,
+            threshold_sec_km: 226.0,
+            increase: IncreaseMethod::Ambitious,
+            current_weekly_km: Some(40.0),
+            ..req_from_now(RaceDistance::K21, 16)
+        };
+        let (plan, workouts) = generate(&request, 40.0).unwrap();
+        assert_eq!(plan.threshold_state.as_ref().unwrap().quality_minutes_cap, 15.0);
+        assert!(!plan.threshold_state.as_ref().unwrap().allow_second_quality);
+        assert!(by_week(&workouts).values().all(|week| week.iter().filter(|workout| is_quality(workout)).count() <= 1));
+        for concern in 0..4 {
+            let mut evidence = runna_like_capacity_evidence();
+            match concern {
+                0 => evidence.capacity.injury_active = Some(true),
+                1 => evidence.capacity.fatigue_high = Some(true),
+                2 => evidence.capacity.recovery_good = Some(false),
+                _ => evidence.capacity.sleep_hours = Some(5.5),
+            }
+            let (plan, workouts) = generate_with_evidence(&request, 40.0, &evidence).unwrap();
+            assert!(plan.threshold_state.as_ref().unwrap().hold_quality);
+            assert!(workouts.iter().all(|workout| !is_quality(workout) && workout.kind != WorkoutKind::Race));
+        }
     }
 
     /// With 5+ runs a week the build holds two quality days — one threshold,

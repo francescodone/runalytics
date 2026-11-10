@@ -371,6 +371,7 @@ mod tests {
                     done: false,
                     status: WorkoutStatus::default(),
                     moved_at: None,
+                    customization: None,
                 }
             })
             .collect::<Vec<_>>();

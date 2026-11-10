@@ -1,3 +1,12 @@
+.session-feedback, .edit-plan, .feedback-reminder { padding-block: var(--space-4, 16px); min-width: 0; }
+.feedback-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.feedback-scale label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; min-height: 44px; padding: 8px; overflow-wrap: anywhere; }
+.feedback-scale label span { flex-basis: 100%; }
+.feedback-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+.feedback-actions .desk-button { white-space: normal; min-height: 44px; }
+.session-feedback fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+.session-feedback legend { padding: 0; margin-bottom: 12px; }
+@media (max-width: 480px) { .feedback-scale { grid-template-columns: minmax(0, 1fr); } .feedback-scale label span { flex-basis: auto; } }
 * { box-sizing: border-box; letter-spacing: 0; }
 html { scrollbar-color: color-mix(in srgb, var(--desk-action) 55%, var(--desk-surface)) transparent; }
 @supports not (scrollbar-color: auto) {

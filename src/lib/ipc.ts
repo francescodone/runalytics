@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  FeedbackContext,
+  DifficultyOutcome,
   Activity,
   ActivityDetail,
   ActivityReview,
@@ -70,6 +72,12 @@ const call: Command = async <T>(cmd: string, args?: Record<string, unknown>): Pr
 };
 
 export const tauri = {
+  sessionFeedback: () => invoke<FeedbackContext | null>("session_feedback"),
+  undoPlanDifficulty: (planId: string) => invoke<void>("undo_plan_difficulty", { planId }),
+  saveSessionFeedback: (planId: string, revision: number, workoutId: string, rating: number | null, dismiss = false) =>
+    invoke<DifficultyOutcome>("save_session_feedback", { planId, revision, workoutId, rating, dismiss }),
+  adjustPlanDifficulty: (planId: string, revision: number, direction: "easier" | "harder") =>
+    invoke<DifficultyOutcome>("adjust_plan_difficulty", { planId, revision, direction }),
   stravaStatus: () => call<import("./types").StravaStatus>("strava_status"),
   stravaConfigure: (clientId: string, clientSecret: string | null) => call<import("./types").StravaStatus>("strava_configure", { clientId, clientSecret }),
   stravaConnect: () => call<import("./types").StravaStatus>("strava_connect"),

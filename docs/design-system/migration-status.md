@@ -1,3 +1,34 @@
+## Optional Session Feedback And Plan Difficulty, 2026-11-10
+
+Completed tempo, interval, benchmark and long-run reviews offer an optional,
+initially unselected 1-5 relative-difficulty fieldset. Recent newly recorded
+completions appear in a nonblocking reminder list; dismissal is persisted.
+Easy sessions and ordinary races are excluded by the backend. Review-tab changes
+and failed saves retain the rating draft. Training > Plan now includes two
+explicit easier/harder actions, visible result feedback and guarded shared Undo.
+The controls reuse Prism buttons, native radio semantics, existing icons and
+unframed sections. All eight locale catalogs include the new controls and results.
+
+Feedback and manual actions share a revision-guarded transaction and resize future
+quality work without changing any session's total distance. Adjusted prescriptions
+are versioned snapshots shared by calendar, review and provider rendering.
+
+Verification: production build, TypeScript and catalog validation passed. The
+50-check Chromium acceptance run passed the feedback workflows, schedule/benchmark
+regressions, Prism width/theme matrix from 320-2560px and intermediate/short
+viewports. Feedback-specific screenshots were captured at 320/390/820/1440px in
+light and dark. All 37 localization browser checks passed. Eight focused Rust
+difficulty tests, a customized sync/restart regression, 18 lap tests and 12 COROS
+unit checks passed. The final plan suite passed 98 tests, sync passed 34, and the
+18 unaffected calendar checks passed. Browser checks use synthetic IPC, not native
+device or live provider integration. Native binaries have not been rebuilt.
+
+Two calendar unit checks still fail on generated-distance/description expectations:
+`benchmark_replaces_session_and_eases_adjacent_load` and
+`quality_sessions_are_named_and_easy_steps_have_no_upper_bound`. An isolated copy
+with the pre-existing training edits and without this feature reproduced the same
+failures, so those unrelated expectations were not changed.
+
 ## Native Transition Stability And Calendar Morphs, 2026-11-10
 
 Native Tauri appearance updates no longer take document View Transition snapshots.

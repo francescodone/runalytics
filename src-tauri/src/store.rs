@@ -569,7 +569,7 @@ fn parse_date_row(s: &str) -> std::result::Result<NaiveDate, rusqlite::Error> {
 /// `SELECT *` and still forgets one of these fails loudly at read time rather
 /// than silently handing back a workout missing its generated date.
 const WORKOUT_COLS: &str = "id, plan_id, day, planned_date, kind, title, distance_m, \
-     duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts";
+    duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts, customization_json";
 
 /// Map one `plan_workouts` row (see [`WORKOUT_COLS`]) onto a workout.
 ///
@@ -596,6 +596,8 @@ fn workout_from_row(r: &rusqlite::Row<'_>) -> std::result::Result<PlanWorkout, r
         done: r.get::<_, i64>(10)? != 0,
         status: workout_status_from(&r.get::<_, String>(11)?),
         moved_at: r.get::<_, Option<i64>>(12)?.map(ts_to_dt),
+        customization: r.get::<_, Option<String>>(13)?.map(|json| serde_json::from_str(&json)
+            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(error)))).transpose()?,
     })
 }
 
@@ -622,13 +624,15 @@ fn workout_params(w: &PlanWorkout) -> Vec<rusqlite::types::Value> {
         w.moved_at
             .map(|t| rusqlite::types::Value::Integer(t.timestamp()))
             .unwrap_or(rusqlite::types::Value::Null),
+        w.customization.as_ref().map(|value| rusqlite::types::Value::Text(serde_json::to_string(value).expect("serializable customization")))
+            .unwrap_or(rusqlite::types::Value::Null),
     ]
 }
 
 /// An INSERT column list and its matching `?1..?13` placeholders.
 const WORKOUT_INSERT_COLS: &str = "INSERT INTO plan_workouts (id, plan_id, day, planned_date, \
-     kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts) \
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)";
+    kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km, done, status, moved_ts, customization_json) \
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)";
 
 fn ts_to_dt(ts: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now)
@@ -738,6 +742,7 @@ impl Store {
         // than defaulted: a session nobody softened genuinely has no reason,
         // and "no reason" must not be renderable as an empty explanation.
         add_column_if_missing(&conn, "plan_workouts", "adjusted_reason", "TEXT")?;
+        add_column_if_missing(&conn, "plan_workouts", "customization_json", "TEXT")?;
         // When the plan softened a session — the softener's own rate limit.
         // The threshold evidence that triggers softening can stay in warning
         // state for weeks, and without a timestamp of its own the softener
@@ -755,6 +760,8 @@ impl Store {
                 value INTEGER NOT NULL
             );",
         )?;
+        conn.execute("INSERT OR IGNORE INTO app_state(key,value) VALUES('feedback_started_at',strftime('%s','now'))", [])?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS difficulty_undo(plan_id TEXT PRIMARY KEY REFERENCES training_plans(id) ON DELETE CASCADE, revision INTEGER NOT NULL, content TEXT NOT NULL)")?;
         // What generated an offer. Pain offers and pacing offers apply through
         // the same path but belong on different pages, so the distinction has
         // to survive a restart; a pacing offer also carries the offset to store
@@ -1336,6 +1343,58 @@ impl Store {
             .optional()?)
     }
 
+    pub fn feedback_started_at(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT value FROM app_state WHERE key='feedback_started_at'", [], |row| row.get(0))?)
+    }
+
+    pub fn commit_difficulty(&self, plan_id: &str, revision: i64, workouts: &[PlanWorkout]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE training_plans SET rev=MAX(rev+1,CAST(strftime('%s','now') AS INTEGER)) WHERE id=?1 AND COALESCE(rev,created_ts)=?2 AND status IN ('draft','active','pushed')",
+            params![plan_id, revision],
+        )?;
+        if changed != 1 { return Err(AppError::Other("The plan changed. Refresh before trying again.".into())); }
+        let mut previous = Vec::new();
+        for workout in workouts {
+            if !workout.done {
+                let before = transaction.query_row("SELECT customization_json,duration_min FROM plan_workouts WHERE id=?1 AND done=0", params![workout.id], |row|
+                    Ok((workout.id.clone(), row.get::<_, Option<String>>(0)?, row.get::<_, Option<f64>>(1)?)))?;
+                previous.push(before);
+            }
+            let customization = workout.customization.as_ref().map(serde_json::to_string).transpose()?;
+            let changed = transaction.execute(
+                "UPDATE plan_workouts SET customization_json=?3, duration_min=?4 WHERE id=?1 AND plan_id=?2 AND done=?5 AND status='planned' AND day=?6 AND distance_m IS ?7",
+                params![workout.id, plan_id, customization, workout.duration_min, workout.done, workout.date.to_string(), workout.distance_m],
+            )?;
+            if changed != 1 { return Err(AppError::Other("A session changed. Refresh before trying again.".into())); }
+        }
+        transaction.execute("UPDATE plan_proposals SET status='dismissed',acted_ts=strftime('%s','now') WHERE source='pacing' AND status='pending'", [])?;
+        if !previous.is_empty() {
+            transaction.execute("INSERT OR REPLACE INTO difficulty_undo(plan_id,revision,content) SELECT id,rev,?2 FROM training_plans WHERE id=?1",
+                params![plan_id, serde_json::to_string(&previous)?])?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn undo_difficulty(&self, plan_id: &str) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn.transaction()?;
+        let content: Option<String> = transaction.query_row("SELECT u.content FROM difficulty_undo u JOIN training_plans p ON p.id=u.plan_id AND p.rev=u.revision WHERE u.plan_id=?1 AND p.status IN ('draft','active','pushed')", params![plan_id], |row| row.get(0)).optional()?;
+        let content = content.ok_or_else(|| AppError::Other("The plan changed; this adjustment can no longer be undone.".into()))?;
+        let previous: Vec<(String, Option<String>, Option<f64>)> = serde_json::from_str(&content)?;
+        for (id, customization, duration) in previous {
+            let changed = transaction.execute("UPDATE plan_workouts SET customization_json=?2,duration_min=?3 WHERE id=?1 AND done=0 AND status='planned' AND day>?4 AND NOT EXISTS(SELECT 1 FROM calendar_completions WHERE workout_id=?1)", params![id, customization, duration, chrono::Local::now().date_naive().to_string()])?;
+            if changed != 1 { return Err(AppError::Other("A session changed; this adjustment can no longer be undone.".into())); }
+        }
+        transaction.execute(Self::REV_BUMP_PLAN, params![plan_id])?;
+        transaction.execute("DELETE FROM difficulty_undo WHERE plan_id=?1", params![plan_id])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Per-week mileage of the current plan: what it prescribes and what the
     /// runner has actually banked, bucketed by Monday. The plan roadmap reads
     /// this to mark each week done / current / upcoming with real numbers —
@@ -1569,7 +1628,7 @@ impl Store {
     pub fn save_benchmark_schedule(&self, workouts: &[PlanWorkout]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn.transaction()?;
-        let sql = format!("{WORKOUT_INSERT_COLS} ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, distance_m=excluded.distance_m, duration_min=excluded.duration_min, pace_lo_s_km=excluded.pace_lo_s_km, pace_hi_s_km=excluded.pace_hi_s_km");
+        let sql = format!("{WORKOUT_INSERT_COLS} ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, distance_m=excluded.distance_m, duration_min=excluded.duration_min, pace_lo_s_km=excluded.pace_lo_s_km, pace_hi_s_km=excluded.pace_hi_s_km, customization_json=excluded.customization_json");
         for workout in workouts {
             // `None` = no row yet (the benchmark creates it); `Some(None)` =
             // a row with nothing snapshotted yet, whose content is about to be
@@ -1586,11 +1645,13 @@ impl Store {
                 .filter(|snap| snap.is_none())
                 .map(|_| {
                     transaction.query_row(
-                        "SELECT kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km \
+                        "SELECT kind, title, distance_m, duration_min, pace_lo_s_km, pace_hi_s_km, customization_json \
                          FROM plan_workouts WHERE id=?1",
                         params![workout.id],
                         |r| {
                             Ok(OriginalContent {
+                                customization: r.get::<_, Option<String>>(6)?.map(|json| serde_json::from_str(&json)
+                                    .map_err(|error| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(error)))).transpose()?,
                                 created: false,
                                 kind: kind_from(&r.get::<_, String>(0)?),
                                 title: r.get(1)?,
@@ -1607,6 +1668,7 @@ impl Store {
             let snapshot = match before {
                 Some(content) => content,
                 None if stored.is_none() => OriginalContent {
+                    customization: None,
                     created: true,
                     kind: WorkoutKind::Rest,
                     title: String::new(),
@@ -1657,7 +1719,7 @@ impl Store {
         conn.execute(
             "UPDATE plan_workouts SET plan_id=?2, day=?3, planned_date=?4, kind=?5,
                 title=?6, distance_m=?7, duration_min=?8, pace_lo_s_km=?9,
-                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13, original_json=NULL
+                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13, customization_json=?14, original_json=NULL
              WHERE id=?1",
             rusqlite::params_from_iter(workout_params(w)),
         )?;
@@ -2062,7 +2124,7 @@ impl Store {
         conn.execute(
             "UPDATE plan_workouts SET plan_id=?2, day=?3, planned_date=?4, kind=?5,
                 title=?6, distance_m=?7, duration_min=?8, pace_lo_s_km=?9,
-                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13
+                pace_hi_s_km=?10, done=?11, status=?12, moved_ts=?13, customization_json=?14
              WHERE id=?1",
             rusqlite::params_from_iter(workout_params(w)),
         )?;
@@ -4300,6 +4362,7 @@ mod tests {
             done: false,
             status: WorkoutStatus::Planned,
             moved_at: None,
+            customization: None,
         };
         s.update_workout(&quiet).expect("seed second workout");
         assert_eq!(s.workout_adjustments().expect("still one").len(), 1);

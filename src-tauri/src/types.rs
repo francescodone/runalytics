@@ -603,6 +603,7 @@ pub enum WorkoutStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanWorkout {
+    pub customization: Option<crate::plan::difficulty::Customization>,
     pub id: String,
     pub plan_id: String,
     pub date: NaiveDate,
@@ -633,6 +634,8 @@ pub struct PlanWorkout {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OriginalContent {
+    #[serde(default)]
+    pub customization: Option<crate::plan::difficulty::Customization>,
     /// The row did not exist before the benchmark: the session was scheduled
     /// onto what the plan left as a rest day, so putting the plan back means
     /// removing the row again. When this is true the fields below are unused.

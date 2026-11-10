@@ -282,6 +282,7 @@ mod tests {
             done: false,
             status: WorkoutStatus::Planned,
             moved_at: None,
+            customization: None,
         };
         s.insert_workouts(&[hard.clone()]).unwrap();
         hard
@@ -352,6 +353,7 @@ mod tests {
             done: false,
             status: WorkoutStatus::Planned,
             moved_at: None,
+            customization: None,
         };
         s2.insert_workouts(&[later]).unwrap();
         let third = evaluate(&s2, &th).expect("evaluate after softening");

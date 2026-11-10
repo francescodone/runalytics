@@ -1,3 +1,24 @@
+export interface FeedbackSession {
+  workoutId: string;
+  activityId: number | null;
+  title: string;
+  date: string;
+  rating: number | null;
+  submitted: boolean;
+  pending: boolean;
+}
+
+export interface FeedbackContext {
+  planId: string;
+  revision: number;
+  sessions: FeedbackSession[];
+}
+
+export interface DifficultyOutcome {
+  changed: number;
+  unchanged: number;
+  reason: string;
+}
 // Mirrors the camelCase serde types in src-tauri/src/types.rs.
 
 export type ProviderKind = "coros" | "garmin";

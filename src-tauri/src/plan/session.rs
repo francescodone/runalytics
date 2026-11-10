@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::engine::Phase;
 use crate::types::{PlanKind, PlanWorkout, RaceDistance, TrainingMethod, TrainingPlan, WorkoutKind};
@@ -484,6 +484,11 @@ pub fn quality_band(plan: &TrainingPlan, workout: &PlanWorkout) -> Option<(i64, 
 }
 
 pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDetails {
+    if matches!(workout.kind, WorkoutKind::Tempo | WorkoutKind::Intervals) {
+        if let Some(details) = workout.customization.as_ref().and_then(|value| value.prescription.as_ref()) {
+            return details.current.clone();
+        }
+    }
     let (weeks, week) = plan_week(plan, workout);
     // The plan's threshold sharpens week by week (engine::threshold_at); the
     // reconstruction must use the week's value, not the one the plan was
@@ -531,7 +536,7 @@ pub fn details_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> WorkoutDe
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkoutStep {
     pub label: String,
@@ -547,7 +552,7 @@ pub struct WorkoutStep {
     pub open_ended: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkoutDetails {
     pub purpose: String,
@@ -1013,7 +1018,7 @@ fn build_details(
     }
 }
 
-fn estimate_min(steps: &[WorkoutStep], fallback: Option<f64>) -> Option<f64> {
+pub(super) fn estimate_min(steps: &[WorkoutStep], fallback: Option<f64>) -> Option<f64> {
     if steps.is_empty() {
         return fallback;
     }
@@ -1094,6 +1099,30 @@ mod tests {
             current_weekly_km: Some(baseline),
             name: None,
         }
+    }
+
+    #[test]
+    fn runna_like_progressive_example_reflects_reduced_load_not_wrong_threshold() {
+        let mut request = request(RaceDistance::K21, 16, 226.0, 40.0);
+        request.training_method = TrainingMethod::RunnaLike;
+        request.increase = IncreaseMethod::Ambitious;
+        let (mut plan, workouts) = super::super::engine::generate(&request, 40.0).unwrap();
+        plan.threshold_state.as_mut().unwrap().quality_minutes_cap = 12.0;
+        let mut workout = workouts.into_iter().find(|workout| workout.kind == WorkoutKind::Tempo).unwrap();
+        workout.distance_m = Some(6000.0);
+        let details = details_for_plan(&workout, &plan);
+        assert_eq!(details.steps.len(), 5);
+        assert_eq!(details.steps[0].distance_m, 1700.0);
+        for (step, (metres, low, high)) in details.steps[1..4].iter().zip([
+            (1000.0, 246, 256),
+            (1000.0, 231, 241),
+            (1300.0, 221, 231),
+        ]) {
+            assert_eq!(step.distance_m, metres);
+            assert_eq!((step.pace_lo_s_km, step.pace_hi_s_km), (Some(low), Some(high)));
+        }
+        assert_eq!(details.steps[4].distance_m, 1000.0);
+        assert_eq!(details.distance_m(), 6000.0);
     }
 
     #[test]
@@ -1345,6 +1374,7 @@ mod tests {
             done: false,
             status: WorkoutStatus::default(),
             moved_at: None,
+            customization: None,
         };
         for kind in [WorkoutKind::Intervals, WorkoutKind::Tempo] {
             let workout = PlanWorkout {
