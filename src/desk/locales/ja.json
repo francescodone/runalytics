@@ -7,6 +7,7 @@
   "The plan changed. Refresh before trying again.": "プランが変更されました。更新してから再試行してください。",
   "Feedback saved.": "評価を保存しました。",
   "Feedback saved. Harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "評価を保存しました。現在の痛み、回復状態、トレーニング負荷では難度を上げられません。",
+  "No sessions changed: harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "変更はありません。現在の痛み、回復状態、トレーニング負荷では難度を上げられません。",
   "No sessions changed: the plan is already at its safe adjustment limits.": "変更はありません。安全な調整範囲の上限または下限に達しています。",
   "Future quality sessions adjusted. Some sessions stayed unchanged to preserve training limits. Weekly mileage is unchanged.": "今後のポイント練習を調整しました。安全上の制限により一部は変更していません。週間走行距離は変わりません。",
   "Future quality sessions adjusted. Weekly mileage is unchanged.": "今後のポイント練習を調整しました。週間走行距離は変わりません。",

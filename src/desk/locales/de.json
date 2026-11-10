@@ -7,6 +7,7 @@
   "The plan changed. Refresh before trying again.": "Der Plan hat sich geändert. Vor dem nächsten Versuch aktualisieren.",
   "Feedback saved.": "Bewertung gespeichert.",
   "Feedback saved. Harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "Bewertung gespeichert. Schmerzen, Erholung oder Trainingsbelastung lassen derzeit keine Steigerung zu.",
+  "No sessions changed: harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "Keine Einheiten geändert: Schmerzen, Erholung oder Trainingsbelastung lassen derzeit keine Steigerung zu.",
   "No sessions changed: the plan is already at its safe adjustment limits.": "Keine Einheiten geändert: Die sicheren Anpassungsgrenzen sind bereits erreicht.",
   "Future quality sessions adjusted. Some sessions stayed unchanged to preserve training limits. Weekly mileage is unchanged.": "Künftige Qualitätseinheiten angepasst. Einige bleiben zum Schutz der Trainingsgrenzen unverändert. Die Wochenkilometer bleiben gleich.",
   "Future quality sessions adjusted. Weekly mileage is unchanged.": "Künftige Qualitätseinheiten angepasst. Die Wochenkilometer bleiben gleich.",

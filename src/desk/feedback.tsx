@@ -67,8 +67,9 @@ export function EditPlan({ planId }: { planId: string }) {
   const [result, setResult] = useState("");
   const context = feedback.data;
   const adjust = (direction: "easier" | "harder") => command.run(async () => {
-    if (!context || context.planId !== planId) throw new Error(t("The plan changed. Refresh before trying again."));
-    const outcome = await tauri.adjustPlanDifficulty(planId, context.revision, direction);
+    const latest = await tauri.sessionFeedback();
+    if (!latest || latest.planId !== planId) throw new Error(t("The plan changed. Refresh before trying again."));
+    const outcome = await tauri.adjustPlanDifficulty(planId, latest.revision, direction);
     setResult(text(outcome.reason));
     if (outcome.changed > 0) notify(text(outcome.reason), { label: t("Undo"), run: () => tauri.undoPlanDifficulty(planId) });
   });

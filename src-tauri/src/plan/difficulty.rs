@@ -164,6 +164,49 @@ pub fn nudge(
             }
         }
     }
+    if best.is_none() && direction == Direction::Harder {
+        let current_minutes: f64 = current.steps[1..end]
+            .iter()
+            .filter(|step| !step.open_ended)
+            .map(|step| step.distance_m * step.repeats as f64 / 1000.0
+                * step.pace_hi_s_km.unwrap_or(0) as f64 / 60.0)
+            .sum();
+        for seconds in 1..=10 {
+            let mut candidate = current.clone();
+            let mut valid = true;
+            for step in &mut candidate.steps[1..end] {
+                if !step.open_ended {
+                    match (step.pace_lo_s_km, step.pace_hi_s_km) {
+                        (Some(low), Some(high)) if low - sign as i64 * seconds >= 120 => {
+                            step.pace_lo_s_km = Some(low - sign as i64 * seconds);
+                            step.pace_hi_s_km = Some(high - sign as i64 * seconds);
+                        }
+                        _ => valid = false,
+                    }
+                }
+            }
+            let load = work_load(&candidate, threshold);
+            let minutes: f64 = candidate.steps[1..end]
+                .iter()
+                .filter(|step| !step.open_ended)
+                .map(|step| step.distance_m * step.repeats as f64 / 1000.0
+                    * step.pace_hi_s_km.unwrap_or(0) as f64 / 60.0)
+                .sum();
+            if valid && current_minutes <= cap_minutes + 0.0001
+                && sign * (load - current_load) > 0.0001
+                && (load / current_load - 1.0).abs() <= 0.10001
+                && load >= base_load * 0.8 - 0.0001
+                && load <= base_load * 1.2 + 0.0001
+                && minutes <= cap_minutes + 0.0001
+            {
+                candidate.estimated_min = estimate_min(&candidate.steps, current.estimated_min);
+                let error = (load - target).abs();
+                if best.as_ref().is_none_or(|(previous, _)| error < *previous) {
+                    best = Some((error, candidate));
+                }
+            }
+        }
+    }
     best.map(|(_, details)| details)
 }
 
@@ -311,12 +354,12 @@ pub fn apply(
             || super::pacing::progression_allowed(store, thresholds)?;
         if !allowed {
             outcome.reason = if feedback.is_some() { "Feedback saved. Harder adjustments are unavailable with the current pain, recovery or training-load evidence." }
-                else { "No sessions changed: the plan is already at its safe adjustment limits." }.into();
+                else { "No sessions changed: harder adjustments are unavailable with the current pain, recovery or training-load evidence." }.into();
         } else {
             let today = Local::now().date_naive();
             let completions = store.calendar_completions()?;
             for workout in workouts.iter().filter(|workout| {
-                workout.date > today
+                workout.date >= today
                     && !workout.done
                     && workout.status == WorkoutStatus::Planned
                     && matches!(workout.kind, WorkoutKind::Tempo | WorkoutKind::Intervals)
@@ -497,6 +540,19 @@ mod tests {
         assert_eq!(current.distance_m(), baseline.distance_m());
     }
 
+    #[test]
+    fn minimum_warmup_can_be_made_repeatedly_harder_at_fixed_mileage() {
+        let mut baseline = example();
+        baseline.steps[0].distance_m = 1500.0;
+        let first = nudge(&baseline, &baseline, 300.0, 30.0, Direction::Harder).unwrap();
+        let second = nudge(&first, &baseline, 300.0, 30.0, Direction::Harder).unwrap();
+        assert_eq!(first.distance_m(), baseline.distance_m());
+        assert_eq!(second.distance_m(), baseline.distance_m());
+        assert!(work_load(&first, 300.0) > work_load(&baseline, 300.0));
+        assert!(work_load(&second, 300.0) > work_load(&first, 300.0));
+        assert!(work_load(&second, 300.0) <= work_load(&baseline, 300.0) * 1.2);
+    }
+
     fn seed() -> (Store, TrainingPlan, Vec<PlanWorkout>) {
         let store = Store::open(
             &std::env::temp_dir().join(format!("difficulty-{}.sqlite", uuid::Uuid::new_v4())),
@@ -526,6 +582,61 @@ mod tests {
         store.insert_plan(&plan).unwrap();
         store.insert_workouts(&workouts).unwrap();
         (store, plan, workouts)
+    }
+
+    #[test]
+    fn unfinished_quality_session_today_is_adjusted() {
+        let (store, plan, workouts) = seed();
+        let mut upcoming = workouts
+            .iter()
+            .find(|workout| !workout.done && workout.kind == WorkoutKind::Tempo)
+            .unwrap()
+            .clone();
+        upcoming.date = Local::now().date_naive();
+        store.update_workout(&upcoming).unwrap();
+        let revision = store.current_plan_rev().unwrap().unwrap();
+        apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Easier), None).unwrap();
+        let updated = store.plan_workouts(&plan.id).unwrap().into_iter().find(|workout| workout.id == upcoming.id).unwrap();
+        assert!(updated.customization.and_then(|value| value.prescription).is_some());
+    }
+
+    #[test]
+    fn repeated_harder_requests_persist_next_and_later_tempo_sessions() {
+        let (store, plan, workouts) = seed();
+        store.upsert_health(ProviderKind::Coros, &HealthDaily {
+            date: Utc::now().date_naive(), steps: Some(8000), avg_hr: None,
+            resting_hr: Some(50), stress_avg: Some(10), sleep_score: Some(100),
+            sleep_min: Some(510), deep_min: None, rem_min: None, hrv_avg: Some(70.0),
+        }).unwrap();
+        store.upsert_training_load(ProviderKind::Coros, &TrainingLoad {
+            date: Utc::now().date_naive(), short_term: Some(50.0), long_term: Some(50.0),
+            ratio: Some(1.0), comment: None,
+        }).unwrap();
+        let candidates: Vec<_> = workouts.iter().filter(|workout| {
+            !workout.done && workout.kind == WorkoutKind::Tempo && workout.date >= Local::now().date_naive()
+        }).collect();
+        let earliest = candidates.iter().map(|workout| workout.date).min().unwrap();
+        let revision = store.current_plan_rev().unwrap().unwrap();
+        let first = apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Harder), None).unwrap();
+        assert!(first.changed > 0, "{}", first.reason);
+        let after_first = store.plan_workouts(&plan.id).unwrap();
+        let revision = store.current_plan_rev().unwrap().unwrap();
+        let second = apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Harder), None).unwrap();
+        assert!(second.changed > 0, "{}", second.reason);
+        let after_second = store.plan_workouts(&plan.id).unwrap();
+        let mut increased = Vec::new();
+        for before in candidates {
+            let first = after_first.iter().find(|workout| workout.id == before.id).unwrap();
+            let second = after_second.iter().find(|workout| workout.id == before.id).unwrap();
+            let before_load = work_load(&super::super::session::details_for_plan(before, &plan), plan.threshold_sec_km);
+            let first_load = work_load(&super::super::session::details_for_plan(first, &plan), plan.threshold_sec_km);
+            let second_load = work_load(&super::super::session::details_for_plan(second, &plan), plan.threshold_sec_km);
+            if first_load > before_load && second_load > first_load {
+                increased.push(before.date);
+            }
+        }
+        assert!(increased.len() >= 2, "Expected repeated increases in upcoming and later tempo sessions: {increased:?}");
+        assert!(increased.contains(&earliest), "The next tempo must change after both requests: {increased:?}");
     }
 
     #[test]
@@ -792,6 +903,17 @@ mod tests {
         let (store, plan, workouts) = seed();
         let source = workouts.iter().find(|workout| workout.done).unwrap();
         let revision = store.current_plan_rev().unwrap().unwrap();
+        let direct = apply(
+            &store,
+            &Thresholds::default(),
+            &plan.id,
+            revision,
+            Some(Direction::Harder),
+            None,
+        ).unwrap();
+        assert_eq!(direct.changed, 0);
+        assert!(direct.reason.contains("pain, recovery or training-load evidence"));
+        assert_eq!(store.current_plan_rev().unwrap(), Some(revision));
         let outcome = apply(
             &store,
             &Thresholds::default(),

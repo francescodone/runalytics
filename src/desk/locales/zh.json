@@ -7,6 +7,7 @@
   "The plan changed. Refresh before trying again.": "计划已更改，请刷新后重试。",
   "Feedback saved.": "评价已保存。",
   "Feedback saved. Harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "评价已保存。根据当前疼痛、恢复或训练负荷状况，暂不能提高难度。",
+  "No sessions changed: harder adjustments are unavailable with the current pain, recovery or training-load evidence.": "未更改训练：根据当前疼痛、恢复或训练负荷状况，暂不能提高难度。",
   "No sessions changed: the plan is already at its safe adjustment limits.": "未更改训练：计划已达到安全调整范围的边界。",
   "Future quality sessions adjusted. Some sessions stayed unchanged to preserve training limits. Weekly mileage is unchanged.": "已调整未来的质量训练。为遵守训练限制，部分训练保持不变。每周跑量不变。",
   "Future quality sessions adjusted. Weekly mileage is unchanged.": "已调整未来的质量训练。每周跑量不变。",

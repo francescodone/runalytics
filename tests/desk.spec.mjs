@@ -46,6 +46,14 @@ test("optional session feedback dismisses without rating and manual controls pre
   const calls = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty"));
   expect(calls.map(call => call.args.direction)).toEqual(["easier", "harder"]);
   expect(calls[1].args.revision).toBeGreaterThan(calls[0].args.revision);
+  await page.evaluate(async ({ planId, revision }) => {
+    await window.__TAURI_INTERNALS__.invoke("adjust_plan_difficulty", { planId, revision: revision + 1, direction: "harder" });
+  }, calls[1].args);
+  await page.getByRole("button", { name: "Make plan slightly harder" }).click();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").length)).toBe(4);
+  await expect(page.locator(".edit-plan [role=alert]")).toHaveCount(0);
+  const latest = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").at(-1));
+  expect(latest.args.revision).toBe(calls[1].args.revision + 2);
 });
 
 for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`session feedback responsive ${theme} ${width}px`, async ({ page }, testInfo) => {
