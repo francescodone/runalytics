@@ -135,11 +135,14 @@ test("native chrome supersedes queued snapshots and copies mutable input", async
   const host = fixture();
   const first = host.bridge.update(input);
   const mutable = structuredClone(input);
+  mutable.colors = { surface: [1, 1, 1, 1], selected: [.2, .4, .6, 1], unselected: [.3, .3, .3, 1] };
   const second = host.bridge.update(mutable);
   mutable.tabs[0].title = "Changed later";
+  mutable.colors.selected[0] = 1;
   assert.equal(await first, false);
   assert.equal(await second, true);
   assert.equal(host.latest().tabs[0].title, "Training");
+  assert.deepEqual(host.latest().colors.selected, [.2, .4, .6, 1]);
   assert.equal(host.calls.filter(call => call === "attach").length, 1);
   await host.bridge.close();
 });

@@ -1,8 +1,14 @@
 export type NativeWorkspace = "training" | "journal" | "health";
+export type NativeChromeColors = {
+  surface: readonly [number, number, number, number];
+  selected: readonly [number, number, number, number];
+  unselected: readonly [number, number, number, number];
+};
 type ChromeInput = {
   tabs: readonly { id: NativeWorkspace; title: string }[];
   selected: NativeWorkspace | null;
   theme: "light" | "dark";
+  colors?: NativeChromeColors;
 };
 type Snapshot = ChromeInput & { protocolVersion: 1; session: string; revision: number };
 type ChromeState = { ready: boolean; bottomInset: number };
@@ -52,6 +58,7 @@ export function createNativeChromeBridge(transport: Transport, options: {
     const next: Snapshot | null = input ? {
       protocolVersion: 1, session, revision: version,
       tabs: input.tabs.map(tab => ({ ...tab })), selected: input.selected, theme: input.theme,
+      ...(input.colors ? { colors: { surface: [...input.colors.surface], selected: [...input.colors.selected], unselected: [...input.colors.unselected] } as NativeChromeColors } : {}),
     } : null;
     unavailable();
     const operation = queue.then(async () => {

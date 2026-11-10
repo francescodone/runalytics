@@ -1,8 +1,66 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { readFile } from "node:fs/promises";
 import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
+
+for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion preserves CSS time units with ${reducedMotion} motion`, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.route("**/assets/*", async route => {
+    const name = new URL(route.request().url()).pathname.split("/").pop();
+    const contentType = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "application/octet-stream";
+    await route.fulfill({ body: await readFile(new URL(`../dist/assets/${name}`, import.meta.url)), contentType });
+  });
+  await page.route("**/desk.html", async route => route.fulfill({ body: await readFile(new URL("../dist/desk.html", import.meta.url)), contentType: "text/html" }));
+  await page.addInitScript(() => {
+    window.__packagedAnimations = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      window.__packagedAnimations.push({ duration: options?.duration, keyframes });
+      return animate.call(this, keyframes, options);
+    };
+    window.__packagedCounts = [];
+    new MutationObserver(() => {
+      const counter = document.querySelector('.health-verdict .sr-only + [aria-hidden="true"]');
+      if (counter) window.__packagedCounts.push({ value: counter.textContent, time: performance.now() });
+    }).observe(document, { subtree: true, characterData: true, childList: true });
+  });
+  await page.goto("/desk.html#health");
+  const counter = page.locator('.health-verdict .sr-only + [aria-hidden="true"]').first();
+  await expect(counter).toBeVisible();
+  expect(errors).toEqual([]);
+  const final = counter.locator("..").locator(".sr-only");
+  await expect.poll(() => counter.textContent()).toBe(await final.textContent());
+  if (reducedMotion === "no-preference") {
+    expect(await page.evaluate(() => window.__packagedAnimations.map(animation => animation.duration))).toContain(560);
+    const counts = await page.evaluate(() => window.__packagedCounts);
+    expect(new Set(counts.map(sample => sample.value)).size).toBeGreaterThan(2);
+    expect(counts.at(-1).time - counts[0].time).toBeGreaterThan(200);
+    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    const frames = await page.getByRole("link", { name: "Activities", exact: true }).evaluate(async link => {
+      link.click();
+      const frames = [];
+      for (let index = 0; index < 12; index++) {
+        await new Promise(requestAnimationFrame);
+        const leaf = document.querySelector('[data-transition-state="exiting"] .health-verdict');
+        if (leaf) frames.push({ opacity: Number(getComputedStyle(leaf).opacity), y: new DOMMatrixReadOnly(getComputedStyle(leaf).transform).m42 });
+      }
+      return frames;
+    });
+    expect(frames.length).toBeGreaterThan(1);
+    expect(frames.some(frame => frame.opacity > 0 && frame.opacity < .95 && frame.y < -1)).toBe(true);
+    expect(await page.evaluate(() => window.__packagedAnimations.map(animation => animation.duration))).toContain(500);
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+  } else {
+    expect(new Set(await page.evaluate(() => window.__packagedCounts.map(sample => sample.value))).size).toBe(1);
+    expect(await page.locator(".health-verdict").evaluate(element => element.getAnimations().length)).toBe(0);
+  }
+  expect(errors).toEqual([]);
+});
 
 for (const reducedMotion of ["reduce", "no-preference"]) {
   test(`entry counters preserve final values with ${reducedMotion} motion`, async ({ page }) => {
@@ -89,6 +147,41 @@ for (const listenerStyle of ["camel", "snake"]) {
   });
 }
 
+for (const width of [390, 1440]) for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`counters wait for viewport entry ${width}px ${reducedMotion}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion });
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = ".health-verdict { margin-top: 1400px; }";
+        document.head.append(style);
+      });
+      window.__viewportCounts = [];
+      new MutationObserver(() => {
+        const counter = document.querySelector('.health-verdict .sr-only + [aria-hidden="true"]');
+        if (counter) window.__viewportCounts.push(counter.textContent);
+      }).observe(document, { subtree: true, characterData: true, childList: true });
+    });
+    await page.goto("/desk.html#health");
+    const counter = page.locator('.health-verdict .sr-only + [aria-hidden="true"]').first();
+    await expect(counter).toBeAttached();
+    const final = await counter.locator("..").locator(".sr-only").textContent();
+    await page.evaluate(async () => { for (let frame = 0; frame < 65; frame++) await new Promise(requestAnimationFrame); });
+    await expect(counter).toHaveText(reducedMotion === "reduce" ? final : "0");
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toBeInViewport();
+    await expect(counter).toHaveText(final);
+    const values = new Set(await page.evaluate(() => window.__viewportCounts));
+    expect(values.size).toBeGreaterThan(reducedMotion === "reduce" ? 0 : 2);
+    if (reducedMotion === "reduce") expect(values.size).toBe(1);
+    await page.evaluate(() => document.getElementById("workspace").scrollTo({ top: 0, behavior: "instant" }));
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveText(final);
+    await expect(counter.locator("..").locator(".sr-only")).toHaveText(final);
+  });
+}
+
 for (const startup of ["probe", "iphone"]) for (const attachment of ["ready", "unavailable"]) {
   test(`native chrome ${startup} startup keeps guarded UI ownership ${attachment}`, async ({ page }) => {
     await page.addInitScript(({ mode, startup }) => {
@@ -123,6 +216,22 @@ for (const startup of ["probe", "iphone"]) for (const attachment of ["ready", "u
       return;
     }
     await expect(page.locator(".desk-navigation")).toBeHidden();
+    for (const theme of ["dark", "light"]) for (const palette of ["sakura", "glacier"]) {
+      const expected = await page.evaluate(({ theme, palette }) => {
+        const root = document.documentElement;
+        root.dataset.deskTheme = theme;
+        root.dataset.deskPalette = palette;
+        const style = getComputedStyle(root);
+        const read = token => {
+          const hex = style.getPropertyValue(token).trim().slice(1);
+          const value = hex.length === 3 ? [...hex].map(character => character + character).join("") : hex;
+          return [0, 2, 4].map(offset => parseInt(value.slice(offset, offset + 2), 16) / 255).concat(1);
+        };
+        return { surface: read("--desk-surface"), selected: read("--desk-action"), unselected: read("--desk-muted") };
+      }, { theme, palette });
+      await expect.poll(() => page.evaluate(() => ({ theme: window.__nativeProbeSnapshot.theme, colors: window.__nativeProbeSnapshot.colors }))).toEqual({ theme, colors: expected });
+      await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
+    }
     const initial = await page.evaluate(() => window.__nativeProbeAttaches);
     const tap = workspace => page.evaluate(selected => {
       window.__nativeProbeHandler.onmessage({ ...window.__nativeProbeSnapshot, action: "navigate", workspace: selected, eventId: crypto.randomUUID() });

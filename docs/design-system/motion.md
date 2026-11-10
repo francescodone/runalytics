@@ -5,6 +5,8 @@
 `src/desk/motion.ts` is the shared reference for animation targets and timing.
 It reads the existing CSS tokens from `tokens.css`; exported times are seconds,
 except the notification and action-result hold times, which are milliseconds.
+The reader accepts both `ms` and `s`: production CSS minification can rewrite
+`560ms` as `.56s`, so parsing must preserve the unit rather than assume milliseconds.
 Do not add route-specific physics or duplicate these presets. Content, surfaces,
 selection travel and layout projection use `cubic-bezier(.22, 1, .36, 1)`.
 Press and direct-manipulation feedback remain immediate and interruptible.
@@ -74,8 +76,12 @@ collapse waits for the final child's fade. `SelectionGroup` scopes shared select
 without adding DOM wrappers or nested focus targets.
 
 `CountUp` uses the 650ms `--motion-count` duration and the shared
-`cubic-bezier(.22, 1, .36, 1)` curve. It restarts for a returned view,
-not ordinary data rerenders. Screen readers always receive the final value;
+`cubic-bezier(.22, 1, .36, 1)` curve. Playback waits until the counter enters
+the viewport, including inside owned scroll containers and opened disclosures.
+It runs once per view visit, not on ordinary data rerenders or scrolling away
+and back. Returning to a retained view rearms its counters for viewport entry.
+Observers and playback are disposed when hidden or unmounted.
+Screen readers always receive the final value;
 reduced motion displays it immediately. Press, hover and selection feedback
 retain their immediate interaction feedback; selection-marker travel uses the
 shared Bezier tween. Gesture tracking remains one-to-one with the pointer.
@@ -103,3 +109,8 @@ Existing Prism checks cover
 compact navigation latency, retained filters, full-size inspector landings, keyboard/touch
 input and width/theme geometry. Browser checks use synthetic IPC, not native
 provider integration. They do not establish physical-device 60 FPS performance.
+
+The packaged-motion regressions in `tests/desk.spec.mjs` serve the actual built
+HTML, JavaScript and CSS from `dist`; run `npm run build` before these checks.
+They verify 560ms entrances, 500ms departures, intermediate counter/exit frames
+and immediate reduced-motion values, catching production-only CSS time-unit changes.

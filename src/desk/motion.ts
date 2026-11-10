@@ -2,7 +2,10 @@ import type { Transition, Variants } from "motion/react";
 import "./tokens.css";
 
 const tokenStyle = getComputedStyle(document.documentElement);
-const seconds = (name: string) => parseFloat(tokenStyle.getPropertyValue(name)) / 1000;
+const seconds = (name: string) => {
+  const value = tokenStyle.getPropertyValue(name).trim();
+  return parseFloat(value) / (value.endsWith("ms") ? 1000 : 1);
+};
 const curve = (name: string) => tokenStyle.getPropertyValue(name).trim().slice(13, -1).split(",").map(Number) as [number, number, number, number];
 
 export const springTransition = { type: "tween", duration: seconds("--motion-surface"), ease: curve("--motion-soft") } as const satisfies Transition;

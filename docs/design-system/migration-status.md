@@ -1,3 +1,50 @@
+## Viewport Counters And Native Island Colors, 2026-11-10
+
+Shared counters now wait for viewport entry instead of counting while offscreen.
+They play once per view visit, rearm on retained-view arrivals and retain
+immediate final values for screen readers and reduced motion. The native island
+now receives resolved surface, accent and muted-text RGBA tokens, including live
+light/dark and palette changes. UIKit applies them to the island background and
+normal/selected icons and labels in all three tab layouts, rather than relying
+on system tint defaults. Existing attachment guards and web fallback are retained.
+
+Verification: 12 bridge unit checks, TypeScript, 12 focused Chromium checks and
+17 focused WebKit checks passed. Browser checks cover counter entry at
+390/1440px, reduced motion, retained-view replay, packaged production assets and
+light/dark sakura/glacier native color snapshots. The signed iOS package built
+successfully, passed signature verification and was installed and launched on
+the connected physical iPhone without an uninstall or data-clear operation.
+Physical visual acceptance remains unverified because the interaction tools
+cannot capture this phone; browser results are synthetic IPC, not native UI proof.
+
+## Packaged Motion Time Units, 2026-11-10
+
+Production CSS minification rewrites `560ms`, `500ms` and `650ms` tokens as
+`.56s`, `.5s` and `.65s`. The shared reader previously divided every numeric
+value by 1,000, making native packaged entrances, transitions and counters run
+1,000 times too fast. It now honors the token's `ms` or `s` suffix. Motion
+preferences, choreography and design tokens are unchanged.
+
+The production-asset regression reproduced a 0.56ms entrance and a counter with
+no visible progression before the fix. Production build, editor diagnostics,
+five focused Chromium checks and the same five WebKit checks now pass at
+1440x900 for packaged behavior, with existing 390x844 counter controls and
+reduced-motion coverage. Checks observe real 560ms entrance and 500ms exit
+durations, intermediate counter/exit frames and clean page-error collection.
+The wider motion acceptance task passed 112 of 113 checks; its desktop-exit
+frame sampler was interrupted by a page reload. That exact test and both
+packaged regressions passed on a sequential rerun (3/3).
+These checks use synthetic IPC and do not verify the installed macOS binary.
+The installed app must be rebuilt or updated to include this frontend fix.
+
+Physical-device follow-up: a packaged frontend build and development-signed
+iOS build succeeded for the connected iPhone 16 on iOS 27.2. Signature
+verification passed, and `devicectl` installed and launched
+`com.fradone.runalytics` without an uninstall or data-clear operation. The
+device-interaction tools rejected the physical phone and exposed only
+simulators; on-phone entrance, counter and transition visibility therefore
+remain unverified. No simulator result is substituted for that missing check.
+
 ## DOM-Ordered Bezier Choreography, 2026-11-10
 
 This refinement supersedes the timing and morph behavior in the earlier motion

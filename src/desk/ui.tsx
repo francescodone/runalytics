@@ -137,16 +137,30 @@ export function CountUp({ format }: { format: (progress: number) => string }) {
   const [progress, setProgress] = useState(0);
   useLayoutEffect(() => {
     if (reduced) { setProgress(1); return; }
+    const element = host.current;
+    if (!element) return;
     let animation: ReturnType<typeof animate> | undefined;
+    let started = false;
     const start = () => {
-      animation?.stop();
-      setProgress(0);
+      if (started) return;
+      started = true;
+      observer.unobserve(element);
       animation = animate(0, 1, { duration: tempo.count, ease: tempo.countEase, onUpdate: setProgress });
     };
-    const arrive = (event: Event) => { if (event.target instanceof HTMLElement && host.current && event.target.contains(host.current)) start(); };
-    start();
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting && entry.intersectionRatio >= .08) && !element.closest("[inert]")) start();
+    }, { threshold: .08 });
+    const watch = () => {
+      animation?.stop();
+      started = false;
+      setProgress(0);
+      observer.unobserve(element);
+      observer.observe(element);
+    };
+    const arrive = (event: Event) => { if (event.target instanceof HTMLElement && event.target.contains(element)) watch(); };
+    watch();
     document.addEventListener("desk:view-arrive", arrive);
-    return () => { animation?.stop(); document.removeEventListener("desk:view-arrive", arrive); };
+    return () => { observer.disconnect(); animation?.stop(); document.removeEventListener("desk:view-arrive", arrive); };
   }, [reduced]);
   return <span ref={host} style={{ fontVariantNumeric: "tabular-nums" }}><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(reduced ? 1 : progress)}</span></span>;
 }

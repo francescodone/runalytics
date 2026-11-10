@@ -7,6 +7,22 @@ private struct Tab: Decodable {
     let title: String
 }
 
+private struct ChromeColors: Decodable {
+    let surface: [Double]
+    let selected: [Double]
+    let unselected: [Double]
+
+    var isValid: Bool {
+        [surface, selected, unselected].allSatisfy { components in
+            components.count == 4 && components.allSatisfy { $0.isFinite && (0...1).contains($0) }
+        }
+    }
+
+    func color(_ components: [Double]) -> UIColor {
+        UIColor(red: CGFloat(components[0]), green: CGFloat(components[1]), blue: CGFloat(components[2]), alpha: CGFloat(components[3]))
+    }
+}
+
 private struct Snapshot: Decodable {
     let protocolVersion: Int
     let session: String
@@ -14,6 +30,7 @@ private struct Snapshot: Decodable {
     let tabs: [Tab]
     let selected: String?
     let theme: String
+    let colors: ChromeColors?
 }
 
 private final class ChromeView: UIView {
@@ -61,7 +78,7 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
         guard next.protocolVersion == 1, !next.session.isEmpty, next.revision >= 0,
               next.tabs.map(\.id) == ids, next.tabs.allSatisfy({ !$0.title.isEmpty }),
               next.selected == nil || ids.contains(next.selected!),
-              ["light", "dark"].contains(next.theme) else {
+              ["light", "dark"].contains(next.theme), next.colors?.isValid != false else {
             invoke.reject("Invalid native chrome snapshot")
             return
         }
@@ -82,6 +99,25 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
             view.frame = host.bounds
             view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             view.overrideUserInterfaceStyle = next.theme == "dark" ? .dark : .light
+            view.tabBar.overrideUserInterfaceStyle = view.overrideUserInterfaceStyle
+            if let colors = next.colors {
+                let selected = colors.color(colors.selected)
+                let unselected = colors.color(colors.unselected)
+                let appearance = UITabBarAppearance()
+                appearance.configureWithDefaultBackground()
+                appearance.backgroundColor = colors.color(colors.surface)
+                for item in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+                    item.normal.iconColor = unselected
+                    item.normal.titleTextAttributes = [.foregroundColor: unselected]
+                    item.selected.iconColor = selected
+                    item.selected.titleTextAttributes = [.foregroundColor: selected]
+                }
+                view.tintColor = selected
+                view.tabBar.tintColor = selected
+                view.tabBar.unselectedItemTintColor = unselected
+                view.tabBar.standardAppearance = appearance
+                view.tabBar.scrollEdgeAppearance = appearance
+            }
             view.tabBar.delegate = self
             let symbols = ["calendar", "figure.run", "heart"]
             view.tabBar.items = next.tabs.enumerated().map { index, tab in

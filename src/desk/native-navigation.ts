@@ -1,4 +1,5 @@
 import { createNativeChromeBridge, createTauriChromeTransport } from "./native-chrome";
+import type { NativeChromeColors } from "./native-chrome";
 import { navigate, readRoute } from "./data";
 import { t } from "./i18n";
 
@@ -13,6 +14,21 @@ export function startNativeNavigation() {
   let stopped = false;
   let frame = 0;
   let previous = "";
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const colors = (): NativeChromeColors | undefined => {
+    if (!context) return;
+    const style = getComputedStyle(root);
+    const read = (token: string): [number, number, number, number] => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = style.getPropertyValue(token).trim();
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      return [red / 255, green / 255, blue / 255, alpha / 255];
+    };
+    return { surface: read("--desk-surface"), selected: read("--desk-action"), unselected: read("--desk-muted") };
+  };
   const blocked = () => document.visibilityState === "hidden" || !matchMedia("(max-width: 800px)").matches ||
     document.activeElement?.matches('input:not([type="button"]):not([type="submit"]), textarea, select, [contenteditable="true"]') ||
     [...document.querySelectorAll<HTMLElement>("dialog[open], .desk-inspector")].some(element => element.getClientRects().length > 0);
@@ -41,12 +57,13 @@ export function startNativeNavigation() {
     const route = readRoute();
     const selected = route.workspace === "training" || route.workspace === "journal" || route.workspace === "health" ? route.workspace : null;
     const theme = root.dataset.deskTheme === "dark" ? "dark" : "light";
-    const identity = JSON.stringify({ suspended, selected, theme, width: innerWidth, height: innerHeight });
+    const appearance = colors();
+    const identity = JSON.stringify({ suspended, selected, theme, colors: appearance, width: innerWidth, height: innerHeight });
     if (identity === previous) return;
     previous = identity;
     void bridge.update(suspended ? null : {
       tabs: [{ id: "training", title: t("training") }, { id: "journal", title: t("journal") }, { id: "health", title: t("health") }],
-      selected, theme,
+      selected, theme, colors: appearance,
     });
   };
   function schedule() {
@@ -54,7 +71,7 @@ export function startNativeNavigation() {
   }
   const observer = new MutationObserver(schedule);
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "data-state", "inert"] });
-  observer.observe(root, { attributes: true, attributeFilter: ["data-desk-theme"] });
+  observer.observe(root, { attributes: true, attributeFilter: ["data-desk-theme", "data-desk-palette"] });
   const resume = () => { previous = ""; schedule(); };
   const suspend = () => {
     previous = "";
