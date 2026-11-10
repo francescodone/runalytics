@@ -1,6 +1,7 @@
 import { Activity, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@tauri-apps/api/core";
 import { IconCalendarWeek, IconRun, IconHeart, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
@@ -36,6 +37,16 @@ function App() {
   const providers = useRemote(tauri.providerStatus);
   const command = useCommand();
   const { syncing, notify } = useWorkspace();
+  useEffect(() => {
+    const probe = import.meta.env.DEV && new URLSearchParams(location.search).has("nativeChromeProbe");
+    if (!probe && !(isTauri() && /iPhone|iPod/.test(navigator.userAgent))) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void import("./native-navigation").then(module => {
+      if (!disposed) stop = module.startNativeNavigation();
+    }).catch(() => {});
+    return () => { disposed = true; stop?.(); };
+  }, []);
   useEffect(() => {
     const dragBackground = (event: MouseEvent) => {
       if (document.documentElement.dataset.nativeWindow !== "macos" || event.button !== 0 || event.defaultPrevented) return;
@@ -125,9 +136,3 @@ function App() {
 }
 
 createRoot(document.getElementById("desk-root")!).render(<MotionSystem><WorkspaceProvider><App /></WorkspaceProvider></MotionSystem>);
-
-if (import.meta.env.DEV && new URLSearchParams(location.search).has("nativeChromeProbe")) {
-  requestAnimationFrame(() => {
-    void import("./native-chrome-probe").then(module => module.startNativeChromeProbe());
-  });
-}

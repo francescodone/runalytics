@@ -336,6 +336,14 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify native release activation",
+			"type": "shell",
+			"command": "npm run test:native-chrome > /tmp/runalytics-native-release-activation.log 2>&1 && npx tsc --noEmit >> /tmp/runalytics-native-release-activation.log 2>&1 && npm run test:ui -- tests/desk.spec.mjs --grep 'native chrome' --workers=1 --reporter=line --output=/tmp/runalytics-native-release-activation >> /tmp/runalytics-native-release-activation.log 2>&1 && printf '\\nACTIVATION_CHECK_PASSED\\n' >> /tmp/runalytics-native-release-activation.log",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

@@ -61,9 +61,13 @@ for (const listenerStyle of ["camel", "snake"]) {
   });
 }
 
-for (const attachment of ["ready", "unavailable"]) {
-  test(`native chrome development probe keeps guarded UI ownership ${attachment}`, async ({ page }) => {
-    await page.addInitScript(mode => {
+for (const startup of ["probe", "iphone"]) for (const attachment of ["ready", "unavailable"]) {
+  test(`native chrome ${startup} startup keeps guarded UI ownership ${attachment}`, async ({ page }) => {
+    await page.addInitScript(({ mode, startup }) => {
+      if (startup === "iphone") {
+        Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148" });
+        window.isTauri = true;
+      }
       document.addEventListener("DOMContentLoaded", () => {
         const original = window.__TAURI_INTERNALS__.invoke;
         window.__nativeProbeAttaches = 0;
@@ -82,9 +86,9 @@ for (const attachment of ["ready", "unavailable"]) {
           return original(command, args);
         };
       });
-    }, attachment);
-    await page.goto("/desk.html?nativeChromeProbe=1#training");
-    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", attachment === "ready" ? "ready" : "fallback");
+    }, { mode: attachment, startup });
+    await page.goto(startup === "probe" ? "/desk.html?nativeChromeProbe=1#training" : "/desk.html#training");
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", attachment === "ready" ? "ready" : "fallback");
     if (attachment === "unavailable") {
       await expect(page.locator(".desk-navigation")).toBeVisible();
       await expect.poll(() => page.evaluate(() => window.__nativeProbeDetaches)).toBeGreaterThan(0);
@@ -97,23 +101,46 @@ for (const attachment of ["ready", "unavailable"]) {
     }, workspace);
     await tap("training");
     await expect.poll(() => page.evaluate(() => window.__nativeProbeAttaches)).toBeGreaterThan(initial);
-    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
     await expect(page.locator(".desk-navigation")).toBeHidden();
     await tap("journal");
     await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
-    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
     await page.getByRole("button", { name: "Help", exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.__nativeProbeSnapshot.selected)).toBeNull();
     await page.getByRole("button", { name: "Understand recovery and risk", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "fallback");
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "fallback");
     await expect.poll(() => page.evaluate(() => window.__nativeProbeDetaches)).toBeGreaterThan(0);
     await page.getByRole("dialog").getByRole("button", { name: /^Close / }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.locator("html")).toHaveAttribute("data-native-chrome-probe", "ready");
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
     await expect(page.locator(".desk-navigation")).toBeHidden();
+    await page.setViewportSize({ width: 900, height: 402 });
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "fallback");
+    await expect(page.locator(".desk-navigation")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
+    await page.evaluate(() => {
+      const input = document.createElement("input");
+      input.id = "native-navigation-input";
+      document.body.append(input);
+      input.focus();
+    });
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "fallback");
+    await tap("health");
+    await expect(page.locator(".workspace-heading h1")).toHaveText("Help");
+    await page.locator("#native-navigation-input").evaluate(input => input.remove());
+    await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
   });
 }
+
+test("native chrome stays inactive in ordinary browsers and desktop Tauri", async ({ page }) => {
+  await page.goto("/desk.html#training");
+  await expect(page.locator(".desk-navigation")).toBeVisible();
+  await expect(page.locator("html")).not.toHaveAttribute("data-native-navigation");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command.startsWith("plugin:native-chrome|")))).toBe(false);
+});
 
 test("macOS window dragging is limited to empty outer-shell background", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
