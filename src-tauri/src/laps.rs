@@ -465,7 +465,7 @@ fn elevation_gain(points: &[TrackPoint], cum: &[f64], from: f64, to: f64) -> Opt
                 if distance > start {
                     let inside = (to.min(distance) - from.max(start)).max(0.0);
                     if inside > 0.0 {
-                        change = Some(change.unwrap_or(0.0) + (altitude - start_altitude) * inside / (distance - start));
+                        change = Some(change.unwrap_or(0.0) + (altitude - start_altitude).max(0.0) * inside / (distance - start));
                     }
                 }
             }
@@ -481,16 +481,16 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn split_elevation_is_signed_and_clipped_at_boundaries() {
+    fn split_elevation_counts_climbs_and_clips_at_boundaries() {
         let mut points = track(&[(100.0, 300.0)]);
         points.truncate(3);
         points[0].alt = Some(100.0);
         points[1].alt = Some(120.0);
         points[2].alt = Some(90.0);
         let distances = [0.0, 100.0, 200.0];
-        assert_eq!(elevation_gain(&points, &distances, 0.0, 150.0), Some(5.0));
-        assert_eq!(elevation_gain(&points, &distances, 150.0, 200.0), Some(-15.0));
-        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), Some(-10.0));
+        assert_eq!(elevation_gain(&points, &distances, 0.0, 150.0), Some(20.0));
+        assert_eq!(elevation_gain(&points, &distances, 150.0, 200.0), Some(0.0));
+        assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), Some(20.0));
         points[1].alt = None;
         points[2].alt = None;
         assert_eq!(elevation_gain(&points, &distances, 0.0, 200.0), None);

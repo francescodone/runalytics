@@ -1,12 +1,14 @@
 import { t, text, number, dateTime as fmtDateTime, duration as fmtDuration, distance as fmtKm } from "./i18n";
 import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { IconArrowUpRight, IconBarbell, IconBike, IconChevronDown, IconFilter, IconRun, IconSearch } from "@tabler/icons-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { tauri, fmtPace, ymdLocal } from "../lib/ipc";
 import type { Activity, LapSlice, MatchedSession, RunScore, TimeRange } from "../lib/types";
 import { isBikeSport, isReadableSport, isStrengthSport } from "../lib/sport";
 import { capitalizeFirst, cleanTitle, navigate, useRemote, useRoute } from "./data";
 import { Button, Empty, ErrorNotice, Inspector, Loading, Metric } from "./ui";
 import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker } from "./interaction";
+import { fadeOut, springTransition, tempo } from "./motion";
 
 const RouteMap = lazy(() => import("./map"));
 
@@ -45,6 +47,7 @@ function ReviewPanel({ activityId, tab, children }: { activityId: number; tab: R
 
 export function Journal() {
   const route = useRoute();
+  const reduced = useReducedMotion();
   const activities = useRemote(tauri.allActivities);
   const scores = useRemote(tauri.runScores);
   const matches = useRemote(tauri.matchedSessions);
@@ -86,7 +89,7 @@ export function Journal() {
       <section className="activity-library" tabIndex={0} aria-label={t("Activity history")} aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>{t("Most recent first")}</span></div>
         <Change identity={`${search}:${sport}:${provider}:${from}:${until}`}>
         {!filtered.length && <Empty title={activities.data?.length ? t("No matching activities") : t("Your training story starts here")}>{activities.data?.length ? t("Try another date or clear the filters.") : t("Sync your watch to bring your completed activities here.")}</Empty>}
-        {filtered.map(activity => <button key={activity.id} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={event => { setReviewOrigin(event.currentTarget); navigate("journal", String(activity.id)); }}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></button>)}
+        <AnimatePresence mode="popLayout" propagate>{filtered.map((activity, index) => <motion.button key={activity.id} layout={reduced ? false : "position"} data-motion-layout initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1, transition: { duration: reduced ? 0 : tempo.landing, delay: reduced ? 0 : index * tempo.landingStagger, ease: tempo.soft } }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { ...fadeOut, transition: { ...fadeOut.transition, delay: index * tempo.stagger } }} transition={{ ...springTransition, layout: { ...springTransition, delay: reduced ? 0 : index * tempo.stagger } }} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={event => { setReviewOrigin(event.currentTarget); navigate("journal", String(activity.id)); }}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></motion.button>)}</AnimatePresence>
         </Change>
       </section>}
     </div>
@@ -192,7 +195,7 @@ function ActivityReview({ activity, score, match, tab, onTab }: { activity: Acti
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label={t("Loading recorded route and splits")} /> : review.data && <Change identity={tab}>
       {tab === "overview" && <ReviewPanel activityId={activity.id} tab="overview">
-        <dl className="metrics-line"><Metric label={t("Distance")} value={number((activity.distanceM / 1000), 2)} unit="km" /><Metric label={t("Moving time")} value={fmtDuration(activity.durationS)} /><Metric label={t("Average pace")} value={fmtPace(activity.avgPaceSKm)} unit="/km" /><Metric label={t("Heart rate")} value={activity.avgHr ?? "Not recorded"} unit={activity.avgHr ? "bpm" : undefined} /><Metric label={t("Elevation gain")} value={activity.elevationGainM ?? "Not recorded"} unit={activity.elevationGainM != null ? "m" : undefined} /></dl>
+        <dl className="metrics-line"><Metric label={t("Distance")} value={number((activity.distanceM / 1000), 2)} count={{ value: activity.distanceM / 1000, format: value => number(value, 2) }} unit="km" /><Metric label={t("Moving time")} value={fmtDuration(activity.durationS)} count={{ value: activity.durationS, format: fmtDuration }} /><Metric label={t("Average pace")} value={fmtPace(activity.avgPaceSKm)} unit="/km" /><Metric label={t("Heart rate")} value={activity.avgHr ?? "Not recorded"} count={activity.avgHr != null ? { value: activity.avgHr } : undefined} unit={activity.avgHr ? "bpm" : undefined} /><Metric label={t("Elevation gain")} value={activity.elevationGainM ?? "Not recorded"} count={activity.elevationGainM != null ? { value: activity.elevationGainM } : undefined} unit={activity.elevationGainM != null ? "m" : undefined} /></dl>
         {review.data.track.length > 1 && settings.data ? <Suspense fallback={<Loading label={t("Loading map")} />}><RouteMap track={review.data.track} settings={settings.data} /></Suspense> : <p className="context-note">{t("No GPS track was recorded for this activity.")}</p>}
         {score && <section className="review-section"><h3>{t("Recorded session impact")}</h3><dl className="metrics-line"><Metric label={t("Training load")} value={score.load ?? "Not recorded"} /><Metric label={t("Risk at completion")} value={score.risk} unit="/100" /><Metric label={t("Risk change")} value={`${score.riskDelta > 0 ? "+" : ""}${number(score.riskDelta, 1)}`} unit="points" /></dl></section>}
       </ReviewPanel>}

@@ -41,17 +41,44 @@ export function useRoute() {
 }
 
 type Notice = { text: string; action?: { label: string; run: () => Promise<unknown> } } | null;
-/// How long a notice stays up on its own, matching the classic page's toast.
-/// Hover or focus holds it open: a notice with an Undo button must not vanish
-/// while the runner is reaching for it. The hold is read from the live element
-/// when the timer fires rather than tracked in state, because a notice removed
-/// under a resting pointer never gets the leave event that would clear a flag.
 const noticeDuration = () => {
   const duration = getComputedStyle(document.documentElement).getPropertyValue("--notice-duration").trim();
   const value = parseFloat(duration);
   return Number.isFinite(value) ? value * (duration.endsWith("ms") ? 1 : 1000) : 6000;
 };
-const NOTICE_HOLD_POLL_MS = 500;
+function scheduleNoticeDismissal(node: HTMLElement | null, dismiss: () => void) {
+  if (!node) return () => {};
+  let remaining = noticeDuration();
+  let started = 0;
+  let timer = 0;
+  let disposed = false;
+  const update = () => {
+    if (disposed) return;
+    const held = node.matches(":hover") || node.contains(document.activeElement);
+    if (held && timer) {
+      window.clearTimeout(timer);
+      timer = 0;
+      remaining = Math.max(0, remaining - (performance.now() - started));
+    } else if (!held && !timer) {
+      started = performance.now();
+      timer = window.setTimeout(dismiss, remaining);
+    }
+  };
+  const focusOut = () => queueMicrotask(update);
+  node.addEventListener("pointerenter", update);
+  node.addEventListener("pointerleave", update);
+  node.addEventListener("focusin", update);
+  node.addEventListener("focusout", focusOut);
+  update();
+  return () => {
+    disposed = true;
+    window.clearTimeout(timer);
+    node.removeEventListener("pointerenter", update);
+    node.removeEventListener("pointerleave", update);
+    node.removeEventListener("focusin", update);
+    node.removeEventListener("focusout", focusOut);
+  };
+}
 
 /// One mirror report from the backend's `plan://stage` channel. `target`
 /// "op" is the operation itself: its settle means no new line can arrive.
@@ -190,17 +217,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     if (!notice || acting) return;
-    let timer = 0;
-    const expire = () => {
-      const node = noticeRef.current;
-      if (node && (node.matches(":hover") || node.contains(document.activeElement))) {
-        timer = window.setTimeout(expire, NOTICE_HOLD_POLL_MS);
-        return;
-      }
-      setNotice(null);
-    };
-    timer = window.setTimeout(expire, noticeDuration());
-    return () => window.clearTimeout(timer);
+    return scheduleNoticeDismissal(noticeRef.current, () => setNotice(null));
   }, [notice, acting]);
   // The stage toast keeps itself open while any line is still working, and
   // while the operation itself has not returned (a mirror that was never
@@ -211,17 +228,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const stagesQuiet = stageEntries.length > 0 && stageEntries.every(([, op]) => op.settled && op.lines.every(line => line.state !== "working"));
   useEffect(() => {
     if (!stagesQuiet) return;
-    let timer = 0;
-    const expire = () => {
-      const node = stagesRef.current;
-      if (node && (node.matches(":hover") || node.contains(document.activeElement))) {
-        timer = window.setTimeout(expire, NOTICE_HOLD_POLL_MS);
-        return;
-      }
-      setStageOps({});
-    };
-    timer = window.setTimeout(expire, noticeDuration());
-    return () => window.clearTimeout(timer);
+    return scheduleNoticeDismissal(stagesRef.current, () => setStageOps({}));
   }, [stagesQuiet, stageOps]);
   return <Context.Provider value={{ revision, planCheck, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
     {children}

@@ -344,6 +344,14 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify iOS-inspired motion",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-motion-build.log 2>&1 && npm run test:ui -- tests/desk.spec.mjs tests/prism.spec.mjs --grep 'entry counters preserve final|soft view landings replay|Motion Bezier|Motion unlock|Motion desktop exits|Motion preference changes|Motion activity removals|semantic reveals|viewport reveals|scatter exits|complete motion-enabled|selection continuity|buttons preserve geometry|view changes reveal filtered|compact navigation latency|Prism route matrix|Prism intermediate|Prism detail views|Prism settled rendering|Prism compact navigation island|mobile touch clicks|mobile browser haptics|activity review lands softly|activity review respects reduced|calendar panel|notifications remain|nested information dialogs retain|plan creation|benchmark scheduling|schedule mutations' --workers=2 --reporter=dot --output=/tmp/runalytics-motion-acceptance > /tmp/runalytics-motion-acceptance.log 2>&1 && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

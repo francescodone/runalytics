@@ -110,9 +110,31 @@ for (const theme of ["light", "dark"]) for (const width of [320, 390, 1440]) {
   });
 }
 
+test("training toolbar tooltips escape clipping on hover and keyboard focus", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/desk.html#training/week");
+  const button = page.getByRole("button", { name: "Previous week" });
+  const tooltip = button.locator(".control-tooltip");
+  const toolbar = page.locator(".training-toolbar");
+  await button.hover();
+  await expect(tooltip).toBeVisible();
+  await expect(toolbar).toHaveCSS("overflow", "visible");
+  await expect(toolbar).toHaveCSS("z-index", "30");
+  const geometry = await tooltip.evaluate(element => ({ tooltip: element.getBoundingClientRect().bottom, toolbar: element.closest(".desk-toolbar").getBoundingClientRect().bottom }));
+  expect(geometry.tooltip).toBeGreaterThan(geometry.toolbar);
+  await page.mouse.move(0, 0);
+  await page.keyboard.press("Tab");
+  await button.focus();
+  await expect(tooltip).toBeVisible();
+  await expect(toolbar).toHaveCSS("z-index", "30");
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toBeHidden();
+});
+
 for (const theme of ["light", "dark"]) {
   for (const width of [820, 1440]) {
-    test(`desktop activity morph expands right and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
+    test(`desktop activity review lands softly without stretching ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await page.goto(`/desk.html?theme=${theme}#journal`);
@@ -132,10 +154,11 @@ for (const theme of ["light", "dark"]) {
       const inspector = page.locator('.desk-inspector[aria-label="Activity review"]');
       await expect.poll(() => page.evaluate(() => window.__activityMorph.frames.length)).toBe(40);
       const { source, frames } = await page.evaluate(() => window.__activityMorph);
-      expect(Math.abs(frames[0].x - source.x)).toBeLessThan((frames.at(-1).x - source.x) * .15);
-      expect(Math.abs(frames[0].y - source.y)).toBeLessThan(12);
       expect(frames.at(-1).x).toBeGreaterThan(source.x + source.width);
-      expect(frames[0].height).toBeLessThan(frames.at(-1).height * .5);
+      expect(frames.every(frame => frame.height > frames.at(-1).height * .97 && frame.width > frames.at(-1).width * .97)).toBe(true);
+      expect(frames.every(frame => Math.abs(frame.height - frames.at(-1).height) < 1)).toBe(true);
+      expect(frames.some(frame => frame.y > frames.at(-1).y + .2)).toBe(true);
+      expect(Math.abs(frames[0].y - frames.at(-1).y)).toBeLessThan(24);
       await expect(row).toBeVisible();
       await expect(inspector).toBeFocused();
       await page.screenshot({ path: testInfo.outputPath("activity-morph-open.png") });
@@ -144,11 +167,12 @@ for (const theme of ["light", "dark"]) {
         const frames = [];
         for (let index = 0; index < 24; index++) {
           await new Promise(requestAnimationFrame);
-          if (element.isConnected) frames.push(element.getBoundingClientRect().toJSON());
+          if (element.isConnected) frames.push({ ...element.getBoundingClientRect().toJSON(), opacity: Number(getComputedStyle(element).opacity) });
         }
         return frames;
       });
-      expect(closing.some(frame => frame.x < frames.at(-1).x - 30 && frame.height < frames.at(-1).height * .8)).toBe(true);
+      expect(closing.some(frame => frame.opacity > 0 && frame.opacity < .9)).toBe(true);
+      expect(closing.every(frame => frame.height > frames.at(-1).height * .97)).toBe(true);
       await expect(inspector).toHaveCount(0);
       await expect(row).toBeFocused();
       await page.keyboard.press("Enter");
@@ -160,7 +184,48 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
-test("desktop activity morph respects reduced motion", async ({ page }) => {
+test("compact activity review lands softly without stretching", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#journal");
+  const row = page.locator(".activity-row").first();
+  await row.evaluate(element => {
+    element.addEventListener("click", () => {
+      window.__activityMorph = { source: element.getBoundingClientRect().toJSON(), frames: [] };
+      const capture = () => {
+        const inspector = document.querySelector('.desk-inspector[aria-label="Activity review"]');
+        if (inspector) window.__activityMorph.frames.push(inspector.getBoundingClientRect().toJSON());
+        if (window.__activityMorph.frames.length < 32) requestAnimationFrame(capture);
+      };
+      requestAnimationFrame(capture);
+    }, { once: true });
+  });
+  await row.click();
+  const inspector = page.locator('.desk-inspector[aria-label="Activity review"]');
+  await expect.poll(() => page.evaluate(() => window.__activityMorph.frames.length)).toBe(32);
+  const { frames } = await page.evaluate(() => window.__activityMorph);
+  expect(frames.every(frame => frame.height > frames.at(-1).height * .97 && frame.width > frames.at(-1).width * .97)).toBe(true);
+  expect(frames.every(frame => Math.abs(frame.height - frames.at(-1).height) < 1)).toBe(true);
+  expect(frames.some(frame => frame.y > frames.at(-1).y + .2)).toBe(true);
+  expect(Math.abs(frames[0].x - frames.at(-1).x)).toBeLessThan(32);
+  expect(Math.abs(frames[0].y - frames.at(-1).y)).toBeLessThan(24);
+  await expect(inspector).toBeFocused();
+  const closing = await inspector.evaluate(async element => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const frames = [];
+    for (let index = 0; index < 24; index++) {
+      await new Promise(requestAnimationFrame);
+      if (element.isConnected) frames.push({ ...element.getBoundingClientRect().toJSON(), opacity: Number(getComputedStyle(element).opacity) });
+    }
+    return frames;
+  });
+  expect(closing.some(frame => frame.opacity > 0 && frame.opacity < .9)).toBe(true);
+  expect(closing.every(frame => frame.height > frames.at(-1).height * .97)).toBe(true);
+  await expect(inspector).toHaveCount(0);
+  await expect(row).toBeFocused();
+});
+
+test("desktop activity review respects reduced motion", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/desk.html#journal");
   const row = page.locator(".activity-row").first();
@@ -227,6 +292,11 @@ test.describe("compact navigation latency", () => {
     await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
     await expect(link).not.toHaveAttribute("data-aura-pressed", "true");
     await expect(page).toHaveURL(/#training\/week$/);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }] });
+    await expect(link).toHaveAttribute("data-aura-pressed", "true");
+    await expect(link).toHaveCSS("scale", "1");
+    await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
     await session.detach();
     await link.tap();
     await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
@@ -329,7 +399,7 @@ for (const reducedMotion of ["no-preference", "reduce"]) {
 
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 820, 1440]) {
-    test(`calendar tile morph expands and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
+    test(`calendar panel lands without stretching and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await page.goto(`/desk.html?theme=${theme}#training`);
@@ -337,6 +407,7 @@ for (const theme of ["light", "dark"]) {
       await page.locator(".session-tile:visible").first().evaluate(element => element.setAttribute("data-morph-source", ""));
       const tile = page.locator("[data-morph-source]");
       await expect(tile).toBeVisible();
+      await expect(tile).toHaveAttribute("data-reveal", "settled");
       await tile.scrollIntoViewIfNeeded();
       await tile.evaluate(element => {
         const source = element.getBoundingClientRect().toJSON();
@@ -355,11 +426,11 @@ for (const theme of ["light", "dark"]) {
       expect(frames.frames.length).toBeGreaterThan(10);
       const first = frames.frames[0];
       const last = frames.frames.at(-1);
-      expect(Math.abs(first.x - frames.source.x)).toBeLessThan(12);
-      expect(Math.abs(first.y - frames.source.y)).toBeLessThan(12);
-      expect(first.width).toBeLessThan(last.width * .9);
-      expect(first.height).toBeLessThan(last.height * .9);
-      await expect(tile).toHaveCSS("visibility", "hidden");
+      expect(first.x).toBeCloseTo(last.x, 0);
+      expect(Math.abs(first.y - last.y)).toBeLessThanOrEqual(16);
+      expect(frames.frames.some(frame => frame.y > last.y + .2)).toBe(true);
+      expect(frames.frames.every(frame => Math.abs(frame.width - last.width) < 1 && Math.abs(frame.height - last.height) < 1)).toBe(true);
+      await expect(tile).toHaveCSS("visibility", "visible");
       const inspector = page.getByRole("dialog", { name: "Session", exact: true });
       await expect(inspector).toBeFocused();
       await expect(page.locator("#workspace")).toHaveCSS("overflow", "hidden");
@@ -374,7 +445,8 @@ for (const theme of ["light", "dark"]) {
         }
         return { start, widths };
       });
-      expect(closing.widths.some(value => value < closing.start.width * .9)).toBe(true);
+      expect(closing.widths.length).toBeGreaterThan(1);
+      expect(closing.widths.every(value => Math.abs(value - closing.start.width) < 1)).toBe(true);
       await expect(inspector).toHaveCount(0);
       await expect(tile).toHaveCSS("visibility", "visible");
       await expect(tile).toBeFocused();
@@ -388,7 +460,7 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
-test("calendar tile morph respects reduced motion and interrupted dismissal", async ({ page }) => {
+test("calendar panel respects reduced motion and interrupted dismissal", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/desk.html#training");
   await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
@@ -414,7 +486,7 @@ test("calendar tile morph respects reduced motion and interrupted dismissal", as
 test.describe("calendar month touch morph", () => {
   test.use({ hasTouch: true });
   for (const width of [390, 1440]) {
-    test(`calendar tile morph month touch ${width}px`, async ({ page }) => {
+    test(`calendar panel month touch ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await page.goto("/desk.html#training/month");
@@ -424,7 +496,7 @@ test.describe("calendar month touch morph", () => {
       await tile.tap();
       const inspector = page.getByRole("dialog", { name: "Session", exact: true });
       await expect(inspector).toBeFocused();
-      await expect(tile).toHaveCSS("visibility", "hidden");
+      await expect(tile).toHaveCSS("visibility", "visible");
       await inspector.getByRole("button", { name: "Close Session", exact: true }).tap();
       await expect(inspector).toHaveCount(0);
       await expect(tile).toHaveCSS("visibility", "visible");
@@ -1285,6 +1357,7 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
     const activities = navigation.getByRole("link", { name: "Activities", exact: true });
     await expect(navigation.locator('[tabindex="0"]')).toHaveCount(0);
     for (const link of [training, activities, health]) {
+      await expect(link).toHaveAttribute("data-reveal", "settled");
       const bounds = await link.boundingBox();
       expect(bounds.width).toBeGreaterThanOrEqual(44);
       expect(bounds.width).toBe(64);

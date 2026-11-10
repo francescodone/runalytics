@@ -1,8 +1,8 @@
 import { t, text, number } from "./i18n";
 import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
-import { motion, useAnimationControls, useDragControls, useIsPresent } from "motion/react";
-import { markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
+import { animate, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
+import { actionOrigin, markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
 
 export function Button({ children, tone = "normal", busy, className = "", onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean }) {
@@ -55,13 +55,14 @@ export function Empty({ title, children, action }: { title: string; children?: R
 }
 export function Dialog({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(actionOrigin() ?? document.activeElement as HTMLElement | null);
   const onCloseRef = useRef(onClose);
-  const surface = useSurfaceMotion("dialog");
+  const surface = useSurfaceMotion("dialog", dialog);
   const present = useIsPresent();
   const drag = useDragControls();
   onCloseRef.current = onClose;
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const opener = returnFocus.current;
     const element = dialog.current!;
     const unlock = lockPageScroll();
     element.showModal();
@@ -88,33 +89,9 @@ export function InfoDialog({ title, children, wide = false, className = "" }: { 
 export function Inspector({ title, children, onClose, modal = false, origin }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean; origin?: HTMLElement | null }) {
   const host = useRef<HTMLElement>(null);
   const close = useRef(onClose);
-  const surface = useSurfaceMotion("inspector");
+  const surface = useSurfaceMotion("inspector", host);
   const drag = useDragControls();
   const present = useIsPresent();
-  const morphControls = useAnimationControls();
-  const [collapsed, setCollapsed] = useState<{ x: number; y: number; scaleX: number; scaleY: number; borderRadius: string } | null>(null);
-  const morph = Boolean((modal || !surface.compact) && origin && !surface.reduced);
-  useLayoutEffect(() => {
-    if (!morph || !origin?.isConnected) return;
-    const element = host.current!;
-    const source = origin.getBoundingClientRect();
-    const target = element.getBoundingClientRect();
-    if (!source.width || !source.height || !target.width || !target.height) return;
-    const shape = {
-      x: source.x + source.width / 2 - target.x - target.width / 2,
-      y: source.y + source.height / 2 - target.y - target.height / 2,
-      scaleX: source.width / target.width,
-      scaleY: source.height / target.height,
-      borderRadius: getComputedStyle(origin).borderRadius,
-    };
-    const visibility = origin.style.visibility;
-    const radius = getComputedStyle(element).borderRadius;
-    setCollapsed(shape);
-    if (modal) origin.style.visibility = "hidden";
-    morphControls.set({ ...shape, opacity: 1 });
-    void morphControls.start({ x: 0, y: 0, scaleX: 1, scaleY: 1, borderRadius: radius, opacity: 1, transition: tempo.spring });
-    return () => { origin.style.visibility = visibility; };
-  }, [morph, origin, morphControls, modal]);
   close.current = onClose;
   useEffect(() => {
     const opener = origin ?? document.activeElement as HTMLElement | null;
@@ -146,14 +123,33 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
   }, [title, modal, origin]);
   return <>{modal && <div className="inspector-backdrop" aria-hidden="true" data-state={present ? "open" : "closing"} onClick={() => { if (present) onClose(); }} />}
   <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-state={present ? "open" : "closing"}
-    initial={morph ? false : surface.initial} animate={morph ? morphControls : surface.animate} exit={morph && collapsed ? { ...collapsed, opacity: 1, transition: { duration: tempo.exit, ease: tempo.leave } } : surface.exit}
+    initial={surface.initial} animate={surface.animate} exit={surface.exit}
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
-    <motion.div initial={morph ? { opacity: 0 } : false} animate={{ opacity: 1 }} exit={morph ? { opacity: 0 } : undefined} transition={{ duration: tempo.feedback, delay: present && morph ? tempo.press : 0 }}>
+    <motion.div initial={false} animate={{ opacity: 1 }}>
     <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label={t("Back")} onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
     </motion.div>
   </motion.aside></>;
 }
-export function Metric({ label, value, unit }: { label: string; value: ReactNode; unit?: string }) {
-  return <div className="desk-metric"><dt>{label}</dt><dd>{typeof value === "number" ? number(value) : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;
+export function CountUp({ format }: { format: (progress: number) => string }) {
+  const reduced = useReducedMotion();
+  const host = useRef<HTMLSpanElement>(null);
+  const [progress, setProgress] = useState(0);
+  useLayoutEffect(() => {
+    if (reduced) { setProgress(1); return; }
+    let animation: ReturnType<typeof animate> | undefined;
+    const start = () => {
+      animation?.stop();
+      setProgress(0);
+      animation = animate(0, 1, { duration: tempo.count, ease: tempo.countEase, onUpdate: setProgress });
+    };
+    const arrive = (event: Event) => { if (event.target instanceof HTMLElement && host.current && event.target.contains(host.current)) start(); };
+    start();
+    document.addEventListener("desk:view-arrive", arrive);
+    return () => { animation?.stop(); document.removeEventListener("desk:view-arrive", arrive); };
+  }, [reduced]);
+  return <span ref={host} style={{ fontVariantNumeric: "tabular-nums" }}><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(reduced ? 1 : progress)}</span></span>;
+}
+export function Metric({ label, value, unit, count }: { label: string; value: ReactNode; unit?: string; count?: { value: number; format?: (value: number) => string } }) {
+  return <div className="desk-metric"><dt>{label}</dt><dd>{count && Number.isFinite(count.value) ? <CountUp format={progress => count.format ? count.format(count.value * progress) : number(count.value * progress)} /> : typeof value === "number" ? number(value) : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;
 }

@@ -18,8 +18,7 @@ body { user-select: none; -webkit-user-select: none; }
 input, textarea, select, [contenteditable="true"], .episode-notes, .prescription p { user-select: text; -webkit-user-select: text; }
 body { -webkit-font-smoothing: antialiased; background: var(--material-atmospheric); background-attachment: fixed; }
 body::before { content: ""; position: fixed; inset: 0; pointer-events: none; }
-body::before { opacity: .25; background: linear-gradient(115deg, transparent 10%, color-mix(in srgb, var(--desk-action) 35%, transparent) 35%, transparent 55%, color-mix(in srgb, var(--desk-blue) 30%, transparent) 75%, transparent 95%); background-size: 200% 200%; animation: atmosphere-aurora 100s ease-in-out infinite alternate; }
-@keyframes atmosphere-aurora { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+body::before { opacity: .25; background: linear-gradient(115deg, transparent 10%, color-mix(in srgb, var(--desk-action) 35%, transparent) 35%, transparent 55%, color-mix(in srgb, var(--desk-blue) 30%, transparent) 75%, transparent 95%); background-size: 200% 200%; }
 @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) { body::before { display: none; animation: none; } }
 #desk-root { position: relative; display: grid; grid-template-columns: var(--navigation-width) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: var(--shell-gap); max-width: var(--content-max); padding: var(--shell-inset); margin-inline: auto; height: 100%; }
 :root[data-native-window="macos"] #desk-root { padding-top: calc(var(--shell-inset) + 32px); }
@@ -345,16 +344,14 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .lap-pace-selection { display: grid; gap: var(--space-half); font-size: var(--text-detail); margin: var(--space-4) 0 0; min-height: 88px; }
 .lap-pace-selection > span { color: var(--desk-muted); }
 .lap-execution-table tr[data-selected="true"] { background: var(--desk-soft); }
-/* Five narrow numeric columns have to fit a 320px screen without a sideways
-   scroll, so the widths are pinned and the gutter between cells closes in. */
-.lap-execution-table { table-layout: fixed; }
-.lap-execution-table th, .lap-execution-table td { padding-inline: var(--space-1); }
-.lap-execution-table thead th:first-child { width: 48px; }
-.lap-execution-table th[scope="row"] { width: 48px; padding-inline: 0; }
-.lap-execution-table th:nth-child(2), .lap-execution-table td:nth-child(2) { width: 58px; }
-.lap-execution-table th:nth-child(3), .lap-execution-table td:nth-child(3) { width: 62px; }
-.lap-execution-table th:nth-child(4), .lap-execution-table td:nth-child(4) { width: 66px; }
-.lap-execution-table td:last-child { overflow-wrap: anywhere; }
+.lap-execution-table { table-layout: auto; width: max-content; min-width: 100%; }
+.lap-execution-table th, .lap-execution-table td { padding-inline: var(--space-2); text-align: center; white-space: nowrap; }
+.lap-execution-table th[scope="row"] { padding-inline: 0; }
+@media (max-width: 800px) {
+   .lap-execution-table th, .lap-execution-table td { padding-block: var(--space-3); }
+   .lap-execution-table tr > :first-child { padding-inline-start: var(--space-2); }
+   .lap-execution-table tr > :last-child { padding-inline-end: var(--space-3); }
+}
 .lap-row-button { display: inline-block; width: var(--control-size); height: var(--control-size); padding: 0; border: 0; color: var(--desk-muted); background: transparent; border-radius: var(--desk-radius); font-variant-numeric: tabular-nums; vertical-align: middle; }
 .lap-row-button[aria-pressed="true"] { color: var(--desk-action); font-weight: var(--weight-semibold); text-decoration: underline; text-underline-offset: 4px; }
 .lap-row-pace { display: block; font-variant-numeric: tabular-nums; }
@@ -383,7 +380,8 @@ tbody th { font-weight: var(--weight-medium); }
 #health-details[hidden] { display: none; }
 #health-details .motion-disclosure-content { transition: content-visibility var(--motion-exit) allow-discrete; }
 #health-details[data-state="closed"] .motion-disclosure-content { content-visibility: hidden; }
-.desk-toolbar, .choice-row, .pace-mode { overflow: clip; }
+.choice-row, .pace-mode { overflow: clip; }
+.desk-toolbar:has(.control-tooltip):is(:hover, :focus-within) { position: relative; z-index: var(--layer-tooltip); }
 .health-toolbar { flex-wrap: wrap; }
 .health-toolbar .horizon-switch { overflow-x: auto; max-width: 100%; }
 .health-toolbar .horizon-switch a { white-space: nowrap; }

@@ -1,3 +1,119 @@
+## DOM-Ordered Bezier Choreography, 2026-11-10
+
+This refinement supersedes the timing and morph behavior in the earlier motion
+entries below. Content, surface and layout travel now share
+`cubic-bezier(.22, 1, .36, 1)`, 560ms entrances, 500ms exits, 14px vertical
+movement and exact 60ms DOM-order staggering without randomized directions or
+simultaneous capped groups. Startup uses one page-wide sequence; returned views
+replay only their own leaves. Desktop exits keep an opaque, untransformed host
+until the final leaf departs. Compact navigation still updates immediately.
+
+Activity and calendar inspectors enter at full size instead of stretching from
+a row or tile. Row presence/layout and disclosure children use the same cadence.
+Counters use a 650ms Bezier count-up, with final values always available to screen
+readers and reduced motion. Pointer feedback remains immediate. Notifications
+and pointer pulses use the same easing. Dialogs capture their initiating button
+across the event turn, preserving nested-dialog focus return in WebKit even when
+pointer activation leaves a previous textarea focused. Drafts, scroll ownership,
+Escape and preference-change cancellation remain intact. No spacing, typography,
+palette or static component geometry was redesigned.
+
+Production build, editor diagnostics, whitespace checks, all 113 scoped
+synthetic-IPC Chromium checks and all 31 focused WebKit checks passed after the
+final refinements. Chromium covered thirteen routes in both themes at 320, 360,
+375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px,
+plus four motion-enabled accessibility tours at 390/1440px, keyboard/touch input,
+retained filters, pending actions, live preferences, route/row exits and workflows.
+WebKit covered exact keyframes and startup order, counters, retained view replay,
+activity/calendar panels and nested-dialog focus/draft/scroll behavior. The
+390px light Pace insights, 1440px dark Training and 1440px light activity review
+screenshots were inspected. The live 528x829 activity review filled the viewport
+with no overflow, residual transform or running animation after settling.
+An initial shared-server run was interrupted by concurrent preview teardown;
+the final suites ran sequentially on an isolated port. Native iOS/macOS provider
+integration and physical-device frame-rate acceptance remain unverified.
+
+## Softer View Landings And Activity Reviews, 2026-11-10
+
+Startup and view entrances now use a 520ms zero-bounce landing response,
+44ms stagger spacing and smaller scale changes. Retained compact views replay
+their own landing without remounting or animating the persistent navigation.
+Rapid switching, keyboard focus, touch and reduced-motion cancellation remain
+immediate. Activity rows use the same soft staggered fade while keeping layout
+projection separate from entrance transforms.
+
+Number counters use a 1100ms cubic-Bezier ease and restart with returned views;
+ordinary data rerenders do not restart them. Screen readers and reduced motion
+still receive final values immediately. Activity reviews no longer stretch a
+short row into a tall panel. They use a near-full-size, 480ms soft panel arrival
+and a 220ms exit, retaining focus return and compact scroll ownership. Calendar
+session morph behavior is unchanged. Its regression checks now evaluate source
+continuity from actual geometric progress rather than first-frame timing.
+
+Production build, editor diagnostics, all 112 scoped synthetic-IPC Chromium
+checks and fifteen isolated WebKit checks passed. Chromium coverage includes
+the light/dark 320-2560px route matrix, motion-enabled accessibility tours,
+keyboard/touch, retained state, view replay, measured slower counters and
+activity opening at 390, 820 and 1440px. Desktop light activity review and
+320px light Pace insights screenshots were inspected. The live compact review
+settled at 390x844 with no overflow or leftover animations. An initial parallel
+WebKit run lost its shared preview server; the sequential rerun passed.
+Native iOS/macOS and physical-device frame-rate acceptance remain unverified.
+
+## Shared Motion Lifecycle, 2026-11-10
+
+The existing Motion dependency now drives shared token-based presets, a bounded
+one-shot unlock entrance, component reveals, directional desktop departures,
+scoped selection indicators and activity-row presence/layout transitions.
+Compact navigation remains immediate and retains mounted state. Responsive
+breakpoint changes preserve the active workspace and open inspector. Focus,
+pointer-down, early navigation and live reduced-motion changes settle reveals
+without leaving stale transforms. The existing atmospheric background is static
+instead of running a perpetual repaint animation. No dependency, spacing,
+typography, palette or static component geometry was changed for this work.
+
+Production build, editor diagnostics and whitespace checks passed. All 108
+scoped synthetic-IPC Chromium acceptance checks passed. The route matrix covered
+13 views in light and dark at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024,
+1280, 1366, 1440, 1600, 1920 and 2560px. Four motion-enabled accessibility tours
+covered eleven views at 390 and 1440px in both themes. Separate reduced-motion
+keyboard and held-touch checks passed. Other coverage includes startup timing,
+one-shot behavior, cancellation, retained exits, rapid compact navigation,
+filter retention, morph geometry, notifications and pending-button geometry.
+Light 320px Pace insights and dark 1440px Training screenshots were inspected.
+The settled 1440px preview had no running animations or horizontal overflow.
+All thirteen focused synthetic-IPC WebKit checks also passed, covering startup,
+live motion preferences, viewport reveals, activity removals, filtered views,
+keyboard behavior and compact/desktop inspector morphs.
+Native iOS/macOS integration and physical-device 60 FPS remain unverified.
+See `motion.md` and the `Verify iOS-inspired motion` VS Code task.
+
+## Toolbar Tooltip Clearance, 2026-11-10
+
+Toolbars no longer clip control tooltips and are raised while a tooltip-bearing
+control is hovered or keyboard-focused. Synthetic-IPC Chromium and WebKit
+regressions passed at 1440px for hover, focus and Escape dismissal. The training
+preview was inspected at desktop size. Other widths, themes and native-device
+behavior remain unverified for this change.
+
+## Entry Counters, 2026-11-10
+
+Calendar summaries, activity overview metrics and health verdict metrics count
+up on entry using the existing Motion library. Screen readers receive the final
+value and reduced motion displays it immediately. Synthetic-IPC Chromium checks
+passed at 390px for all three views with reduced motion and normal motion,
+including intermediate health values. Production build and TypeScript passed.
+Other widths, themes, screenshots and native device behavior remain unverified.
+
+## Compact Activity Morph, 2026-11-10
+
+Activity reviews now morph from their source row at compact widths when reduced
+motion is off. Synthetic-IPC browser checks passed at 390px in Chromium and
+WebKit, including dismissal and focus return. Existing WebKit checks also passed
+for the 390px calendar session morph, the 1440px desktop activity morph, and
+reduced-motion calendar behavior. Native iOS and macOS behavior, other widths,
+themes, screenshots and the full Prism matrix remain unverified for this change.
+
 ## Native iPhone Chrome Hosting Verification, 2026-11-09
 
 The local iOS Tauri plugin hosts a real UIKit tab bar above the existing

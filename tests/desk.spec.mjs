@@ -4,6 +4,34 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`entry counters preserve final values with ${reducedMotion} motion`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion });
+    await page.addInitScript(() => {
+      window.__counterValues = [];
+      window.__counterTimes = [];
+      new MutationObserver(records => {
+        for (const record of records) {
+          const element = record.target.nodeType === Node.TEXT_NODE ? record.target.parentElement : record.target;
+          if (element?.matches?.('.health-verdict [aria-hidden="true"]') && element.previousElementSibling?.classList.contains("sr-only")) { window.__counterValues.push(element.textContent); window.__counterTimes.push(performance.now()); }
+        }
+      }).observe(document, { subtree: true, characterData: true, childList: true });
+    });
+    for (const [route, selector] of [["training/week", ".schedule-summary"], ["health", ".health-verdict"], ["journal/1", ".activity-review .metrics-line"]]) {
+      await page.goto(`/desk.html#${route}`);
+      const counter = page.locator(`${selector} .sr-only + [aria-hidden="true"]`).first();
+      await expect(counter).toBeVisible();
+      const final = counter.locator("..").locator(".sr-only");
+      await expect(final).not.toBeEmpty();
+      await expect.poll(async () => counter.textContent()).toBe(await final.textContent());
+      if (route === "health" && reducedMotion === "no-preference") {
+        expect(new Set(await page.evaluate(() => window.__counterValues)).size).toBeGreaterThan(1);
+        expect(await page.evaluate(() => window.__counterTimes.at(-1) - window.__counterTimes[0])).toBeGreaterThan(200);
+      }
+    }
+  });
+}
+
 for (const listenerStyle of ["camel", "snake"]) {
   test(`native chrome transport uses the installed Tauri listener contract ${listenerStyle}`, async ({ page }) => {
     await page.goto("/desk.html#training");
@@ -628,25 +656,35 @@ test.describe("motion system", () => {
         await page.emulateMedia({ reducedMotion });
         await page.addInitScript(() => {
           window.__contentReveals = [];
-          for (const type of ["animationstart", "animationend"]) {
-            document.addEventListener(type, event => {
-              if (event.animationName !== "content-arrive") return;
-              const bounds = event.target.getBoundingClientRect();
-              window.__contentReveals.push({ type, className: event.target.className, width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y, elapsed: event.elapsedTime, filter: getComputedStyle(event.target).filter });
-            });
-          }
+          window.__motionSamples = [];
+          new MutationObserver(records => {
+            for (const record of records) {
+              const element = record.target;
+              if (element.dataset.reveal !== "visible" && record.oldValue !== "visible") continue;
+              const style = getComputedStyle(element);
+              window.__contentReveals.push({ type: record.oldValue === "visible" ? "end" : "start", className: element.className, width: element.offsetWidth, height: element.offsetHeight, time: performance.now(), delay: parseFloat(element.style.getPropertyValue("--reveal-delay")), transform: style.transform, filter: style.filter });
+              if (record.oldValue !== "visible") {
+                const sample = () => {
+                  if (!element.isConnected || element.dataset.reveal !== "visible") return;
+                  window.__motionSamples.push({ className: element.className, transform: getComputedStyle(element).transform });
+                  requestAnimationFrame(sample);
+                };
+                requestAnimationFrame(sample);
+              }
+            }
+          }).observe(document, { subtree: true, attributes: true, attributeFilter: ["data-reveal"], attributeOldValue: true });
         });
         await page.goto("/desk.html#health/overview");
         const verdict = page.locator(".health-verdict");
         await expect(verdict).toBeVisible();
-        if (reducedMotion === "no-preference" && width > 800) {
-          await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "animationend").length)).toBe(1);
+        if (reducedMotion === "no-preference") {
+          await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "end").length)).toBe(1);
           const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
           expect(events[1].width).toBeCloseTo(events[0].width, 3);
           expect(events[1].height).toBeCloseTo(events[0].height, 3);
-          expect(events[1].elapsed).toBe(.32);
-          expect(events[0].filter).toMatch(/^blur\(/);
-          expect(parseFloat(events[0].filter.slice(5))).toBeGreaterThan(0);
+          expect(events[1].time - events[0].time).toBeLessThan(events[0].delay * 1000 + 700);
+          expect(events.every(event => event.filter === "none")).toBe(true);
+          expect(await page.evaluate(() => window.__motionSamples.some(sample => sample.className === "health-verdict" && sample.transform !== "none"))).toBe(true);
           await expect(verdict).toHaveAttribute("data-reveal", "settled");
           await expect(verdict).toHaveCSS("filter", "none");
           await verdict.hover();
@@ -665,7 +703,7 @@ test.describe("motion system", () => {
         await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe(reducedMotion === "reduce" ? "1" : "0.98");
         expect(await selector.evaluate(element => element.offsetWidth)).toBe(Math.round(bounds.width));
         await page.mouse.up();
-        await expect(selector).toHaveCSS("scale", reducedMotion === "reduce" ? "none" : "1.015");
+        await expect(selector).toHaveCSS("scale", reducedMotion === "reduce" ? "none" : "1");
         await page.mouse.move(0, 0);
         await expect(selector).toHaveCSS("scale", "none");
         await expect(selector).toHaveAttribute("aria-pressed", "true");
@@ -685,6 +723,166 @@ test.describe("motion system", () => {
     }
   }
 
+  for (const width of [390, 1440]) {
+    test(`Motion unlock is bounded, staggered and one-shot ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.addInitScript(() => {
+        window.__unlockEvents = [];
+        new MutationObserver(records => {
+          for (const record of records) {
+            const element = record.target;
+            if (element.dataset.entranceKind !== "unlock") continue;
+            const state = element.dataset.reveal;
+            if (state === "visible" || record.oldValue === "visible") window.__unlockEvents.push({ className: element.className, shell: Boolean(element.closest(".desk-appbar")), state, time: performance.now(), delay: parseFloat(element.style.getPropertyValue("--reveal-delay")) });
+          }
+        }).observe(document, { subtree: true, attributes: true, attributeFilter: ["data-reveal"], attributeOldValue: true });
+      });
+      await page.goto("/desk.html#health/overview");
+      await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+      await expect(page.locator('[data-reveal="visible"]')).toHaveCount(0);
+      const events = await page.evaluate(() => window.__unlockEvents);
+      const starts = events.filter(event => event.state === "visible");
+      const ends = events.filter(event => event.state === "settled");
+      expect(starts.length).toBeGreaterThan(5);
+      expect(new Set(starts.map(event => event.delay)).size).toBeGreaterThan(2);
+      expect(ends.length).toBe(starts.length);
+      const shellArrival = Math.max(...starts.filter(event => event.shell).map(event => event.time + event.delay * 1000));
+      const contentArrival = Math.min(...starts.filter(event => !event.shell).map(event => event.time + event.delay * 1000));
+      expect(contentArrival).toBeGreaterThanOrEqual(shellArrival - 25);
+      expect(Math.max(...ends.map(event => event.time)) - Math.min(...starts.map(event => event.time))).toBeLessThan(Math.max(...starts.map(event => event.delay)) * 1000 + 700);
+      const brandEvents = events.filter(event => event.className === "desk-brand-name").length;
+      await page.getByRole("link", { name: "Activities", exact: true }).click();
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      expect(await page.evaluate(() => window.__unlockEvents.filter(event => event.className === "desk-brand-name").length)).toBe(brandEvents);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    });
+  }
+
+  for (const width of [390, 1440]) {
+    test(`soft view landings replay on return without moving navigation ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.goto("/desk.html#health/overview");
+      await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+      const navigation = await page.locator(".desk-navigation").boundingBox();
+      await page.getByRole("link", { name: "Pace insights", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
+      await page.getByRole("link", { name: "Overview", exact: true }).click();
+      const landing = page.locator('.health-verdict[data-entrance-kind="component"]');
+      await expect(landing).toHaveAttribute("data-reveal", "visible");
+      await expect(landing).toHaveAttribute("data-reveal", "settled");
+      expect(await page.locator(".desk-navigation").boundingBox()).toEqual(navigation);
+      await page.getByRole("link", { name: "Activities", exact: true }).click();
+      await expect(page.locator(".activity-row")).toHaveCount(9);
+      await page.getByRole("link", { name: "Health", exact: true }).click();
+      await expect(page.locator('.health-verdict[data-entrance-kind="component"]')).toHaveAttribute("data-reveal", "settled");
+      expect(await page.evaluate(() => document.querySelectorAll('[data-reveal]:not([data-reveal="container"]) [data-reveal]:not([data-reveal="container"])').length)).toBe(0);
+    });
+  }
+
+  test("Motion desktop exits retain outgoing content and cascade vertically in DOM order", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#health");
+    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    const frames = await page.getByRole("link", { name: "Activities", exact: true }).evaluate(async link => {
+      link.click();
+      const frames = [];
+      for (let index = 0; index < 30; index++) {
+        await new Promise(requestAnimationFrame);
+        const outgoing = document.querySelector('.desk-workspace > .motion-change[data-transition-state="exiting"]');
+        if (!outgoing) continue;
+        const style = getComputedStyle(outgoing);
+        const verdict = outgoing.querySelector(".health-verdict");
+        const leaves = [...outgoing.querySelectorAll('[data-reveal="settled"]')].filter(element => element.getAnimations().length);
+        frames.push({ connected: outgoing.isConnected, inert: outgoing.inert, transform: style.transform, filter: style.filter, y: verdict ? new DOMMatrixReadOnly(getComputedStyle(verdict).transform).m42 : 0, delays: leaves.map(element => element.getAnimations()[0].effect.getTiming().delay) });
+      }
+      return frames;
+    });
+    expect(frames.length).toBeGreaterThan(1);
+    expect(frames.every(frame => frame.connected && frame.inert && frame.transform === "none" && frame.filter === "none")).toBe(true);
+    expect(frames.some(frame => frame.y < -1)).toBe(true);
+    const delays = frames.find(frame => frame.delays.length > 1)?.delays;
+    expect(delays?.length).toBeGreaterThan(1);
+    expect(delays).toEqual([...delays].sort((first, second) => first - second));
+    await expect(page.locator('[data-transition-state="exiting"]')).toHaveCount(0);
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+  });
+
+  test("Motion preference changes settle active entrances without replay", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#health");
+    await expect(page.locator('[data-reveal="visible"]').first()).toBeAttached();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator('[data-reveal="visible"], [data-reveal="waiting"]')).toHaveCount(0);
+    await expect(page.locator(".health-verdict")).toHaveCSS("transform", "none");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(page.locator('[data-reveal="visible"], [data-reveal="waiting"]')).toHaveCount(0);
+    await page.getByRole("link", { name: "Pace insights", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
+  });
+
+  test("Motion Bezier choreography uses exact DOM order without jitter or scale", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#health");
+    await expect(page.locator('.health-verdict')).toHaveAttribute("data-reveal", "settled");
+    await page.evaluate(() => {
+      const root = document.createElement("section");
+      root.className = "motion-change";
+      root.id = "choreography-probe";
+      for (const name of ["Heading", "Evidence", "Actions"]) {
+        const element = document.createElement("div");
+        element.dataset.entrance = "";
+        element.textContent = name;
+        root.append(element);
+      }
+      document.querySelector("#workspace").prepend(root);
+    });
+    const leaves = page.locator("#choreography-probe > div");
+    await expect.poll(() => leaves.evaluateAll(elements => elements.filter(element => element.getAnimations().length).length)).toBe(3);
+    const effects = await leaves.evaluateAll(elements => elements.map(element => {
+      const effect = element.getAnimations().find(animation => animation.effect.getKeyframes().some(frame => frame.transform))?.effect;
+      const transform = new DOMMatrixReadOnly(effect.getKeyframes()[0].transform);
+      return { delay: effect.getTiming().delay, duration: effect.getTiming().duration, easing: effect.getTiming().easing, x: transform.m41, y: transform.m42, scale: transform.m11 };
+    }));
+    expect(effects.map(effect => effect.delay)).toEqual([0, 60, 120]);
+    for (const effect of effects) expect(effect).toMatchObject({ duration: 560, easing: "cubic-bezier(0.22, 1, 0.36, 1)", x: 0, y: 14, scale: 1 });
+    await expect(leaves.last()).toHaveAttribute("data-reveal", "settled");
+    expect(await leaves.evaluateAll(elements => elements.every(element => element.getAnimations().length === 0 && element.style.transform === ""))).toBe(true);
+  });
+
+  test("Motion activity removals retain their DOM until exit completes", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#journal");
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+    await expect(page.locator(".activity-row").last()).toHaveCSS("opacity", "1");
+    const samples = await page.evaluate(async () => {
+      const removed = document.querySelector(".activity-row");
+      const moving = removed.nextElementSibling;
+      const start = moving.getBoundingClientRect().y;
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        return command === "all_activities" ? result.slice(1) : result;
+      };
+      window.__deskEmit("sync://completed", { ok: true });
+      const samples = [];
+      for (let index = 0; index < 60; index++) {
+        await new Promise(requestAnimationFrame);
+        samples.push({ connected: removed.isConnected, opacity: Number(getComputedStyle(removed).opacity), y: moving.getBoundingClientRect().y, start });
+      }
+      return samples;
+    });
+    expect(samples.some(sample => sample.connected && sample.opacity > 0 && sample.opacity < .95)).toBe(true);
+    expect(samples.at(-1).connected).toBe(false);
+    expect(samples.some(sample => sample.y < sample.start - 1 && sample.y > samples.at(-1).y + 1)).toBe(true);
+    expect(samples.every(sample => sample.y >= samples.at(-1).y - 1 && sample.y <= sample.start + 1)).toBe(true);
+    await expect(page.locator(".activity-row")).toHaveCount(8);
+  });
+
   test("viewport reveals wait for entry, run once, and settle on focus or preference changes", async ({ page }) => {
     await page.setViewportSize({ width: 820, height: 600 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -694,9 +892,9 @@ test.describe("motion system", () => {
     await expect(lastTask).toHaveCSS("opacity", "0");
     await lastTask.evaluate(element => {
       window.__viewportReveals = [];
-      document.addEventListener("animationstart", event => {
-        if (event.target === element) window.__viewportReveals.push(event.animationName);
-      });
+      new MutationObserver(records => {
+        for (const record of records) if (record.oldValue === "visible") window.__viewportReveals.push("settled");
+      }).observe(element, { attributes: true, attributeFilter: ["data-reveal"], attributeOldValue: true });
       element.scrollIntoView({ block: "center" });
     });
     await expect(lastTask).toHaveAttribute("data-reveal", "settled");
@@ -706,7 +904,7 @@ test.describe("motion system", () => {
     await expect(page.locator(".workspace-heading")).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && scrollY === 0)).toBe(true);
     await lastTask.evaluate(element => element.scrollIntoView({ block: "center" }));
-    expect(await page.evaluate(() => window.__viewportReveals)).toEqual(["content-arrive"]);
+    expect(await page.evaluate(() => window.__viewportReveals)).toEqual(["settled"]);
 
     await page.locator("#workspace").evaluate(element => element.scrollTo(0, 0));
     await page.reload();
@@ -762,7 +960,8 @@ test.describe("motion system", () => {
       }
       const navigation = await page.locator(".desk-navigation").boundingBox();
       expect(navigation.x + navigation.width / 2).toBeCloseTo(195, 1);
-      expect(navigation.y + navigation.height).toBeCloseTo(888, 1);
+      const bottom = await page.locator(".desk-navigation").evaluate(element => parseFloat(getComputedStyle(element).bottom));
+      expect(navigation.y + navigation.height).toBeCloseTo(900 - bottom, 1);
     });
   }
 
@@ -792,7 +991,7 @@ test.describe("motion system", () => {
           expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, route).toEqual([]);
           await page.screenshot({ path: `test-results/motion-${route.replaceAll("/", "-")}-${theme}-${width}.png`, fullPage: true, animations: "disabled" });
         }
-        await page.goto(`/desk.html?theme=${theme}#health/pace`);
+        await page.goto(`/desk.html?theme=${theme}#health/journal`);
         await page.getByRole("button", { name: "Log pain", exact: true }).click();
         await expect(page.getByRole("dialog")).toBeVisible();
         await page.screenshot({ path: `test-results/motion-sheet-${theme}-${width}.png`, animations: "disabled" });
@@ -977,7 +1176,7 @@ test.describe("motion system", () => {
 
   test("reduced motion keeps feedback and keyboard interaction without spatial animation", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto("/desk.html#health/pace");
+    await page.goto("/desk.html#health/journal");
     await page.getByRole("button", { name: "Log pain", exact: true }).click();
     const dialog = page.getByRole("dialog");
     const geometry = await dialog.boundingBox();
@@ -986,6 +1185,7 @@ test.describe("motion system", () => {
     expect(await dialog.evaluate(element => getComputedStyle(element).transform)).toBe("none");
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
+    await page.getByRole("link", { name: "Pace insights", exact: true }).click();
     await page.getByRole("button", { name: "Long", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("button", { name: "Long", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -1517,7 +1717,7 @@ for (const width of [320,1440]) {
       expect(await page.getByRole('region',{name:'Kilometre splits'}).evaluate(region => region.scrollWidth <= region.clientWidth)).toBe(true);
       await page.getByRole('tab',{name:'Session execution',exact:true}).click();
       await expect(page.getByRole('heading',{name:'Session execution',exact:true})).toBeVisible();
-      expect(await page.getByRole('region',{name:'Recorded laps'}).evaluate(region => region.scrollWidth <= region.clientWidth)).toBe(true);
+      expect(await page.locator('.lap-execution-table').evaluate(table => [...table.querySelectorAll('th, td')].every(cell => getComputedStyle(cell).whiteSpace === 'nowrap'))).toBe(true);
       expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations,'activity review').toEqual([]);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`test-results/desk-activity-${theme}-${width}.png`,fullPage:true});
@@ -2236,7 +2436,8 @@ for (const width of [390, 1440]) {
             const node = library.querySelector('.motion-change:not([inert])');
             if (node) {
               const style = getComputedStyle(node);
-              window.__resultArrival.push({ opacity: Number(style.opacity), transform: style.transform, filter: style.filter });
+              const row = node.querySelector(".activity-row");
+              window.__resultArrival.push({ opacity: Number(style.opacity), rowOpacity: row ? Number(getComputedStyle(row).opacity) : 1, transform: style.transform, filter: style.filter });
             }
             if (window.__resultArrival.length < 20) requestAnimationFrame(sample);
           };
@@ -2248,7 +2449,8 @@ for (const width of [390, 1440]) {
       await expect.poll(() => page.evaluate(() => window.__resultArrival.length)).toBe(20);
       await expect.poll(() => page.evaluate(() => window.__resultArrival.at(-1)?.opacity)).toBe(1);
       const frames = await page.evaluate(() => window.__resultArrival);
-      expect(frames.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(reducedMotion === "no-preference");
+      expect(frames.every(frame => frame.opacity === 1)).toBe(true);
+      expect(frames.some(frame => frame.rowOpacity > 0 && frame.rowOpacity < 1)).toBe(reducedMotion === "no-preference");
       expect(frames.every(frame => frame.transform === "none" && frame.filter === "none")).toBe(true);
       if (width <= 800) expect(await page.locator(".activity-library > .motion-change").evaluate(element => element === window.__resultHost)).toBe(true);
       await page.getByRole("button", { name: "Reset filters" }).click();
@@ -3053,12 +3255,12 @@ test("hovering the settled stage toast holds it open and pauses the countdown ri
   await expect(ring).toHaveCSS("animation-play-state", "running");
   await toast.hover();
   await expect(ring).toHaveCSS("animation-play-state", "paused");
-  // Hold past the full auto-dismiss window, then let go: it dismisses shortly
-  // after the pointer leaves rather than restarting the whole countdown.
   await page.waitForTimeout(7000);
   await expect(toast).toBeVisible();
   await page.mouse.move(5, 5);
-  await expect(toast).toBeHidden({ timeout: 4000 });
+  await page.waitForTimeout(1000);
+  await expect(toast).toBeVisible();
+  await expect(toast).toBeHidden({ timeout: 8000 });
 });
 
 test("the plain notice carries the same countdown ring around its dismiss button", async ({ page }) => {

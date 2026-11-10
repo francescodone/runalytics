@@ -5,7 +5,7 @@ import { tauri, fmtPace, parsePace, estimatedTimeRange } from "../lib/ipc";
 import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, WeekDeviation } from "../lib/types";
 import { planName as displayPlanName } from "./i18n";
 import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessionTitle, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
-import { Button, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
+import { Button, CountUp, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
 import { PlanAdjustments } from "./proposals";
 import { RaceEstimates } from "./race-estimates";
 import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
@@ -192,7 +192,7 @@ export function Training() {
   const visibleWeeks = new Set(days.map(date => monday(date)));
   const plannedM = (weekProgress.data ?? []).filter(entry => visibleWeeks.has(entry.weekStart)).reduce((total, entry) => total + entry.plannedM, 0);
   const ranM = done.reduce((total, event) => total + (event.distanceM ?? 0), 0);
-  const scheduleSummary = horizon !== "plan" && events.data && <div className="schedule-summary"><span>{t("{{value0}}/{{value1}} sessions done", { value0: done.length, value1: shown.length })}</span><span>{t("{{value0}} / {{value1}} done", { value0: fmtKm(ranM), value1: fmtKm(plannedM) })}</span>{!compact && horizon === "week" && plan && <Button onClick={() => setReset(true)}><IconRestore size={18} aria-hidden="true" />{t("Reset week")}</Button>}</div>;
+  const scheduleSummary = horizon !== "plan" && events.data && <div className="schedule-summary"><CountUp format={progress => t("{{value0}}/{{value1}} sessions done", { value0: number(done.length * progress), value1: number(shown.length * progress) })} /><CountUp format={progress => t("{{value0}} / {{value1}} done", { value0: fmtKm(ranM * progress), value1: fmtKm(plannedM * progress) })} />{!compact && horizon === "week" && plan && <Button onClick={() => setReset(true)}><IconRestore size={18} aria-hidden="true" />{t("Reset week")}</Button>}</div>;
   return <>
     <div className="training-context">
       <div><span className="muted">{plan ? displayPlanName(plan) : t("Your training")}</span>

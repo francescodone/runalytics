@@ -27,6 +27,10 @@ function App() {
   const route = useRoute();
   const compact = useCompactLayout();
   const reduced = useReducedMotion();
+  const previousWorkspace = useRef(route.workspace);
+  const workspaceOrder: Workspace[] = ["training", "journal", "health", "settings", "help"];
+  const direction = Math.sign(workspaceOrder.indexOf(route.workspace) - workspaceOrder.indexOf(previousWorkspace.current)) || 1;
+  useEffect(() => { previousWorkspace.current = route.workspace; }, [route.workspace]);
   const [visitedWorkspaces, setVisitedWorkspaces] = useState<Workspace[]>([route.workspace]);
   if (compact && !visitedWorkspaces.includes(route.workspace)) setVisitedWorkspaces([...visitedWorkspaces, route.workspace]);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -130,7 +134,7 @@ function App() {
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
       <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span></div>
       <ErrorNotice error={command.error} />
-      <Change identity={route.workspace}>{compact ? visitedWorkspaces.map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>) : route.workspace === "training" ? <Training /> : route.workspace === "journal" ? <Journal /> : route.workspace === "health" ? <Health /> : route.workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Change>
+      <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
     </main>
   </>;
 }
