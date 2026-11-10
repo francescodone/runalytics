@@ -71,7 +71,7 @@ test("native chrome rejects stale, malformed, cross-session and duplicate intent
   host.send({});
   host.send({ eventId: "tap-2" });
   assert.deepEqual(host.routes, ["journal"]);
-  assert.deepEqual(host.states.at(-1), { ready: false, bottomInset: 0 });
+  assert.deepEqual(host.states.at(-1), { ready: true, bottomInset: 83 });
   await host.bridge.update({ ...input, selected: "journal" });
   host.send({ workspace: "health" });
   assert.deepEqual(host.routes, ["journal"]);
@@ -93,6 +93,29 @@ test("native chrome never becomes ready before listener registration completes",
   assert.equal(host.states.at(-1).ready, false);
   listener.resolve(() => {});
   assert.equal(await updating, true);
+  await host.bridge.close();
+});
+
+test("native chrome retains acknowledged ownership during appearance and route updates", async () => {
+  const replacement = deferred();
+  const started = deferred();
+  let attachments = 0;
+  const host = fixture({ attach: async snapshot => {
+    attachments += 1;
+    if (attachments === 1) return { ...snapshot, bottomInset: 83 };
+    started.resolve(snapshot);
+    return replacement.promise;
+  } });
+  await host.bridge.update(input);
+  host.states.length = 0;
+  const updating = host.bridge.update({ ...input, selected: "journal", theme: "dark" });
+  const snapshot = await started.promise;
+  assert.deepEqual(host.states, []);
+  host.send({ eventId: "during-update" });
+  assert.deepEqual(host.routes, []);
+  replacement.resolve({ ...snapshot, bottomInset: 83 });
+  assert.equal(await updating, true);
+  assert.ok(host.states.every(state => state.ready));
   await host.bridge.close();
 });
 

@@ -2,6 +2,8 @@ import { t, text, number } from "./i18n";
 import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
 import { animate, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
+import { animate as animateNative } from "motion/mini";
+import { isTauri } from "@tauri-apps/api/core";
 import { actionOrigin, markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
 
@@ -61,7 +63,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
   const present = useIsPresent();
   const drag = useDragControls();
   onCloseRef.current = onClose;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const opener = returnFocus.current;
     const element = dialog.current!;
     const unlock = lockPageScroll();
@@ -72,7 +74,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     element.addEventListener("cancel", cancel);
     return () => { element.removeEventListener("cancel", cancel); element.close(); unlock(); const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.querySelector<HTMLElement>(".workspace-heading h1"); target?.focus({ preventScroll: true }); };
   }, []);
-  return <motion.dialog ref={dialog} aria-label={title} className={`desk-dialog ${wide ? "wide" : ""}`} data-state={present ? "open" : "closing"}
+  return <motion.dialog ref={dialog} aria-label={title} className={`desk-dialog ${wide ? "wide" : ""}`} data-native-surface={isTauri() || undefined} data-state={present ? "open" : "closing"}
     initial={surface.initial} animate={surface.animate} exit={surface.exit}
     drag={surface.compact && !surface.reduced ? "y" : false} dragListener={false} dragControls={drag} dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: .025, bottom: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.y > 96 || info.offset.y > 24 && info.velocity.y > 650) onClose(); }}
@@ -92,8 +94,30 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
   const surface = useSurfaceMotion("inspector", host);
   const drag = useDragControls();
   const present = useIsPresent();
+  const source = useRef(origin?.getBoundingClientRect());
+  const morph = Boolean(modal && source.current && !surface.reduced);
+  useLayoutEffect(() => {
+    const element = host.current;
+    const bounds = source.current;
+    if (!present || !morph || !element || !bounds || bounds.width <= 0 || bounds.height <= 0) return;
+    const target = element.getBoundingClientRect();
+    if (!target.width || !target.height) return;
+    const transform = element.style.transform;
+    const transformOrigin = element.style.transformOrigin;
+    element.style.transformOrigin = "0 0";
+    const animation = animateNative(element, {
+      transform: [`translate3d(${bounds.left - target.left}px, ${bounds.top - target.top}px, 0) scale(${bounds.width / target.width}, ${bounds.height / target.height})`, "translate3d(0px, 0px, 0) scale(1, 1)"],
+    }, { duration: tempo.surface, ease: tempo.soft });
+    const restore = () => {
+      animation.cancel();
+      element.style.transform = transform;
+      element.style.transformOrigin = transformOrigin;
+    };
+    void animation.then(restore);
+    return restore;
+  }, [morph, present]);
   close.current = onClose;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const opener = origin ?? document.activeElement as HTMLElement | null;
     const element = host.current!;
     const mobile = matchMedia("(max-width: 800px)");
@@ -122,8 +146,8 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
     return () => { restore(); mobile.removeEventListener("change", update); element.removeEventListener("keydown", keys); if (opener?.isConnected) opener.focus({ preventScroll: true }); };
   }, [title, modal, origin]);
   return <>{modal && <div className="inspector-backdrop" aria-hidden="true" data-state={present ? "open" : "closing"} onClick={() => { if (present) onClose(); }} />}
-  <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-state={present ? "open" : "closing"}
-    initial={surface.initial} animate={surface.animate} exit={surface.exit}
+  <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-native-surface={isTauri() || undefined} data-state={present ? "open" : "closing"}
+    initial={morph ? false : surface.initial} animate={morph ? undefined : surface.animate} exit={surface.exit}
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
     <motion.div initial={false} animate={{ opacity: 1 }}>

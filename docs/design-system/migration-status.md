@@ -1,3 +1,35 @@
+## Native Transition Stability And Calendar Morphs, 2026-11-10
+
+Native Tauri appearance updates no longer take document View Transition snapshots.
+Native views, including macOS, reuse the immediate stable-host handoff instead
+of waiting for outgoing leaf cascades. Dialog top-layer activation, focus and
+scroll locks now run before paint. Native overlays use the existing opaque
+surface fallback while the stationary scrim retains its backdrop blur.
+
+Calendar session inspectors again expand from their initiating tile with the
+shared 560ms Bezier timing. A single native transform animation owns the entrance
+and is cancelled on dismissal, teardown or reduced-motion changes. Other
+inspector entrances remain unchanged. iPhone navigation retains acknowledged
+ownership across theme and route updates, blocks intents until acknowledgement,
+and retains workspace spacing while an overlay suspends the native island.
+Failed attachment still restores web navigation.
+
+The ownership regression failed before the bridge fix, reporting a zero inset
+and fallback during an ordinary update. All 13 bridge unit checks, production
+build, editor diagnostics, 33 focused Chromium checks, 33 focused WebKit checks
+and all 121 motion acceptance checks passed. Calendar frame checks cover
+320/390/820/1440px in light and dark with browser and synthetic Tauri branches;
+the acceptance task also covers the Prism 320-2560px width/theme matrix,
+keyboard/touch, nested dialogs, reduced motion and workflow regressions.
+The 390px light and 1440px dark calendar screenshots were inspected.
+
+These are synthetic-IPC browser checks, not native-device frame-rate proof.
+The device-interaction tool rejected the connected physical iPhone and offered
+only simulators. Installed macOS/iPhone binaries were not rebuilt or replaced;
+they need a new native build containing these assets. Physical flicker acceptance
+remains unverified. The referenced foundations and components documents remain
+absent from this checkout.
+
 ## Viewport Counters And Native Island Colors, 2026-11-10
 
 Shared counters now wait for viewport entry instead of counting while offscreen.

@@ -14,6 +14,7 @@ export function startNativeNavigation() {
   let stopped = false;
   let frame = 0;
   let previous = "";
+  let acknowledgedInset = 0;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 1;
   const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -33,9 +34,11 @@ export function startNativeNavigation() {
     document.activeElement?.matches('input:not([type="button"]):not([type="submit"]), textarea, select, [contenteditable="true"]') ||
     [...document.querySelectorAll<HTMLElement>("dialog[open], .desk-inspector")].some(element => element.getClientRects().length > 0);
   const paint = (ready: boolean, bottomInset = 0) => {
-    navigation.style.display = ready ? "none" : originalDisplay;
-    workspace.style.paddingBottom = ready ? `calc(${bottomInset}px + var(--space-12))` : originalPadding;
-    workspace.style.scrollPaddingBottom = ready ? `calc(${bottomInset}px + var(--space-4))` : originalScrollPadding;
+    if (ready) acknowledgedInset = bottomInset;
+    const retained = ready || acknowledgedInset > 0 && matchMedia("(max-width: 800px)").matches && blocked();
+    navigation.style.display = retained ? "none" : originalDisplay;
+    workspace.style.paddingBottom = retained ? `calc(${acknowledgedInset}px + var(--space-12))` : originalPadding;
+    workspace.style.scrollPaddingBottom = retained ? `calc(${acknowledgedInset}px + var(--space-4))` : originalScrollPadding;
     root.dataset.nativeNavigation = ready ? "ready" : "fallback";
   };
   const bridge = createNativeChromeBridge({
@@ -98,6 +101,7 @@ export function startNativeNavigation() {
     document.removeEventListener("focusin", schedule);
     document.removeEventListener("focusout", schedule);
     window.visualViewport?.removeEventListener("resize", resume);
+    acknowledgedInset = 0;
     paint(false);
     delete root.dataset.nativeNavigation;
     void bridge.close();

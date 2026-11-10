@@ -94,7 +94,7 @@ function App() {
         root.dataset.deskPalette = palette;
         document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(root).getPropertyValue("--desk-canvas").trim());
       };
-      if (changed && typeof document.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (changed && !isTauri() && typeof document.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
         appearanceTransition.current = document.startViewTransition(apply);
       } else {
         appearanceTransition.current = null;

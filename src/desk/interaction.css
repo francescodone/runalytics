@@ -90,6 +90,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
   .desk-navigation a[aria-current]:has(.selection-marker) { background: transparent; }
 }
 .desk-inspector { overflow-x: clip; }
+.desk-dialog[data-native-surface], .desk-inspector[data-native-surface] { background: var(--desk-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
 .desk-inspector[data-state="closing"], .desk-dialog[data-state="closing"], .inspector-backdrop[data-state="closing"] { pointer-events: none; }
 .dialog-grip { display: none; }
 .desk-dialog::backdrop, .inspector-backdrop { animation: scrim-arrive var(--motion-change) var(--motion-settle) both; }

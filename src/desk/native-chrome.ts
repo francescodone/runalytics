@@ -46,7 +46,7 @@ export function createNativeChromeBridge(transport: Transport, options: {
       typeof intent.eventId !== "string" || !intent.eventId || seen.has(intent.eventId) ||
       !active.tabs.some(tab => tab.id === intent.workspace)) return;
     seen.add(intent.eventId);
-    unavailable();
+    active = null;
     options.onNavigate(intent.workspace as NativeWorkspace);
   };
   const detach = async () => {
@@ -60,7 +60,8 @@ export function createNativeChromeBridge(transport: Transport, options: {
       tabs: input.tabs.map(tab => ({ ...tab })), selected: input.selected, theme: input.theme,
       ...(input.colors ? { colors: { surface: [...input.colors.surface], selected: [...input.colors.selected], unselected: [...input.colors.unselected] } as NativeChromeColors } : {}),
     } : null;
-    unavailable();
+    active = null;
+    if (!next || !ready) unavailable();
     const operation = queue.then(async () => {
       if (stopped || version !== revision) return false;
       if (!next) { await detach(); return false; }
@@ -73,6 +74,7 @@ export function createNativeChromeBridge(transport: Transport, options: {
         if (!record(ack) || ack.protocolVersion !== 1 || ack.session !== session ||
           ack.revision !== version || typeof ack.bottomInset !== "number" ||
           !Number.isFinite(ack.bottomInset) || ack.bottomInset <= 0 || ack.bottomInset > 4096) {
+          unavailable();
           await detach();
           return false;
         }
@@ -81,6 +83,7 @@ export function createNativeChromeBridge(transport: Transport, options: {
         options.onState({ ready: true, bottomInset: ack.bottomInset });
         return true;
       } catch {
+        unavailable();
         await detach();
         return false;
       }

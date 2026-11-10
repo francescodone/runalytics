@@ -245,10 +245,13 @@ for (const startup of ["probe", "iphone"]) for (const attachment of ["ready", "u
     await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");
     await page.getByRole("button", { name: "Help", exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.__nativeProbeSnapshot.selected)).toBeNull();
+    const inset = await page.locator("#workspace").evaluate(element => getComputedStyle(element).paddingBottom);
     await page.getByRole("button", { name: "Understand recovery and risk", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "fallback");
     await expect.poll(() => page.evaluate(() => window.__nativeProbeDetaches)).toBeGreaterThan(0);
+    await expect(page.locator(".desk-navigation")).toBeHidden();
+    await expect(page.locator("#workspace")).toHaveCSS("padding-bottom", inset);
     await page.getByRole("dialog").getByRole("button", { name: /^Close / }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.locator("html")).toHaveAttribute("data-native-navigation", "ready");

@@ -417,11 +417,12 @@ function ChangeContents({ children, className, stagger, direction, compact, iden
 
 export function Change({ children, identity, className = "", stagger = false, direction = 1 }: { children: ReactNode; identity: string | number; className?: string; stagger?: boolean; direction?: number }) {
   const compact = useCompactLayout();
+  const immediate = compact || isTauri();
   const [transition, setTransition] = useState({ identity, key: identity });
-  if (transition.identity !== identity) setTransition({ identity, key: compact ? transition.key : identity });
+  if (transition.identity !== identity) setTransition({ identity, key: immediate ? transition.key : identity });
   return (
-    <AnimatePresence mode={compact ? "sync" : "wait"} initial={false} custom={direction}>
-      <ChangeContents key={transition.key} identity={identity} compact={compact} className={className} stagger={stagger} direction={direction}>{children}</ChangeContents>
+    <AnimatePresence mode={immediate ? "sync" : "wait"} initial={false} custom={direction}>
+      <ChangeContents key={transition.key} identity={identity} compact={immediate} className={className} stagger={stagger} direction={direction}>{children}</ChangeContents>
     </AnimatePresence>
   );
 }

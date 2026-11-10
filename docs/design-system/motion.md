@@ -56,6 +56,11 @@ so the same element never plays twice. Persistent navigation does not replay.
 Compact views never wait for an exit. Changing the responsive breakpoint does
 not replace the active workspace or discard its inspector state.
 
+Native Tauri views use the same immediate, stable-host handoff as compact views,
+including on macOS. They never wait for an outgoing cascade to empty the WebView.
+Native appearance changes apply theme and palette together without a document
+View Transition snapshot. Ordinary browsers retain the appearance crossfade.
+
 `Presence` retains conditional dialogs and inspectors until their existing
 exit finishes. Keep dialog focus, Escape, inert background, scroll locks and
 opener restoration owned by the shared surface components. Dialogs capture the
@@ -68,9 +73,16 @@ exits use the shared departure timing.
 
 Activity rows own Motion layout projection and presence. Their entrances are
 560ms staggered opacity changes rather than a second transform animation.
-Layout shifts and row removals follow the same DOM-order cadence. Activity and
-calendar reviews stay at full size with 14px vertical travel instead of stretching
-a short row or tile into a full-height panel. Removed rows remain mounted until
+Layout shifts and row removals follow the same DOM-order cadence. Activity
+reviews stay at full size with 14px vertical travel. Modal calendar inspectors
+instead capture their initiating tile's viewport bounds and use one 560ms native
+transform animation to expand into their final surface. Measurement and playback
+begin before paint; dismissal, unmount and live reduced-motion changes cancel
+playback and restore inline transforms. Reduced motion opens directly at final
+size. Native overlay surfaces use the opaque material fallback instead of moving
+a backdrop-filtered layer; the stationary scrim retains blur. Dialogs enter the
+top layer and establish focus and scroll locks before paint.
+Removed rows remain mounted until
 their opacity exit completes. Disclosure children receive individual 60ms delays;
 collapse waits for the final child's fade. `SelectionGroup` scopes shared selection indicators
 without adding DOM wrappers or nested focus targets.

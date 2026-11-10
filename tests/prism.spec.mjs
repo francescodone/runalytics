@@ -372,36 +372,59 @@ test.describe("compact navigation latency", () => {
   }
 });
 
-for (const reducedMotion of ["no-preference", "reduce"]) {
-  test(`appearance changes respect motion preference ${reducedMotion}`, async ({ page }) => {
+for (const width of [390, 1440]) test(`native view handoffs keep their host and never wait for an exit ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => { window.isTauri = true; });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto("/desk.html#training");
+  await expect(page.locator(".training-context")).toBeVisible();
+  for (const destination of ["journal", "health", "training", "journal", "health"]) {
+    const result = await page.evaluate(async workspace => {
+      const host = document.querySelector("#workspace > .motion-change");
+      location.hash = workspace;
+      for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+      return { same: host === document.querySelector("#workspace > .motion-change"), exiting: document.querySelectorAll('[data-transition-state="exiting"]').length };
+    }, destination);
+    expect(result).toEqual({ same: true, exiting: 0 });
+    await expect(page.locator("#workspace")).toHaveClass(new RegExp(`workspace-${destination}`));
+  }
+  expect(errors).toEqual([]);
+});
+
+for (const runtime of ["browser", "native"]) for (const reducedMotion of ["no-preference", "reduce"]) {
+  test(`appearance changes respect motion preference ${runtime} ${reducedMotion}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion });
-    await page.addInitScript(() => {
-      const start = document.startViewTransition.bind(document);
+    await page.addInitScript(native => {
+      if (native) window.isTauri = true;
+      const start = document.startViewTransition?.bind(document);
       window.__appearanceTransitions = 0;
       document.startViewTransition = (...args) => {
         window.__appearanceTransitions++;
-        return start(...args);
+        return start?.(...args);
       };
-    });
+    }, runtime === "native");
     await page.goto("/desk.html?theme=light#settings/appearance");
     await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
     const initialTransitions = await page.evaluate(() => window.__appearanceTransitions);
     await page.getByRole("radio", { name: "Dark", exact: true }).check();
     await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
-    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (reducedMotion === "reduce" ? 0 : 1));
+    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (runtime === "native" || reducedMotion === "reduce" ? 0 : 1));
     await page.getByRole("radio", { name: "Light", exact: true }).check();
     await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "light");
     await page.getByRole("radio", { name: "Raspberry Relay", exact: true }).check();
     await expect(page.locator("html")).toHaveAttribute("data-desk-palette", "carnival");
-    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (reducedMotion === "reduce" ? 0 : 3));
+    await expect.poll(() => page.evaluate(() => window.__appearanceTransitions)).toBe(initialTransitions + (runtime === "native" || reducedMotion === "reduce" ? 0 : 3));
   });
 }
 
-for (const theme of ["light", "dark"]) {
+for (const runtime of ["browser", "native"]) for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 820, 1440]) {
-    test(`calendar panel lands without stretching and returns ${theme} ${width}px`, async ({ page }, testInfo) => {
+    test(`calendar panel morphs from its tile and returns ${runtime} ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ reducedMotion: "no-preference" });
+      if (runtime === "native") await page.addInitScript(() => { window.isTauri = true; });
       await page.goto(`/desk.html?theme=${theme}#training`);
       if (width <= 800) await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
       await page.locator(".session-tile:visible").first().evaluate(element => element.setAttribute("data-morph-source", ""));
@@ -426,13 +449,15 @@ for (const theme of ["light", "dark"]) {
       expect(frames.frames.length).toBeGreaterThan(10);
       const first = frames.frames[0];
       const last = frames.frames.at(-1);
-      expect(first.x).toBeCloseTo(last.x, 0);
-      expect(Math.abs(first.y - last.y)).toBeLessThanOrEqual(16);
-      expect(frames.frames.some(frame => frame.y > last.y + .2)).toBe(true);
-      expect(frames.frames.every(frame => Math.abs(frame.width - last.width) < 1 && Math.abs(frame.height - last.height) < 1)).toBe(true);
+      expect(Math.abs(first.width - frames.source.width)).toBeLessThan(Math.abs(last.width - frames.source.width) * .5);
+      expect(Math.abs(first.height - frames.source.height)).toBeLessThan(Math.abs(last.height - frames.source.height) * .5);
+      expect(Math.abs(first.x - frames.source.x)).toBeLessThan(Math.max(5, Math.abs(last.x - frames.source.x) * .5));
+      expect(Math.abs(first.y - frames.source.y)).toBeLessThan(Math.max(5, Math.abs(last.y - frames.source.y) * .5));
+      expect(frames.frames.some(frame => frame.width > first.width + 1 && frame.width < last.width - 1)).toBe(true);
       await expect(tile).toHaveCSS("visibility", "visible");
       const inspector = page.getByRole("dialog", { name: "Session", exact: true });
       await expect(inspector).toBeFocused();
+      if (runtime === "native") await expect(inspector).toHaveCSS("backdrop-filter", "none");
       await expect(page.locator("#workspace")).toHaveCSS("overflow", "hidden");
       await page.screenshot({ path: testInfo.outputPath("expanded-session.png") });
       const closing = await inspector.evaluate(async element => {
