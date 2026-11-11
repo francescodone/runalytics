@@ -1,4 +1,7 @@
 {
+  "Tempo and interval days": "テンポ走とインターバルの日",
+  "Choose at least one quality day.": "質の高い練習の日を1日以上選択してください。",
+  "Choose available days at least two days from your long run. Some weeks may have fewer quality sessions.": "ロング走から2日以上離れた日を選択してください。週によってはポイント練習が少なくなります。",
   "How was this session?": "今回のセッションはどうでしたか？",
   "Compared with the prescription (optional)": "予定された内容と比べて（任意）",
   "Much too easy": "簡単すぎた", "Slightly easy": "少し簡単だった", "About right": "ちょうどよかった", "Slightly hard": "少しきつかった", "Much too hard": "きつすぎた",

@@ -447,9 +447,11 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
   const [mileage, setMileage] = useState("");
   const [frequency, setFrequency] = useState(4);
   const [longDay, setLongDay] = useState(7);
+  const [qualityDays, setQualityDays] = useState<number[]>([2, 4]);
   const [increase, setIncrease] = useState<PlanRequest["increase"]>("moderate");
   const [name, setName] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
+  const validQualityDays = qualityDays.filter(day => { const distance = Math.abs(day - longDay); return Math.min(distance, 7 - distance) >= 2; });
   const effectiveDate = kind === "maintenance" ? shiftDate(startDate || today(), weeks * 7) : target;
   const earliestEndDate = [shiftDate(startDate || today(), 15), shiftDate(today(), 1)].sort()[1];
   useEffect(() => { if (step > 0) form.current?.querySelector<HTMLElement>(step === 2 ? "h3" : "input,select")?.focus({ preventScroll: true }); }, [step]);
@@ -457,10 +459,11 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
     event.preventDefault(); setValidation(null);
     if (!startDate || effectiveDate < earliestEndDate) { setValidation(t("Choose an end date at least 15 days after the start date and later than today.")); return; }
     if (step === 1 && (parsePace(threshold) == null || parsePace(threshold)! <= 0)) { setValidation(t("Enter a threshold pace such as 4:45.")); return; }
+    if (step === 1 && validQualityDays.length === 0) { setValidation(t("Choose at least one quality day.")); return; }
     if (step < 2) { setStep(step + 1); return; }
     const parsed = parsePace(threshold);
     if (parsed == null || parsed <= 0) { setValidation(t("Enter a threshold pace such as 4:45.")); return; }
-    if (await command.run(() => tauri.createPlan({ kind, trainingMethod, distance, startDate, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, increase, currentWeeklyKm: mileage ? Number(mileage) : null, name: name.trim() || null }), t("Your plan is ready."))) { navigate("training", "plan"); onClose(); }
+    if (await command.run(() => tauri.createPlan({ kind, trainingMethod, distance, startDate, targetDate: effectiveDate, thresholdSecKm: parsed, weeklyFrequency: frequency, longrunDay: longDay, qualityDays: validQualityDays, increase, currentWeeklyKm: mileage ? Number(mileage) : null, name: name.trim() || null }), t("Your plan is ready."))) { navigate("training", "plan"); onClose(); }
   }
   return <Dialog title={t("Create training plan")} wide onClose={onClose}><div className="plan-composer"><form ref={form} onSubmit={submit}><div className="composer-progress" aria-label={t("Step {{value0}} of 3", { value0: step + 1 })}>{[t("Direction"), t("Your baseline"), t("Review")].map((label, index) => <span key={label} aria-current={index === step ? "step" : undefined}>{index + 1}. {label}</span>)}</div>
     <ErrorNotice error={validation ?? command.error} />
@@ -478,6 +481,7 @@ function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: (
       <label className="full">{t("Plan name (optional)")}<input value={name} maxLength={60} placeholder={t("Spring half build")} onChange={event => setName(event.target.value)} /><span className="muted">{t("How Runalytics calls this plan. Your watch keeps one Runalytics plan slot and shows the name inside its description.")}</span></label>
     </div>}
     {step === 1 && <div className="form-grid"><label>{t("Threshold pace (min/km)")}<input required value={threshold} placeholder="4:45" pattern="[0-9]{1,2}:[0-5][0-9]" onChange={event => setThreshold(event.target.value)} /></label><label>{t("Current weekly mileage (km)")}<input type="number" min="5" max="250" step="0.1" value={mileage} placeholder={defaults?.currentWeeklyKm ? t("Leave empty for your synced average: {{value0}}", { value0: number(defaults.currentWeeklyKm, 1) }) : t("Leave empty to use your synced history")} onChange={event => setMileage(event.target.value)} /><span className="muted">{t("Only fill this in if your recent runs do not reflect a normal week.")}</span></label><label>{t("Runs per week")}<input type="number" min="3" max="7" required value={frequency} onChange={event => setFrequency(Number(event.target.value))} /></label><label>{t("Long run day")}<select value={longDay} onChange={event => setLongDay(Number(event.target.value))}>{[t("Monday"), t("Tuesday"), t("Wednesday"), t("Thursday"), t("Friday"), t("Saturday"), t("Sunday")].map((day, index) => <option key={day} value={index + 1}>{day}</option>)}</select></label>{kind !== "maintenance" && <label className="full">{t("Mileage progression")}<select value={increase} onChange={event => setIncrease(event.target.value as PlanRequest["increase"])}><option value="conservative">{t("Conservative / 5%")}</option><option value="moderate">{t("Moderate / 8%")}</option><option value="ambitious">{t("Ambitious / 12%")}</option></select></label>}</div>}
+    {step === 1 && <fieldset><legend>{t("Tempo and interval days")}</legend><p className="muted">{t("Choose available days at least two days from your long run. Some weeks may have fewer quality sessions.")}</p>{[t("Monday"), t("Tuesday"), t("Wednesday"), t("Thursday"), t("Friday"), t("Saturday"), t("Sunday")].map((day, index) => { const value = index + 1; const distance = Math.abs(value - longDay); const disabled = Math.min(distance, 7 - distance) < 2; return <label key={value}><input type="checkbox" checked={!disabled && qualityDays.includes(value)} disabled={disabled} onChange={event => setQualityDays(current => event.target.checked ? [...current.filter(selected => selected !== value), value] : current.filter(selected => selected !== value))} />{day}</label>; })}</fieldset>}
     {step === 2 && <><h3 tabIndex={-1}>{t("Ready to build your plan")}</h3><p>{t("Your schedule is generated locally from these inputs. Sending it to your watch is a separate action.")}</p>{defaults?.activePain && <p className="context-note">{t("Unresolved pain: {{value0}}, {{value1}}/10. Consider reviewing it in Health before starting a new plan.", { value0: defaults.activePain.bodyPart, value1: defaults.activePain.intensity })}</p>}</>}
     </Change>
     <div className="form-actions">{step > 0 && <Button onClick={() => setStep(step - 1)}>{t("Back")}</Button>}<Button tone="primary" type="submit" busy={command.busy}>{step === 2 ? t("Build plan") : t("Continue")}</Button></div>

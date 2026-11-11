@@ -214,6 +214,7 @@ export interface PlanRequest {
   thresholdSecKm: number;
   weeklyFrequency: number;
   longrunDay: number;
+  qualityDays?: number[];
   increase: IncreaseMethod;
   /// Current weekly mileage (km); null lets the backend derive it from syncs.
   currentWeeklyKm: number | null;

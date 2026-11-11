@@ -336,7 +336,8 @@ progress { accent-color: var(--desk-action); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; animation: none !important; }
   [data-reveal="waiting"] { opacity: 1; }
-  .stage-ring { display: none; }
+  .stage-ring circle { animation: stage-ring-drain var(--notice-duration) linear forwards !important; }
+  .desk-notice:hover .stage-ring circle, .desk-notice:focus-within .stage-ring circle { animation-play-state: paused !important; }
   :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label) { transform: none !important; translate: none !important; }
   :is(button, a, summary, .choice-row label, .palette-options label):is(:active, [data-aura-pressed="true"]), .session-tile:hover { scale: 1 !important; translate: none !important; }
   .desk-button.primary .button-content { transform: none !important; }

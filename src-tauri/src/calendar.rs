@@ -1017,6 +1017,7 @@ mod tests {
             threshold_sec_km: 285.0,
             weekly_frequency: 4,
             longrun_day: 7,
+            quality_days: vec![],
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(30.0),
             name: None,

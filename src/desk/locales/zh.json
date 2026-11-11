@@ -1,4 +1,7 @@
 {
+  "Tempo and interval days": "节奏跑和间歇跑日期",
+  "Choose at least one quality day.": "请至少选择一天进行质量训练。",
+  "Choose available days at least two days from your long run. Some weeks may have fewer quality sessions.": "请选择与长距离跑至少间隔两天的日期。某些周的质量训练可能较少。",
   "How was this session?": "这次训练感觉如何？",
   "Compared with the prescription (optional)": "与计划要求相比（可选）",
   "Much too easy": "太轻松", "Slightly easy": "稍微轻松", "About right": "正合适", "Slightly hard": "稍微吃力", "Much too hard": "太吃力",

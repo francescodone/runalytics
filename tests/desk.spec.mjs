@@ -3446,6 +3446,24 @@ test("the plain notice carries the same countdown ring around its dismiss button
   await expect(page.locator(".desk-notice .stage-ring")).toBeVisible();
 });
 
+test("reduced motion retains and pauses the notification countdown", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "sync", target: "db", state: "done" });
+  await emitStage(page, { op: "sync", target: "op", state: "done" });
+  const ring = toast.locator(".stage-ring circle");
+  await expect(ring).toBeVisible();
+  await expect(ring).toHaveCSS("animation-play-state", "running");
+  const initialOffset = await ring.evaluate(element => Number.parseFloat(getComputedStyle(element).strokeDashoffset));
+  await expect.poll(() => ring.evaluate(element => Number.parseFloat(getComputedStyle(element).strokeDashoffset))).toBeGreaterThan(initialOffset);
+  await toast.hover();
+  await expect(ring).toHaveCSS("animation-play-state", "paused");
+  await page.mouse.move(0, 0);
+  await expect(ring).toHaveCSS("animation-play-state", "running");
+  await expect(toast).toBeHidden({ timeout: 10000 });
+});
+
 for (const theme of ["light", "dark"]) {
   for (const width of [390, 1440]) {
     test(`notifications use translucent theme glass ${theme} ${width}px`, async ({ page }, testInfo) => {

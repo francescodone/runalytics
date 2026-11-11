@@ -1,3 +1,16 @@
+## Quality Day Selection, 2026-11-11
+
+Plan creation offers localized weekday checkboxes for tempo and interval availability.
+Days less than two days from the long run are disabled; at least one available day
+is required. Training and recovery constraints may produce fewer quality sessions.
+Older requests without a selection retain the existing automatic scheduling behavior.
+
+Verification: the production build, catalog check, 30 plan-engine tests, and
+10 focused Chromium creation checks passed, as did 35 Prism route and intermediate
+viewport checks. The chooser workflow was exercised at
+320, 390, 768 and 1440px in light and dark. Browser tests use synthetic IPC;
+native device and live watch scheduling were not verified.
+
 ## Optional Session Feedback And Plan Difficulty, 2026-11-10
 
 Completed tempo, interval, benchmark and long-run reviews offer an optional,

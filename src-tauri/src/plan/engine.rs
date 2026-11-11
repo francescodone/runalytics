@@ -449,6 +449,13 @@ pub fn generate_with_evidence(
     if !(1..=7).contains(&req.longrun_day) {
         return Err(AppError::Other("long-run day must be 1..=7".into()));
     }
+    if req.quality_days.iter().any(|&day| {
+        if !(1..=7).contains(&day) { return true; }
+        let distance = (day as i64 - req.longrun_day as i64).abs();
+        distance.min(7 - distance) < 2
+    }) {
+        return Err(AppError::Other("quality days must be at least two days from the long run".into()));
+    }
 
     // An explicit mileage from the form wins over the synced-activities baseline.
     let requested = req.current_weekly_km.unwrap_or(baseline_km);
@@ -632,6 +639,26 @@ pub fn generate_with_evidence(
                 quality_off = Some(free);
             }
         }
+        if !req.quality_days.is_empty() {
+            let preferred = req.quality_days.iter().map(|&day| day as usize - 1)
+                .filter(|&off| before_race(off))
+                .max_by_key(|&off| {
+                    let has_partner = req.quality_days.iter().any(|&day| {
+                        let distance = (day as i64 - 1 - off as i64).abs();
+                        distance.min(7 - distance) >= 2
+                    });
+                    (has_partner, gap(off))
+                });
+            if let Some(off) = preferred {
+                if !slots.contains(&off) {
+                    if let Some(moved) = slots.iter().copied().min_by_key(|&slot| gap(slot)) {
+                        slots.retain(|&slot| slot != moved);
+                        slots.push(off);
+                    }
+                }
+            }
+            quality_off = preferred;
+        }
 
         // Fitness ramps week by week: the threshold sharpens and the quality
         // load grows with it, so week 1's intervals are not week 10's.
@@ -690,7 +717,8 @@ pub fn generate_with_evidence(
                 // Hard days never touch: two clear days from the long run and
                 // at least one easy day between the two sessions.
                 let spaced = |off: usize| {
-                    off != primary && off != lr_off && gap(off) >= 2 && {
+                    off != primary && off != lr_off && gap(off) >= 2
+                        && (req.quality_days.is_empty() || req.quality_days.contains(&(off as u32 + 1))) && {
                         let d = (off as i64 - primary as i64).abs();
                         d.min(7 - d) >= 2
                     }
@@ -961,6 +989,7 @@ mod tests {
             threshold_sec_km: 285.0, // 4:45/km
             weekly_frequency: 4,
             longrun_day: 6,
+            quality_days: vec![],
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
             name: None,
@@ -996,6 +1025,22 @@ mod tests {
         assert!(generate(&invalid, 30.0).is_err());
         let too_short = PlanRequest { target_date: start_date + chrono::Duration::days(7), ..request };
         assert!(generate(&too_short, 30.0).is_err());
+    }
+
+    #[test]
+    fn quality_workouts_follow_selected_weekdays() {
+        let mut request = req_from_now(RaceDistance::K21, 16);
+        request.longrun_day = 7;
+        request.weekly_frequency = 5;
+        for days in [vec![2], vec![2, 4]] {
+            request.quality_days = days.clone();
+            let (_, workouts) = generate(&request, 60.0).unwrap();
+            let quality: Vec<_> = workouts.iter().filter(|workout| matches!(workout.kind, WorkoutKind::Tempo | WorkoutKind::Intervals)).collect();
+            assert!(!quality.is_empty());
+            assert!(quality.iter().all(|workout| days.contains(&iso_weekday(workout.date))));
+        }
+        request.quality_days = vec![6];
+        assert!(generate(&request, 60.0).is_err());
     }
 
     #[test]
@@ -1415,6 +1460,7 @@ mod tests {
             threshold_sec_km: 285.0,
             weekly_frequency: 4,
             longrun_day: 6,
+            quality_days: vec![],
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
             name: None,

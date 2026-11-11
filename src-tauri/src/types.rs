@@ -298,6 +298,8 @@ pub struct PlanRequest {
     pub weekly_frequency: u32,
     /// ISO weekday of the long run (1 = Mon .. 7 = Sun).
     pub longrun_day: u32,
+    #[serde(default)]
+    pub quality_days: Vec<u32>,
     pub increase: IncreaseMethod,
     /// Runner's current weekly mileage (km). When absent the backend
     /// derives it from the last weeks of synced activities.

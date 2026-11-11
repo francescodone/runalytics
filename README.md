@@ -59,7 +59,10 @@ distributed.
   (+5 / +8 / +12 % per week). Geometric ramp with 3-build/1-down cycles,
   taper, and race week.
   Creation uses Direction, Baseline and Review steps, including a start date
-  that defaults to today. Workouts begin no earlier than the selected day;
+  that defaults to today. Choose one or more available tempo/interval days at
+  least two days from the long run. The plan uses only those days for quality
+  workouts, subject to spacing, recovery and training-load rules; some weeks
+  have fewer quality sessions. Workouts begin no earlier than the selected day;
   maintenance block lengths are counted from that date. The plan horizon combines
   a week-by-week roadmap with inputs, predictions, publishing and management.
   Each visit to Plan centers the current week. Creation is unavailable while a
@@ -77,6 +80,12 @@ distributed.
 - **Adaptive adjustments**: after every sync, poor recovery (sleep / RHR / HRV
   / ACWR) or a struggled session softens the next hard workout — never the
   other way around.
+- **Manual difficulty**: making a plan harder can transfer distance from an
+  unfinished easy run to a quality session in the same week, keeping weekly
+  mileage unchanged. Easy runs retain at least 3 km. When a transfer is not
+  available, the adjustment can instead change the work within the session or
+  its pace. Recovery, load and protected-week limits still apply; Undo restores
+  the affected distances and prescriptions.
 - **Performance adaptations**: sync and manual activity matching analyze measured
   tempo/interval reps. Consistent evidence can propose bounded changes to quality
   paces and upcoming quality distances, with before/after race estimates. Nothing

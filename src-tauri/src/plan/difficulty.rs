@@ -402,14 +402,45 @@ pub fn apply(
                     } else {
                         30.0
                     });
-                let Some(adjusted) =
-                    nudge(&current, baseline, plan.threshold_sec_km, cap, direction)
+                let monday = workout.date
+                    - chrono::Duration::days(workout.date.weekday().num_days_from_monday() as i64);
+                let mut donor_update = None;
+                let mut transferred = None;
+                if direction == Direction::Harder {
+                    for donor in workouts.iter().filter(|other| {
+                        other.kind == WorkoutKind::Easy && other.date >= today
+                            && other.date >= monday && other.date < monday + chrono::Duration::days(7)
+                            && !other.done && other.status == WorkoutStatus::Planned
+                            && !completions.iter().any(|entry| entry.0 == other.id)
+                    }) {
+                        let donor = updates.iter().find(|updated| updated.id == donor.id).unwrap_or(donor);
+                        let Some(distance) = donor.distance_m else { continue };
+                        for amount in [100.0, 200.0, 300.0, 400.0, 500.0] {
+                            if distance - amount < 3000.0 { break; }
+                            let mut padded = current.clone();
+                            padded.steps[0].distance_m += amount;
+                            if let Some(candidate) = nudge(&padded, baseline, plan.threshold_sec_km, cap, direction) {
+                                if candidate.steps[0].distance_m <= current.steps[0].distance_m + 0.001
+                                    && (candidate.distance_m() - current.distance_m() - amount).abs() < 0.001
+                                {
+                                    let mut changed_donor = donor.clone();
+                                    changed_donor.distance_m = Some(distance - amount);
+                                    changed_donor.duration_min = donor.duration_min.map(|minutes| minutes * (distance - amount) / distance);
+                                    donor_update = Some(changed_donor);
+                                    transferred = Some(candidate);
+                                    break;
+                                }
+                            }
+                        }
+                        if transferred.is_some() { break; }
+                    }
+                }
+                let Some(adjusted) = transferred.or_else(||
+                    nudge(&current, baseline, plan.threshold_sec_km, cap, direction))
                 else {
                     outcome.unchanged += 1;
                     continue;
                 };
-                let monday = workout.date
-                    - chrono::Duration::days(workout.date.weekday().num_days_from_monday() as i64);
                 let same_week = |other: &&PlanWorkout| {
                     other.date >= monday && other.date < monday + chrono::Duration::days(7)
                 };
@@ -460,6 +491,7 @@ pub fn apply(
                     continue;
                 }
                 let mut changed = workout.clone();
+                changed.distance_m = Some(adjusted.distance_m());
                 changed.duration_min = adjusted.estimated_min;
                 changed
                     .customization
@@ -469,6 +501,13 @@ pub fn apply(
                     baseline: baseline.clone(),
                     current: adjusted,
                 });
+                if let Some(donor) = donor_update {
+                    if let Some(existing) = updates.iter_mut().find(|updated| updated.id == donor.id) {
+                        *existing = donor;
+                    } else {
+                        updates.push(donor);
+                    }
+                }
                 updates.push(changed);
                 outcome.changed += 1;
             }
@@ -478,7 +517,7 @@ pub fn apply(
         }
     }
     if !updates.is_empty() {
-        store.commit_difficulty(plan_id, revision, &updates)?;
+        store.commit_difficulty(plan_id, revision, &workouts, &updates)?;
     }
     Ok(outcome)
 }
@@ -568,6 +607,7 @@ mod tests {
             threshold_sec_km: 300.0,
             weekly_frequency: 4,
             longrun_day: 7,
+            quality_days: vec![],
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(40.0),
             name: None,
@@ -582,6 +622,50 @@ mod tests {
         store.insert_plan(&plan).unwrap();
         store.insert_workouts(&workouts).unwrap();
         (store, plan, workouts)
+    }
+
+    #[test]
+    fn harder_transfers_easy_mileage_and_undo_restores_it() {
+        let (store, plan, workouts) = seed();
+        store.upsert_health(ProviderKind::Coros, &HealthDaily {
+            date: Utc::now().date_naive(), steps: Some(8000), avg_hr: None,
+            resting_hr: Some(50), stress_avg: Some(10), sleep_score: Some(100),
+            sleep_min: Some(510), deep_min: None, rem_min: None, hrv_avg: Some(70.0),
+        }).unwrap();
+        store.upsert_training_load(ProviderKind::Coros, &TrainingLoad {
+            date: Utc::now().date_naive(), short_term: Some(50.0), long_term: Some(50.0),
+            ratio: Some(1.0), comment: None,
+        }).unwrap();
+        let revision = store.current_plan_rev().unwrap().unwrap();
+        apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Harder), None).unwrap();
+        let updated = store.plan_workouts(&plan.id).unwrap();
+        let mut transferred = false;
+        for original in &workouts {
+            let monday = original.date - chrono::Duration::days(original.date.weekday().num_days_from_monday() as i64);
+            let week = |workout: &&PlanWorkout| workout.date >= monday && workout.date < monday + chrono::Duration::days(7);
+            let before: f64 = workouts.iter().filter(week).map(|workout| workout.distance_m.unwrap_or(0.0)).sum();
+            let after: f64 = updated.iter().filter(week).map(|workout| workout.distance_m.unwrap_or(0.0)).sum();
+            assert!((before - after).abs() < 0.001);
+            let changed = updated.iter().find(|workout| workout.id == original.id).unwrap();
+            if changed.distance_m < original.distance_m {
+                assert_eq!(original.kind, WorkoutKind::Easy);
+                assert!(!original.done);
+                assert!(original.date >= Local::now().date_naive());
+                assert!(changed.distance_m.unwrap() >= 3000.0);
+            }
+            if original.kind == WorkoutKind::Tempo && changed.distance_m > original.distance_m {
+                transferred = true;
+                let details = super::super::session::details_for_plan(changed, &plan);
+                assert!((details.distance_m() - changed.distance_m.unwrap()).abs() < 0.001);
+                assert!(workouts.iter().filter(week).any(|easy| easy.kind == WorkoutKind::Easy && updated.iter().find(|workout| workout.id == easy.id).unwrap().distance_m < easy.distance_m));
+            }
+        }
+        assert!(transferred, "Expected an eligible tempo to gain mileage from an easy run");
+        store.undo_difficulty(&plan.id).unwrap();
+        let restored = store.plan_workouts(&plan.id).unwrap();
+        for original in &workouts {
+            assert_eq!(restored.iter().find(|workout| workout.id == original.id).unwrap().distance_m, original.distance_m);
+        }
     }
 
     #[test]
