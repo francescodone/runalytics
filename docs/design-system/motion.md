@@ -39,7 +39,8 @@ There is no animated blur on large surfaces or repeated rows.
 Reveals register before paint and wait for viewport entry. Ordinary rerenders
 do not replay them. Each view change gets the same fresh, scoped landing.
 Observer callback entries are sorted by DOM order, independently of delivery order.
-Nested reveal targets never animate their ancestor at the same time. Elements
+Nested reveal targets animate as one outer visual unit, including its borders
+and controls, instead of revealing only their innermost content. Elements
 containing dialogs, inspectors or notification viewports are not transformed.
 Pointer-down and keyboard focus settle an entrance immediately. Preference
 changes cancel native playback and restore the original inline styles.

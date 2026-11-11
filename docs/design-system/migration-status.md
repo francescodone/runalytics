@@ -1,3 +1,11 @@
+## Complete Reveal Units, 2026-11-11
+
+Nested entrance targets now reveal their outer visual unit, including borders and
+controls. Retained views clear stale child markers when replaying their parent.
+The production build and focused Chromium checks passed for a nested bordered
+unit at 1440px and retained-view navigation at 390px. These browser checks use
+synthetic IPC; physical devices and the full width/theme matrix were not verified.
+
 ## Quality Day Selection, 2026-11-11
 
 Plan creation offers localized weekday checkboxes for tempo and interval availability.

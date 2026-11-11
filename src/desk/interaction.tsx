@@ -211,13 +211,17 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
       for (const element of elements) {
         if (element.closest('[inert], [data-transition-state="exiting"]') || !element.checkVisibility()) continue;
+        if (element.closest(".motion-disclosure")) continue;
+        if (element.querySelector(".desk-inspector, .desk-dialog, .notification-viewport")) continue;
+        const ancestor = element.parentElement?.closest<HTMLElement>('[data-reveal]:not([data-reveal="container"])');
+        if (ancestor && (elements.includes(ancestor) || pending.has(ancestor) || running.has(ancestor))) continue;
         if (replay) { settleElement(element); revealed.delete(element); }
         if (revealed.has(element) || pending.has(element)) continue;
-        if (element.closest(".motion-disclosure")) continue;
-        if (element.querySelector(`${selector}, .desk-inspector, .desk-dialog, .notification-viewport`)) continue;
-        for (let ancestor = element.parentElement?.closest<HTMLElement>("[data-reveal]"); ancestor; ancestor = ancestor.parentElement?.closest<HTMLElement>("[data-reveal]")) {
-          settleElement(ancestor);
-          ancestor.dataset.reveal = "container";
+        if (ancestor) ancestor.dataset.reveal = "container";
+        for (const descendant of element.querySelectorAll<HTMLElement>("[data-reveal]")) {
+          settleElement(descendant);
+          revealed.delete(descendant);
+          delete descendant.dataset.reveal;
         }
         order.set(element, sequence++);
         if (reduced.matches || element.contains(document.activeElement) || !replay && element.matches("[data-motion-layout]")) { settleElement(element); continue; }

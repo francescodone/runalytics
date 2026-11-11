@@ -1029,6 +1029,23 @@ test.describe("motion system", () => {
     expect(await leaves.evaluateAll(elements => elements.every(element => element.getAnimations().length === 0 && element.style.transform === ""))).toBe(true);
   });
 
+  test("Motion reveals complete nested visual units", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#health");
+    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    await page.evaluate(() => {
+      const root = document.createElement("section");
+      root.className = "motion-change";
+      root.innerHTML = '<div id="reveal-unit" data-entrance style="border: 2px solid black"><div data-entrance>Evidence</div><button>Action</button></div>';
+      document.querySelector("#workspace").prepend(root);
+    });
+    const unit = page.locator("#reveal-unit");
+    await expect(unit).toHaveAttribute("data-reveal", "visible");
+    expect(await unit.evaluate(element => ({ properties: element.getAnimations().flatMap(animation => Object.keys(animation.effect.getKeyframes()[0])), nested: element.querySelector("[data-entrance]").hasAttribute("data-reveal") }))).toMatchObject({ properties: expect.arrayContaining(["opacity", "transform"]), nested: false });
+    await expect(unit).toHaveAttribute("data-reveal", "settled");
+  });
+
   test("Motion activity removals retain their DOM until exit completes", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#journal");
