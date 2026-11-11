@@ -5,7 +5,7 @@
 //! Rules are deliberately conservative: they can only soften the next
 //! hard session, never intensify it.
 
-use chrono::{NaiveDate, Utc};
+use chrono::Utc;
 
 use crate::error::Result;
 use crate::store::Store;
@@ -53,7 +53,7 @@ pub fn recovery_from_health(days: &[HealthDaily]) -> u32 {
 
 /// Inspect the plan and current state; return workouts that should be
 /// softened, with reasons. Applied by the caller (and pushed opportunistically).
-pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
+pub fn evaluate(store: &Store, _th: &Thresholds) -> Result<Vec<Adjustment>> {
     let mut out = Vec::new();
     let Some((plan, workouts)) = store.current_plan()? else {
         return Ok(out);
@@ -62,9 +62,6 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
         return Ok(out);
     }
     let today = Utc::now().date_naive();
-    let health = store.recent_health(3)?;
-    let recovery = recovery_from_health(&health);
-    let load = store.latest_training_load()?;
 
     // Did the last completed planned workout go badly? (actual much slower)
     let last_done = workouts
@@ -72,7 +69,7 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
         .filter(|w| w.done && w.date <= today)
         .max_by_key(|w| w.date);
     let struggled = if let Some(done) = last_done {
-        recent_activity_struggled(store, done.date)?
+        recent_activity_struggled(store, done)?
     } else {
         false
     };
@@ -82,38 +79,7 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
     // the middle of the Fatigued band, so with COROS's default bands (0-19
     // Exhausted, 20-69 Fatigued) this reads as "below 45" exactly as it always
     // has, and it moves with the settings.
-    let fatigued_mid = (th.recovery_exhausted + th.recovery_fatigued + 2) / 2;
-    let low_recovery = recovery <= th.recovery_exhausted || recovery < fatigued_mid;
-    let high_load = load
-        .and_then(|l| l.ratio)
-        .map(|r| r > th.ratio_optimized_hi)
-        .unwrap_or(false);
-    // Unresolved pain at 5+/10 in the last week is its own trigger — but the
-    // pain path normally goes through a proposal the runner accepts, so this
-    // only fires the auto-softening when the niggle is still hurting now.
-    let pain = store.max_pain_intensity_since(today)?;
-    let significant_pain = pain.as_ref().map(|(i, _)| *i >= 5).unwrap_or(false);
-
-    // Threshold control: the plan stores the athlete state it was generated
-    // from, so a warning the softener reads today is only news if it was not
-    // already true when the plan was built. The engine shapes the schedule
-    // from that same state — if it scheduled a tempo run, it decided the
-    // state allowed one — and a softener firing on unchanged evidence
-    // contradicts it within seconds of the runner approving the plan. Only a
-    // state that has *become* a warning since then is a new concern worth
-    // giving up a session for.
-    let threshold_warning = plan.threshold_state.as_ref().is_some_and(|built_with| {
-        match super::threshold::wearable_evidence(store, today) {
-            Ok(evidence) => {
-                let now =
-                    super::threshold::athlete_state(&evidence, today, plan.threshold_sec_km);
-                in_warning(&now) && !in_warning(built_with)
-            }
-            Err(_) => false,
-        }
-    });
-
-    if !low_recovery && !high_load && !struggled && !significant_pain && !threshold_warning {
+    if !struggled {
         return Ok(out);
     }
 
@@ -157,44 +123,11 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
             && !proposal_touched.contains(&w.id)
     });
     if let Some(w) = next_hard {
-        let (kind, title, reason) =
-            if let Some((intensity, part)) = pain.filter(|_| significant_pain) {
-                (
-                    WorkoutKind::Easy,
-                    format!("Easy run (was: {})", w.title),
-                    format!(
-                        "pain reported in the {} ({intensity}/10)",
-                        crate::proposal::region_label(&part)
-                    ),
-                )
-            } else if threshold_warning {
-                (
-                    WorkoutKind::Easy,
-                    format!("Easy run (was: {})", w.title),
-                    "threshold control, density or recovery requires an easier session".to_string(),
-                )
-            } else if low_recovery || struggled {
-                (
-                    WorkoutKind::Easy,
-                    format!("Easy run (was: {})", w.title),
-                    if struggled {
-                        "previous session went poorly + low recovery".to_string()
-                    } else {
-                        format!("recovery score {recovery}/100")
-                    },
-                )
-            } else {
-                (
-                    WorkoutKind::Easy,
-                    format!("Easy run (was: {})", w.title),
-                    format!("training load ratio above {:.2}", th.ratio_optimized_hi),
-                )
-            };
         out.push(Adjustment {
             workout_id: w.id.clone(),
-            new_title: title,
-            new_kind: kind,
-            reason,
+            new_title: format!("Easy run (was: {})", w.title),
+            new_kind: WorkoutKind::Easy,
+            reason: "previous completed session was substantially slower than planned".into(),
         });
     }
     Ok(out)
@@ -203,32 +136,16 @@ pub fn evaluate(store: &Store, th: &Thresholds) -> Result<Vec<Adjustment>> {
 /// The threshold conditions the adaptive softener treats as a reason to give
 /// up a hard session. Shared so the state a plan was built with and the state
 /// read today are judged by exactly the same rule.
-fn in_warning(state: &super::threshold::AthleteState) -> bool {
-    state.repeated_overshoots >= 2
-        || state.hold_quality
-        || state.threshold_load_trend.is_some_and(|trend| trend > 0.2)
-}
-
-/// Compare the actual activity on `day` against the planned pace band.
-fn recent_activity_struggled(store: &Store, day: NaiveDate) -> Result<bool> {
-    let acts = store.list_activities(20)?;
-    let Some(act) = acts
-        .iter()
-        .find(|a| a.start_time.date_naive() == day && a.avg_pace_s_km.is_some())
-    else {
+fn recent_activity_struggled(store: &Store, workout: &PlanWorkout) -> Result<bool> {
+    let Some((_, activity_id, _)) = store.calendar_completions()?.into_iter().find(|(id, _, _)| id == &workout.id) else {
         return Ok(false);
     };
-    let planned = store.workouts_between(
-        &day.format("%Y-%m-%d").to_string(),
-        &day.format("%Y-%m-%d").to_string(),
-    )?;
-    let Some(p) = planned.first() else {
+    let Some(act) = store.activity_by_id(activity_id)? else {
         return Ok(false);
     };
-    let actual = act.avg_pace_s_km.unwrap_or(0.0);
-    if let (Some(_lo), Some(hi)) = (p.pace_lo_s_km, p.pace_hi_s_km) {
+    if let (Some(actual), Some(hi)) = (act.avg_pace_s_km, workout.pace_hi_s_km) {
         // More than 20 % slower than the slow end of the band = struggled.
-        return Ok(actual > hi as f64 * 1.2);
+        return Ok(actual.is_finite() && actual > hi as f64 * 1.2);
     }
     Ok(false)
 }
@@ -238,7 +155,6 @@ mod tests {
     use super::*;
     use crate::store::Store;
     use chrono::Duration;
-    use std::path::Path;
 
     fn store() -> Store {
         let path = std::env::temp_dir().join(format!("rk-adaptive-{}.sqlite", uuid::Uuid::new_v4()));
@@ -311,6 +227,26 @@ mod tests {
         }
     }
 
+    fn seed_slow_session(s: &Store, hard: &PlanWorkout) {
+        let mut completed = hard.clone();
+        completed.id = format!("completed-slow-{}", uuid::Uuid::new_v4());
+        completed.date = Utc::now().date_naive() - Duration::days(1);
+        completed.planned_date = completed.date;
+        completed.done = true;
+        s.insert_workouts(&[completed.clone()]).unwrap();
+        let timestamp = completed.date.and_hms_opt(12, 0, 0).unwrap().and_utc().timestamp();
+        let activity_id = {
+        let connection = s.conn.lock().unwrap();
+           let record_id = uuid::Uuid::new_v4().to_string();
+           connection.execute(
+            "INSERT INTO activities(provider,provider_record_id,sport,start_ts,duration_s,distance_m,avg_pace_s_km)
+               VALUES('coros',?1,'run',?2,3600,8000,400)", rusqlite::params![record_id,timestamp],
+        ).unwrap();
+           connection.last_insert_rowid()
+        };
+        s.complete_calendar_workout(&completed.id, activity_id, "").unwrap();
+    }
+
     /// The trigger evidence (low recovery, a threshold state in warning)
     /// persists across syncs. Without the cooldown, every sync would soften
     /// the next hard session and the plan would be eaten one workout at a
@@ -320,6 +256,7 @@ mod tests {
         let s = store();
         let hard = seed_plan(&s, 2);
         seed_low_recovery(&s);
+        seed_slow_session(&s, &hard);
         let th = Thresholds::default();
 
         let first = evaluate(&s, &th).expect("evaluate");
@@ -333,6 +270,7 @@ mod tests {
         let s2 = store();
         let hard2 = seed_plan(&s2, 2);
         seed_low_recovery(&s2);
+        seed_slow_session(&s2, &hard2);
         let again = evaluate(&s2, &th).expect("evaluate");
         assert_eq!(again.len(), 1);
         s2.soften_workout(&again[0].workout_id, again[0].new_kind, &again[0].new_title, &again[0].reason)
@@ -380,8 +318,9 @@ mod tests {
     #[test]
     fn clearing_and_recreating_a_plan_does_not_hand_the_softener_a_fresh_allowance() {
         let s = store();
-        seed_plan(&s, 2);
+        let hard = seed_plan(&s, 2);
         seed_low_recovery(&s);
+        seed_slow_session(&s, &hard);
         let th = Thresholds::default();
 
         let first = evaluate(&s, &th).expect("evaluate");
@@ -393,7 +332,8 @@ mod tests {
         // cooldown, with the same low recovery still in the health data.
         s.clear_plan_data().expect("clear");
         assert!(s.last_softened_at().expect("read").is_some(), "the clock outlives the plan");
-        seed_plan(&s, 2);
+        let hard = seed_plan(&s, 2);
+        seed_slow_session(&s, &hard);
         let after = evaluate(&s, &th).expect("evaluate on the new plan");
         assert!(
             after.is_empty(),
@@ -441,11 +381,6 @@ mod tests {
             followup_at: None,
         })
         .expect("seed pain");
-        let softened = evaluate(&s, &th).expect("evaluate after the state changed");
-        assert_eq!(
-            softened.len(),
-            1,
-            "a warning that appeared after the plan was built is worth one session"
-        );
+        assert!(evaluate(&s, &th).expect("evaluate after the state changed").is_empty());
     }
 }

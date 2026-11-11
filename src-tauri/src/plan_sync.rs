@@ -1484,7 +1484,7 @@ mod tests {
         AppState {
             store: crate::store::Store::open(&data_dir.join("store.sqlite")).unwrap(),
             settings: std::sync::Mutex::new(Default::default()),
-            providers: Vec::new(),
+            providers: Default::default(),
             data_dir,
             syncing: std::sync::atomic::AtomicBool::new(false),
             sync_lock: tokio::sync::Mutex::new(()),

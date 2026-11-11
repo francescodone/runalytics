@@ -479,13 +479,8 @@ pub fn build(store: &Store, plan: &TrainingPlan, th: &Thresholds) -> Result<Opti
     }))
 }
 
-pub(super) fn progression_allowed(store: &Store, th: &Thresholds) -> Result<bool> {
-    let scores = crate::metrics::compute_scores(store, th)?;
-    let load = store.latest_training_load()?.and_then(|load| load.ratio);
-    Ok(store.latest_pain()?.is_none()
-        && scores.recovery_score > th.recovery_fatigued
-        && scores.injury_risk < 60
-        && load.is_some_and(|ratio| ratio.is_finite() && ratio <= 1.3))
+pub(super) fn progression_allowed(_store: &Store, _th: &Thresholds) -> Result<bool> {
+    Ok(false)
 }
 
 pub fn adaptation_edits(
@@ -784,11 +779,11 @@ mod tests {
         benchmark.distance_m = Some(5000.0);
         benchmark.done = true;
         store.update_workout(&benchmark).unwrap();
-        let activity_id = synthetic_track(&store, "benchmark-result", benchmark.date, 5000.0, 240.0, None);
+        let activity_id = synthetic_track(&store, "benchmark-result", benchmark.date, 5000.0, 400.0, None);
         store.complete_calendar_workout(&benchmark.id, activity_id, "").unwrap();
         let th = Thresholds::default();
         let proposal = build(&store, &plan, &th).unwrap().expect("one benchmark supports a review");
-        assert_eq!(proposal.plan_quality_offset_sec_km, Some(-5.0));
+        assert_eq!(proposal.plan_quality_offset_sec_km, Some(5.0));
         assert!(proposal.summary.contains("parkrun"));
         store.insert_proposal(&proposal).unwrap();
         store.accept_pacing_proposal(&plan, &proposal).unwrap();
@@ -1049,10 +1044,10 @@ mod tests {
         let (plan, workouts) = plan_with_quality(&store, &[21, 18, 15, 12, 9, 6]);
         let thresholds = Thresholds { pace_streak: 6, ..Thresholds::default() };
         for workout in workouts.iter().take(5) {
-            complete(&store, &plan, workout, -15.0);
+            complete(&store, &plan, workout, 15.0);
         }
         assert!(build(&store, &plan, &thresholds).unwrap().is_none());
-        complete(&store, &plan, &workouts[5], -15.0);
+        complete(&store, &plan, &workouts[5], 15.0);
         assert_eq!(report(&store, &plan, &thresholds).unwrap().streak, 6);
         assert!(build(&store, &plan, &thresholds).unwrap().is_some());
         assert_eq!(insights(&store, &plan).unwrap().speed.len(), 5);
@@ -1114,25 +1109,15 @@ mod tests {
         for w in quality.iter().take(2) {
             complete(&s, &plan, w, -15.0);
         }
-        let reviews = reviews(&s, &plan, &th).unwrap();
-        assert_eq!(reviews.len(), 2);
-        assert!(reviews.iter().all(|r| r.execution == Execution::Ahead));
-        assert_eq!(streak(&reviews), (2, Some(Execution::Ahead)));
+        let initial_reviews = reviews(&s, &plan, &th).unwrap();
+        assert_eq!(initial_reviews.len(), 2);
+        assert!(initial_reviews.iter().all(|r| r.execution == Execution::Ahead));
+        assert_eq!(streak(&initial_reviews), (2, Some(Execution::Ahead)));
         assert!(build(&s, &plan, &th).unwrap().is_none(), "not before three");
 
-        // The default streak is three, so the third is what triggers it.
         complete(&s, &plan, &quality[2], -15.0);
-        let offer = build(&s, &plan, &th)
-            .unwrap()
-            .expect("three sessions down the range should offer a change");
-        assert_eq!(offer.source, ProposalSource::Pacing);
-        assert!(
-            offer.edits.is_empty(),
-            "a pacing offer moves ranges, not days"
-        );
-        // Running down the range means the plan was too easy → sharpen it.
-        assert_eq!(offer.plan_quality_offset_sec_km, Some(-5.0));
-        assert!(offer.summary.contains("sharpen"));
+        assert_eq!(streak(&reviews(&s, &plan, &th).unwrap()), (3, Some(Execution::Ahead)));
+        assert!(build(&s, &plan, &th).unwrap().is_none());
     }
 
     #[test]
@@ -1186,11 +1171,24 @@ mod tests {
     }
 
     #[test]
-    fn faster_adaptation_requires_safe_current_load() {
+    fn previously_saved_faster_proposal_cannot_be_applied() {
+        let store = store();
+        let (plan, quality) = plan_with_quality(&store, &[21, 14, 7]);
+        for workout in &quality { complete(&store, &plan, workout, 15.0); }
+        let mut proposal = build(&store, &plan, &Thresholds::default()).unwrap().unwrap();
+        proposal.plan_quality_offset_sec_km = Some(plan.quality_offset_sec_km - 5.0);
+        store.insert_proposal(&proposal).unwrap();
+        assert!(store.accept_pacing_proposal(&plan, &proposal).is_err());
+        assert_eq!(store.current_plan().unwrap().unwrap().0.quality_offset_sec_km, plan.quality_offset_sec_km);
+        assert_eq!(store.proposal_by_id(&proposal.id).unwrap().unwrap().status, ProposalStatus::Pending);
+    }
+
+    #[test]
+    fn faster_adaptation_is_disabled_regardless_of_current_load() {
         let store = store();
         let (plan, quality) = plan_with_quality(&store, &[21, 14, 7]);
         for workout in &quality { complete(&store, &plan, workout, -15.0); }
-        assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_some());
+        assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_none());
         store.upsert_training_load(ProviderKind::Coros, &TrainingLoad {
             date:Utc::now().date_naive(),short_term:Some(80.0),long_term:Some(50.0),ratio:Some(1.6),comment:None,
         }).unwrap();
@@ -1237,12 +1235,12 @@ mod tests {
         let s = store();
         let (plan, quality) = plan_with_quality(&s, &[21, 14, 7]);
         for w in &quality {
-            complete(&s, &plan, w, -15.0);
+            complete(&s, &plan, w, 15.0);
         }
         let th = Thresholds::default();
         assert!(build(&s, &plan, &th).unwrap().is_some());
         let adjusted = TrainingPlan {
-            quality_offset_sec_km: -5.0,
+            quality_offset_sec_km: 5.0,
             quality_offset_from: Some(Utc::now().date_naive()),
             ..plan.clone()
         };

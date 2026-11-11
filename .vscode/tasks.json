@@ -416,6 +416,30 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify provider capability separation",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib providers:: --features garmin --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Strava training-only intake",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib strava::intake::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify Strava source contracts",
+			"type": "shell",
+			"command": "npx tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml --lib strava:: --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

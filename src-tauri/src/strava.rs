@@ -16,6 +16,8 @@ use tauri::{AppHandle, State};
 #[cfg(target_os = "ios")]
 mod ios_auth;
 
+pub(crate) mod intake;
+
 const SERVICE: &str = "com.fradone.runalytics.strava";
 const API: &str = "https://www.strava.com/api/v3";
 #[cfg(any(target_os = "ios", test))]
@@ -51,6 +53,38 @@ struct Tokens {
     refresh_token: String,
     expires_at: i64,
     athlete_id: i64,
+    #[serde(default = "legacy_scopes")]
+    scopes: Vec<String>,
+}
+
+fn legacy_scopes() -> Vec<String> {
+    vec!["activity:read_all".into(), "activity:write".into()]
+}
+
+impl Tokens {
+    fn can_write(&self) -> bool {
+        self.scopes.iter().any(|scope| scope == "activity:write")
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Permissions {
+    private_activities: bool,
+    write_descriptions: bool,
+}
+
+impl Permissions {
+    fn scopes(self) -> String {
+        let read = if self.private_activities { "activity:read_all" } else { "activity:read" };
+        if self.write_descriptions { format!("{read},activity:write") } else { read.into() }
+    }
+
+    fn accepts(self, scopes: &[String]) -> bool {
+        let has = |scope: &str| scopes.iter().any(|granted| granted == scope);
+        (has("activity:read") || has("activity:read_all"))
+            && (!self.private_activities || has("activity:read_all"))
+            && (!self.write_descriptions || has("activity:write"))
+    }
 }
 
 pub(crate) fn transfer_credentials() -> Result<Option<serde_json::Value>> {
@@ -102,6 +136,9 @@ pub struct Status {
     needs_review: usize,
     last_message: Option<String>,
     last_attempt_at: Option<i64>,
+    can_read_activities: bool,
+    can_read_private_activities: bool,
+    can_write_descriptions: bool,
 }
 
 fn status(store: &Store) -> Result<Status> {
@@ -113,6 +150,11 @@ fn status(store: &Store) -> Result<Status> {
         client_id: config.client_id,
         connected: config.tokens.is_some(),
         athlete_id: config.tokens.as_ref().map(|tokens| tokens.athlete_id),
+        can_read_activities: config.tokens.as_ref().is_some_and(|tokens| Permissions {
+            private_activities: false, write_descriptions: false,
+        }.accepts(&tokens.scopes)),
+        can_read_private_activities: config.tokens.as_ref().is_some_and(|tokens| tokens.scopes.iter().any(|scope| scope == "activity:read_all")),
+        can_write_descriptions: config.tokens.as_ref().is_some_and(Tokens::can_write),
         ..Status::default()
     };
     account_status(store, output)
@@ -213,6 +255,9 @@ pub async fn strava_set_enabled(state: State<'_, AppState>, enabled: bool) -> Re
     let tokens = config
         .tokens
         .ok_or_else(|| failure("Connect Strava first."))?;
+    if enabled && !tokens.can_write() {
+        return Err(failure("Reconnect Strava with activity write permission before enabling descriptions."));
+    }
     state.store.conn.lock().unwrap().execute(
         "UPDATE strava_accounts SET enabled=?2,enabled_at=CASE WHEN ?2=1 THEN COALESCE(enabled_at,?3) ELSE enabled_at END WHERE athlete_id=?1",
         params![tokens.athlete_id, enabled, Utc::now().timestamp()],
@@ -288,7 +333,7 @@ async fn token_request(config: &Credentials, grant: &str, value: &str) -> Result
         .map_err(|_| failure("Strava returned an invalid authorization response."))
 }
 
-fn authorize_url(client_id: &str, redirect: &str, state: &str) -> Result<tauri::Url> {
+fn authorize_url_with_permissions(client_id: &str, redirect: &str, state: &str, permissions: Permissions) -> Result<tauri::Url> {
     let endpoint = if cfg!(target_os = "ios") {
         "https://www.strava.com/oauth/mobile/authorize"
     } else {
@@ -300,11 +345,24 @@ fn authorize_url(client_id: &str, redirect: &str, state: &str) -> Result<tauri::
         ("client_id", client_id),
         ("redirect_uri", redirect),
         ("response_type", "code"),
-        ("scope", "activity:read_all,activity:write"),
+        ("scope", permissions.scopes().as_str()),
         ("approval_prompt", "force"),
         ("state", state),
     ]);
     Ok(url)
+}
+
+#[cfg(test)]
+fn authorize_url(client_id: &str, redirect: &str, state: &str) -> Result<tauri::Url> {
+    authorize_url_with_permissions(client_id, redirect, state, Permissions {
+        private_activities: true, write_descriptions: true,
+    })
+}
+
+fn callback_scopes(callback: &tauri::Url) -> Vec<String> {
+    callback.query_pairs().find(|(key, _)| key == "scope")
+        .map(|(_, value)| value.split([',', ' ']).filter(|scope| !scope.is_empty()).map(str::to_owned).collect())
+        .unwrap_or_default()
 }
 
 fn callback_code(callback: &tauri::Url, redirect: &str, expected_state: &str) -> Result<String> {
@@ -324,13 +382,9 @@ fn callback_code(callback: &tauri::Url, redirect: &str, expected_state: &str) ->
     if pairs.contains_key("error") {
         return Err(failure("Strava sign-in was declined."));
     }
-    let scopes: Vec<_> = pairs
-        .get("scope")
-        .map(|scope| scope.split([',', ' ']).collect())
-        .unwrap_or_default();
-    if !scopes.contains(&"activity:read_all") || !scopes.contains(&"activity:write") {
+    if !(Permissions { private_activities: false, write_descriptions: false }).accepts(&callback_scopes(callback)) {
         return Err(failure(
-            "Allow activity read and write permissions to connect Strava.",
+            "Allow activity read permission to connect Strava.",
         ));
     }
     pairs
@@ -341,7 +395,7 @@ fn callback_code(callback: &tauri::Url, redirect: &str, expected_state: &str) ->
 }
 
 #[cfg(not(target_os = "ios"))]
-async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tauri::Url, String)> {
+async fn authorize(app: &AppHandle, client_id: &str, state: &str, permissions: Permissions) -> Result<(tauri::Url, String)> {
     use tauri_plugin_opener::OpenerExt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -349,7 +403,7 @@ async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tau
         "http://127.0.0.1:{}/strava/callback",
         listener.local_addr()?.port()
     );
-    let url = authorize_url(client_id, &redirect, state)?;
+    let url = authorize_url_with_permissions(client_id, &redirect, state, permissions)?;
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|_| failure("Could not open Strava sign-in."))?;
@@ -376,9 +430,9 @@ async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tau
 }
 
 #[cfg(target_os = "ios")]
-async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tauri::Url, String)> {
+async fn authorize(app: &AppHandle, client_id: &str, state: &str, permissions: Permissions) -> Result<(tauri::Url, String)> {
     let redirect = IOS_REDIRECT.to_string();
-    let url = authorize_url(client_id, &redirect, state)?;
+    let url = authorize_url_with_permissions(client_id, &redirect, state, permissions)?;
     let callback = ios_auth::authorize(app, url.as_str()).await?;
     Ok((
         tauri::Url::parse(&callback).map_err(|_| failure("Invalid Strava callback."))?,
@@ -387,19 +441,27 @@ async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tau
 }
 
 #[tauri::command]
-pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Result<Status> {
+pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>, private_activities: Option<bool>, write_descriptions: Option<bool>) -> Result<Status> {
     let _guard = operation().lock().await;
     let mut config =
         credentials()?.ok_or_else(|| failure("Save your Strava API credentials first."))?;
     let nonce = uuid::Uuid::new_v4().to_string();
+    let permissions = Permissions {
+        private_activities: private_activities.unwrap_or(true),
+        write_descriptions: write_descriptions.unwrap_or(true),
+    };
     let authorization = tokio::select! {
-        result = authorize(&app, &config.client_id, &nonce) => result,
+        result = authorize(&app, &config.client_id, &nonce, permissions) => result,
         _ = AUTH_CANCEL.get_or_init(tokio::sync::Notify::new).notified() => Err(failure("Strava sign-in was cancelled.")),
     };
     #[cfg(target_os = "ios")]
     ios_auth::cancel(&app)?;
     let (callback, redirect) = authorization?;
     let code = callback_code(&callback, &redirect, &nonce)?;
+    let scopes = callback_scopes(&callback);
+    if !permissions.accepts(&scopes) {
+        return Err(failure("Strava did not grant the requested activity permissions."));
+    }
     let response = token_request(&config, "authorization_code", &code).await?;
     let athlete_id = response
         .athlete
@@ -417,6 +479,7 @@ pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Resul
         refresh_token: response.refresh_token,
         expires_at: response.expires_at,
         athlete_id,
+        scopes,
     });
     save_credentials(&config)?;
     state.store.conn.lock().unwrap().execute("UPDATE strava_exports SET status='pending',next_attempt_at=0 WHERE athlete_id=?1 AND status='auth_required'", [athlete_id])?;
@@ -455,9 +518,24 @@ fn enqueue(store: &Store, athlete: i64, cutoff: i64, now: i64) -> Result<()> {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let key = format!("{provider}:{}", activity.provider_record_id);
-        connection.execute("INSERT OR IGNORE INTO strava_exports(athlete_id,source_key,workout_id,start_ts,duration_s,distance_m,payload,marker,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",
-            params![athlete, key, event.workout_id, activity.start_time.timestamp(), activity.duration_s, activity.distance_m, event.notes, marker(athlete, &key), now])?;
+        let target: Option<i64> = connection.query_row(
+            "SELECT remote_id FROM strava_workout_evidence WHERE athlete_id=?1 AND activity_id=?2
+             AND fetched_at<=?3 AND retention_expires_at>?3",
+            params![athlete,activity.id,now], |row| row.get(0),
+        ).optional()?;
+        if activity.provider == crate::types::ProviderKind::Strava && target.is_none() {
+            continue;
+        }
+        let previous_key: Option<String> = match target {
+            Some(target_id) => connection.query_row(
+                "SELECT source_key FROM strava_exports WHERE athlete_id=?1 AND target_id=?2",
+                params![athlete,target_id], |row| row.get(0),
+            ).optional()?,
+            None => None,
+        };
+        let key = previous_key.unwrap_or_else(|| format!("{provider}:{}", activity.provider_record_id));
+        connection.execute("INSERT OR IGNORE INTO strava_exports(athlete_id,source_key,workout_id,start_ts,duration_s,distance_m,payload,marker,created_at,updated_at,target_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?10)",
+            params![athlete, key, event.workout_id, activity.start_time.timestamp(), activity.duration_s, activity.distance_m, event.notes, marker(athlete, &key), now,target])?;
     }
     Ok(())
 }
@@ -481,15 +559,60 @@ struct ApiFailure {
     retry_at: i64,
 }
 
-struct Client {
+struct Client<'store> {
     http: reqwest::Client,
     base_url: String,
     token: String,
     remaining: usize,
     defer_until: i64,
+    quota: Option<(&'store Store, String)>,
 }
 
-impl Client {
+fn reserve_quota(store: &Store, client_id: &str, read: bool, now: i64) -> Result<Option<i64>> {
+    let mut connection = store.conn.lock().unwrap();
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE strava_api_quota SET used=0,reset_at=(?2/window_s+1)*window_s+1 WHERE client_id=?1 AND reset_at<=?2",
+        params![client_id,now],
+    )?;
+    let retry: Option<i64> = transaction.query_row(
+        "SELECT MAX(retry_at) FROM (
+            SELECT reset_at AS retry_at FROM strava_api_quota WHERE client_id=?1 AND (family='app' OR ?2) AND used>=ceiling
+            UNION ALL SELECT retry_at FROM strava_api_backoff WHERE client_id=?1 AND retry_at>?3
+         )",
+        params![client_id,read,now], |row| row.get(0),
+    )?;
+    if retry.is_none() {
+        transaction.execute(
+            "UPDATE strava_api_quota SET used=used+1 WHERE client_id=?1 AND (family='app' OR ?2)",
+            params![client_id,read],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(retry)
+}
+
+fn observe_quota(store: &Store, client_id: &str, family: &str, limits: (i64,i64), usage: (i64,i64), now: i64) -> Result<()> {
+    let mut connection = store.conn.lock().unwrap();
+    let transaction = connection.transaction()?;
+    for (window,ceiling,used) in [(900,limits.0,usage.0),(86400,limits.1,usage.1)] {
+        if ceiling <= 0 || used < 0 {
+            continue;
+        }
+        let reset = (now/window+1)*window+1;
+        transaction.execute(
+            "INSERT INTO strava_api_quota(client_id,family,window_s,reset_at,ceiling,used) VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(client_id,family,window_s) DO UPDATE SET ceiling=excluded.ceiling,
+             used=CASE WHEN strava_api_quota.reset_at=excluded.reset_at THEN max(strava_api_quota.used,excluded.used) ELSE excluded.used END,
+             reset_at=excluded.reset_at",
+            params![client_id,family,window,reset,ceiling,used],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+impl Client<'_> {
     async fn request<T: serde::de::DeserializeOwned>(
         &mut self,
         method: reqwest::Method,
@@ -503,6 +626,14 @@ impl Client {
                 retry_at: self.defer_until.max(now + 60),
             });
         }
+        if let Some((store,client_id)) = &self.quota {
+            let retry = reserve_quota(store,client_id,method==reqwest::Method::GET,now)
+                .map_err(|_| ApiFailure { status:0,retry_at:now+300 })?;
+            if let Some(retry_at) = retry {
+                self.defer_until = retry_at;
+                return Err(ApiFailure { status:429,retry_at });
+            }
+        }
         self.remaining -= 1;
         let mut request = self
             .http
@@ -515,6 +646,7 @@ impl Client {
             status: 0,
             retry_at: now + 300,
         })?;
+        let now = Utc::now().timestamp();
         for (limit_header, usage_header) in [
             ("x-ratelimit-limit", "x-ratelimit-usage"),
             ("x-readratelimit-limit", "x-readratelimit-usage"),
@@ -532,6 +664,13 @@ impl Client {
                     })
             };
             if let (Some(limit), Some(usage)) = (parse(limit_header), parse(usage_header)) {
+                if limit.0 <= 0 || limit.1 <= 0 || usage.0 < 0 || usage.1 < 0 {
+                    continue;
+                }
+                if let Some((store,client_id)) = &self.quota {
+                    observe_quota(store,client_id,if limit_header=="x-ratelimit-limit" { "app" } else { "read" },limit,usage,now)
+                        .map_err(|_| ApiFailure { status:0,retry_at:now+300 })?;
+                }
                 if usage.0 >= limit.0 {
                     self.defer_until = self.defer_until.max((now / 900 + 1) * 900 + 1);
                 }
@@ -554,6 +693,13 @@ impl Client {
                     .defer_until
                     .max((now / 900 + 1) * 900 + 1)
                     .max(now + retry_after);
+                if let Some((store,client_id)) = &self.quota {
+                    store.conn.lock().unwrap().execute(
+                        "INSERT INTO strava_api_backoff(client_id,retry_at) VALUES(?1,?2)
+                         ON CONFLICT(client_id) DO UPDATE SET retry_at=max(strava_api_backoff.retry_at,excluded.retry_at)",
+                        params![client_id,self.defer_until],
+                    ).map_err(|_| ApiFailure { status:0,retry_at:now+300 })?;
+                }
             }
             return Err(ApiFailure {
                 status,
@@ -574,8 +720,29 @@ impl Client {
     }
 }
 
-async fn process_job(client: &mut Client, store: &Store, athlete: i64, job: &Job) -> Result<()> {
+async fn process_job(client: &mut Client<'_>, store: &Store, athlete: i64, job: &Job) -> Result<()> {
     let now = Utc::now().timestamp();
+    let requires_evidence: bool = store.conn.lock().unwrap().query_row(
+        "SELECT ?1 LIKE 'strava:%' OR EXISTS(
+            SELECT 1 FROM activities a JOIN activity_source_aliases alias ON alias.activity_id=a.id
+            WHERE a.provider='strava' AND alias.account_id='legacy' AND alias.provider || ':' || alias.record_id=?1
+         )",
+        [&job.key], |row| row.get(0),
+    )?;
+    if requires_evidence {
+        let current: bool = store.conn.lock().unwrap().query_row(
+            "SELECT EXISTS(SELECT 1 FROM strava_workout_evidence evidence JOIN activities activity ON activity.id=evidence.activity_id
+             WHERE evidence.athlete_id=?1 AND evidence.remote_id=?2 AND evidence.fetched_at<=?3 AND evidence.retention_expires_at>?3
+             AND (activity.provider || ':' || activity.provider_record_id=?4 OR EXISTS(
+                 SELECT 1 FROM activity_source_aliases alias WHERE alias.activity_id=activity.id AND alias.account_id='legacy'
+                 AND alias.provider || ':' || alias.record_id=?4
+             )))",
+            params![athlete,job.target,now,job.key], |row| row.get(0),
+        )?;
+        if !current {
+            return finish_job(store,athlete,job,"waiting","The Strava recording must be refreshed before its description can be updated.",job.target,now+300);
+        }
+    }
     let mut selected_target = job.target;
     let result: std::result::Result<(String, String, Option<i64>), ApiFailure> = async {
         let target = if let Some(target) = job.target { target } else {
@@ -664,6 +831,9 @@ async fn sync_inner(store: &Store) -> Result<String> {
     let Some(tokens) = config.tokens.as_ref() else {
         return Ok("Strava is not connected. Connect in Settings to update descriptions.".into());
     };
+    if !tokens.can_write() {
+        return Ok("Strava description updates require activity write permission.".into());
+    }
     let athlete = tokens.athlete_id;
     let cutoff: Option<i64> = store
         .conn
@@ -716,6 +886,7 @@ async fn sync_inner(store: &Store) -> Result<String> {
             refresh_token: response.refresh_token,
             expires_at: response.expires_at,
             athlete_id: athlete,
+            scopes: tokens.scopes.clone(),
         });
         save_credentials(&config)?;
     }
@@ -725,6 +896,7 @@ async fn sync_inner(store: &Store) -> Result<String> {
         token: config.tokens.as_ref().unwrap().access_token.clone(),
         remaining: 12,
         defer_until: 0,
+        quota: Some((store,config.client_id.clone())),
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
     for job in &jobs {
@@ -779,11 +951,24 @@ pub async fn strava_retry(state: State<'_, AppState>) -> Result<Status> {
 fn housekeeping(store: &Store, now: i64) -> Result<()> {
     let connection = store.conn.lock().unwrap();
     connection.execute("UPDATE strava_exports SET payload='',status='needs_review',message='Pending description expired after 90 days; no Strava activity was changed.',updated_at=?1 WHERE payload<>'' AND retention_expires_at<=?1", [now])?;
-    connection.execute("DELETE FROM strava_exports WHERE NOT EXISTS(SELECT 1 FROM activities WHERE strava_exports.source_key=activities.provider || ':' || activities.provider_record_id)", [])?;
+    connection.execute("DELETE FROM strava_exports WHERE NOT EXISTS(SELECT 1 FROM activities WHERE strava_exports.source_key=activities.provider || ':' || activities.provider_record_id) AND NOT EXISTS(SELECT 1 FROM activity_source_aliases WHERE strava_exports.source_key=provider || ':' || record_id)", [])?;
     Ok(())
 }
 
 pub(crate) const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS strava_api_backoff (
+    client_id TEXT PRIMARY KEY,
+    retry_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS strava_api_quota (
+    client_id TEXT NOT NULL,
+    family TEXT NOT NULL CHECK(family IN ('app','read')),
+    window_s INTEGER NOT NULL CHECK(window_s IN (900,86400)),
+    reset_at INTEGER NOT NULL,
+    ceiling INTEGER NOT NULL CHECK(ceiling>0),
+    used INTEGER NOT NULL CHECK(used>=0),
+    PRIMARY KEY(client_id,family,window_s)
+);
 CREATE TABLE IF NOT EXISTS strava_accounts (
     athlete_id INTEGER PRIMARY KEY,
     client_id TEXT NOT NULL,
@@ -948,7 +1133,14 @@ mod tests {
 
     async fn fake_api(
         responses: Vec<(String, u16, serde_json::Value)>,
-    ) -> (Client, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+    ) -> (Client<'static>, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        fake_api_with_headers(responses, "").await
+    }
+
+    async fn fake_api_with_headers(
+        responses: Vec<(String, u16, serde_json::Value)>,
+        extra_headers: &'static str,
+    ) -> (Client<'static>, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -998,7 +1190,7 @@ mod tests {
                     continue;
                 }
                 let body = body.to_string();
-                let reply = format!("HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+                let reply = format!("HTTP/1.1 {status} Response\r\n{extra_headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
                 socket.write_all(reply.as_bytes()).await.unwrap();
             }
             bodies
@@ -1010,6 +1202,7 @@ mod tests {
                 token: "synthetic".into(),
                 remaining: 12,
                 defer_until: 0,
+                quota: None,
             },
             server,
         )
@@ -1045,6 +1238,69 @@ mod tests {
             (state.as_str(), target, payload.as_str()),
             ("updated", Some(99), "")
         );
+    }
+
+    #[tokio::test]
+    async fn expired_imported_evidence_blocks_an_already_queued_job() {
+        let (store, mut job) = fixture();
+        let now = Utc::now().timestamp();
+        {
+            let connection = store.conn.lock().unwrap();
+            connection.execute("INSERT INTO activities(provider,provider_record_id,sport,start_ts,duration_s,distance_m) VALUES('strava','42:99','run',?1,1800,5000)",[job.start]).unwrap();
+            let activity_id = connection.last_insert_rowid();
+            connection.execute(
+                "INSERT INTO strava_workout_evidence(activity_id,athlete_id,remote_id,elapsed_s,moving_s,original_sport,local_start,utc_offset_s,created_at,fetched_at,retention_expires_at)
+                 VALUES(?1,42,99,1800,1800,'Run','2026-01-01T00:00:00',0,?2,?2,?3)",
+                params![activity_id,now-100,now-1],
+            ).unwrap();
+            connection.execute("UPDATE strava_exports SET source_key='strava:42:99',target_id=99", []).unwrap();
+        }
+        job.key = "strava:42:99".into();
+        job.target = Some(99);
+        let (mut client, server) = fake_api(vec![]).await;
+        process_job(&mut client,&store,42,&job).await.unwrap();
+        assert!(server.await.unwrap().is_empty());
+        assert_eq!(client.remaining,12);
+        let state: String = store.conn.lock().unwrap().query_row("SELECT status FROM strava_exports", [], |row| row.get(0)).unwrap();
+        assert_eq!(state,"waiting");
+    }
+
+    #[test]
+    fn shared_quota_reserves_both_families_and_honors_daily_reset() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = 1800000010;
+        observe_quota(&store,"synthetic","app",(10,20),(0,0),now).unwrap();
+        observe_quota(&store,"synthetic","read",(1,2),(0,1),now).unwrap();
+        assert_eq!(reserve_quota(&store,"synthetic",true,now).unwrap(), None);
+        assert_eq!(reserve_quota(&store,"synthetic",true,now).unwrap(), Some((now/86400+1)*86400+1));
+        assert_eq!(reserve_quota(&store,"synthetic",false,now).unwrap(), None);
+        assert_eq!(reserve_quota(&store,"another-app",true,now).unwrap(), None);
+        assert!(reserve_quota(&store,"synthetic",true,(now/900+1)*900+1).unwrap().is_some());
+        assert_eq!(reserve_quota(&store,"synthetic",true,(now/86400+1)*86400+1).unwrap(), None);
+        observe_quota(&store,"synthetic","read",(1,2),(0,0),(now/86400+1)*86400+1).unwrap();
+        assert!(reserve_quota(&store,"synthetic",true,(now/86400+1)*86400+1).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn rate_limit_headers_and_headerless_backoff_block_new_clients() {
+        for (status,headers) in [
+            (200,"X-RateLimit-Limit: 1,100\r\nX-RateLimit-Usage: 1,1\r\n"),
+            (200,"X-ReadRateLimit-Limit: 1,100\r\nX-ReadRateLimit-Usage: 1,1\r\n"),
+            (429,"Retry-After: 3600\r\n"),
+        ] {
+            let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+            let (original,server) = fake_api_with_headers(vec![("GET /probe ".into(),status,serde_json::json!({}))],headers).await;
+            let mut client = Client { quota:Some((&store,"synthetic".into())), ..original };
+            let first = client.request::<serde_json::Value>(reqwest::Method::GET,"/probe",None).await;
+            assert_eq!(first.is_ok(), status==200);
+            server.await.unwrap();
+            let expected_retry = client.defer_until;
+            let mut restarted = Client { defer_until:0,remaining:40, ..client };
+            let failure = restarted.request::<serde_json::Value>(reqwest::Method::GET,"/probe",None).await.err().unwrap();
+            assert_eq!(failure.status,429);
+            assert_eq!(failure.retry_at,expected_retry);
+            assert_eq!(restarted.remaining,40);
+        }
     }
 
     #[tokio::test]
@@ -1180,7 +1436,7 @@ mod tests {
     }
 
     #[test]
-    fn oauth_requires_exact_callback_state_and_both_granted_scopes() {
+    fn oauth_requires_exact_callback_state_and_read_permission() {
         let redirect = "http://127.0.0.1:12345/strava/callback";
         let callback = tauri::Url::parse(&format!(
             "{redirect}?state=nonce&code=synthetic&scope=activity:read_all,activity:write"
@@ -1198,7 +1454,30 @@ mod tests {
             "{redirect}?state=nonce&code=synthetic&scope=activity:read_all"
         ))
         .unwrap();
-        assert!(callback_code(&refused, redirect, "nonce").is_err());
+        assert_eq!(callback_code(&refused, redirect, "nonce").unwrap(), "synthetic");
+        let write_only = tauri::Url::parse(&format!("{redirect}?state=nonce&code=synthetic&scope=activity:write")).unwrap();
+        assert!(callback_code(&write_only, redirect, "nonce").is_err());
+    }
+
+    #[test]
+    fn read_only_authorization_does_not_request_or_enable_writes() {
+        let permissions = Permissions { private_activities: false, write_descriptions: false };
+        let url = authorize_url_with_permissions("12345", IOS_REDIRECT, "nonce", permissions).unwrap();
+        assert_eq!(url.query_pairs().find(|(key, _)| key == "scope").unwrap().1, "activity:read");
+        let read = vec!["activity:read".into()];
+        assert!(permissions.accepts(&read));
+        assert!(!Permissions { write_descriptions: true, ..permissions }.accepts(&read));
+        assert!(!Permissions { private_activities: true, ..permissions }.accepts(&read));
+        let tokens: Tokens = serde_json::from_value(serde_json::json!({
+            "access_token":"synthetic", "refresh_token":"synthetic", "athlete_id":42,
+            "expires_at":1800000000, "scopes":["activity:read"],
+        })).unwrap();
+        assert!(!tokens.can_write());
+        let legacy: Tokens = serde_json::from_value(serde_json::json!({
+            "access_token":"synthetic", "refresh_token":"synthetic", "athlete_id":42,
+            "expires_at":1800000000,
+        })).unwrap();
+        assert!(legacy.can_write());
     }
 
     #[test]

@@ -37,7 +37,7 @@ use serde_json::{json, Value};
 #[cfg(not(mobile))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::Provider;
+use super::{ActivitySource, Provider, ProviderConnection, WorkoutDestination};
 use crate::error::{AppError, Result};
 use crate::fit;
 use crate::secure_store::entry;
@@ -1045,7 +1045,7 @@ async fn discover_coros_metadata() -> Result<rmcp::transport::auth::Authorizatio
 }
 
 #[async_trait]
-impl Provider for CorosProvider {
+impl ProviderConnection for CorosProvider {
     fn kind(&self) -> ProviderKind {
         ProviderKind::Coros
     }
@@ -1199,31 +1199,10 @@ impl Provider for CorosProvider {
         Ok(())
     }
 
-    async fn sync_activities(&self, store: &Store, days_back: i64) -> Result<u32> {
-        let service = self.client().await?;
-        let from = (Utc::now() - Duration::days(days_back)).date_naive();
-        // COROS wants yyyyMMdd and chokes on ISO dates; limit generously.
-        let args = json!({
-            "startDate": from.format("%Y%m%d").to_string(),
-            "endDate": Utc::now().date_naive().format("%Y%m%d").to_string(),
-            "limit": 100,
-        });
-        let text = self
-            .call_tool_text(&service, "querySportRecords", args)
-            .await?;
-        let mut count = 0u32;
-        for decoded in Self::parse_sport_records(&text) {
-            if store
-                .upsert_activity(ProviderKind::Coros, &decoded)?
-                .is_some()
-            {
-                count += 1;
-            }
-        }
-        store.set_last_sync(ProviderKind::Coros, Utc::now())?;
-        Ok(count)
-    }
+}
 
+#[async_trait]
+impl Provider for CorosProvider {
     async fn sync_health(&self, store: &Store, days_back: i64) -> Result<u32> {
         let service = self.client().await?;
         let days_arg = json!({ "days": days_back.max(7) as i64 });
@@ -1415,6 +1394,34 @@ impl Provider for CorosProvider {
         Ok(())
     }
 
+}
+
+#[async_trait]
+impl ActivitySource for CorosProvider {
+    async fn sync_activities(&self, store: &Store, days_back: i64) -> Result<u32> {
+        let service = self.client().await?;
+        let from = (Utc::now() - Duration::days(days_back)).date_naive();
+        let args = json!({
+            "startDate": from.format("%Y%m%d").to_string(),
+            "endDate": Utc::now().date_naive().format("%Y%m%d").to_string(),
+            "limit": 100,
+        });
+        let text = self
+            .call_tool_text(&service, "querySportRecords", args)
+            .await?;
+        let mut count = 0u32;
+        for decoded in Self::parse_sport_records(&text) {
+            if store
+                .upsert_activity(ProviderKind::Coros, &decoded)?
+                .is_some()
+            {
+                count += 1;
+            }
+        }
+        store.set_last_sync(ProviderKind::Coros, Utc::now())?;
+        Ok(count)
+    }
+
     async fn sync_tracks(&self, store: &Store, budget: u32) -> Result<u32> {
         let service = self.client().await?;
         // Activities with no track and no ledger entry, newest first. The store
@@ -1540,6 +1547,10 @@ impl Provider for CorosProvider {
         Ok(downloaded)
     }
 
+}
+
+#[async_trait]
+impl WorkoutDestination for CorosProvider {
     async fn push_plan(
         &self,
         plan: &TrainingPlan,

@@ -682,6 +682,11 @@ impl Store {
                 conn.pragma_update(None, "user_version", v)?;
             }
         }
+        conn.execute_batch(crate::strava::intake::SCHEMA)?;
+        conn.execute_batch(crate::providers::delivery::SCHEMA)?;
+        add_column_if_missing(&conn, "workout_delivery", "desired_revision", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(&conn, "workout_delivery", "retry_at", "INTEGER")?;
+        add_column_if_missing(&conn, "workout_delivery", "failure_reason", "TEXT")?;
         // Schema-drift repair. `followup_ts` was added to the pain_entries
         // definition in migration 4 *after* that migration had already run on
         // existing installs, and CREATE TABLE IF NOT EXISTS is a no-op once the
@@ -969,7 +974,7 @@ impl Store {
             let (id, provider, rid, sport, ts, dur, dist, ahr, mhr, pace, elev, has_track) = row?;
             out.push(Activity {
                 id,
-                provider: provider_from(&provider),
+                provider: provider_from(&provider)?,
                 provider_record_id: rid,
                 sport,
                 start_time: ts_to_dt(ts),
@@ -1481,7 +1486,11 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn
             .query_row(
-                "SELECT id FROM activities WHERE provider=?1 AND provider_record_id=?2",
+                "SELECT MIN(id) FROM (
+                    SELECT id FROM activities WHERE provider=?1 AND provider_record_id=?2
+                    UNION SELECT activity_id FROM activity_source_aliases
+                    WHERE provider=?1 AND account_id='legacy' AND record_id=?2
+                 ) HAVING COUNT(*)=1",
                 params![provider, record_id],
                 |r| r.get::<_, i64>(0),
             )
@@ -2571,6 +2580,9 @@ impl Store {
 
     pub fn accept_pacing_proposal(&self, plan: &TrainingPlan, proposal: &PlanProposal) -> Result<()> {
         let offset = proposal.plan_quality_offset_sec_km.ok_or_else(|| AppError::Other("missing pace adjustment".into()))?;
+        if !offset.is_finite() || offset < plan.quality_offset_sec_km {
+            return Err(AppError::Other("Faster pacing offers are unavailable.".into()));
+        }
         let from = proposal.plan_quality_offset_from.ok_or_else(|| AppError::Other("missing adjustment date".into()))?;
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn.transaction()?;
@@ -2887,7 +2899,7 @@ impl Store {
         let provider: String = r.get(1)?;
         Ok(Activity {
             id: r.get(0)?,
-            provider: provider_from(&provider),
+            provider: provider_from(&provider)?,
             provider_record_id: r.get(2)?,
             sport: r.get(3)?,
             start_time: ts_to_dt(r.get(4)?),
@@ -3100,7 +3112,7 @@ impl Store {
         let rows = stmt.query_map(params![from_ts, to_ts], |r| {
             Ok(Activity {
                 id: r.get(0)?,
-                provider: provider_from(&r.get::<_, String>(1)?),
+                provider: provider_from(&r.get::<_, String>(1)?)?,
                 provider_record_id: r.get(2)?,
                 sport: r.get(3)?,
                 start_time: ts_to_dt(r.get::<_, i64>(4)?),
@@ -3181,6 +3193,7 @@ pub fn provider_name(p: ProviderKind) -> &'static str {
     match p {
         ProviderKind::Coros => "coros",
         ProviderKind::Garmin => "garmin",
+        ProviderKind::Strava => "strava",
     }
 }
 
@@ -3313,10 +3326,16 @@ fn proposal_source_from(s: &str) -> ProposalSource {
     }
 }
 
-pub fn provider_from(s: &str) -> ProviderKind {
+pub fn provider_from(s: &str) -> rusqlite::Result<ProviderKind> {
     match s {
-        "garmin" => ProviderKind::Garmin,
-        _ => ProviderKind::Coros,
+        "coros" => Ok(ProviderKind::Coros),
+        "garmin" => Ok(ProviderKind::Garmin),
+        "strava" => Ok(ProviderKind::Strava),
+        _ => Err(rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Unknown activity source")),
+        )),
     }
 }
 

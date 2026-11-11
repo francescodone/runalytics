@@ -21,7 +21,7 @@ export interface DifficultyOutcome {
 }
 // Mirrors the camelCase serde types in src-tauri/src/types.rs.
 
-export type ProviderKind = "coros" | "garmin";
+export type ProviderKind = "coros" | "garmin" | "strava";
 
 export interface StravaStatus {
   configured: boolean;

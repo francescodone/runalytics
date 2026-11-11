@@ -16,7 +16,7 @@ use crate::plan::{adaptive, engine, pacing, receipt};
 use crate::plan::receipt::ReceiptLine;
 use crate::plan_sync;
 use crate::proposal;
-use crate::providers::Provider;
+use crate::providers::{Provider, WorkoutDestination};
 use crate::state::AppState;
 use crate::store::provider_name;
 use crate::types::*;
@@ -24,10 +24,15 @@ use crate::types::*;
 fn get_provider(state: &AppState, kind: ProviderKind) -> Result<Arc<dyn Provider>> {
     state
         .providers
-        .iter()
-        .find(|p| p.kind() == kind)
-        .cloned()
+        .legacy(kind)
         .ok_or_else(|| AppError::Other(format!("provider {} not built", provider_name(kind))))
+}
+
+fn get_destination(state: &AppState, kind: ProviderKind) -> Result<Arc<dyn WorkoutDestination>> {
+    state
+        .providers
+        .destination(kind)
+        .ok_or_else(|| AppError::Other(format!("destination {} not built", provider_name(kind))))
 }
 
 // ---- plan-mirror stage events ----------------------------------------------
@@ -190,7 +195,7 @@ fn thresholds(state: &AppState) -> Thresholds {
 #[tauri::command]
 pub async fn provider_status(state: State<'_, AppState>) -> Result<Vec<ProviderStatus>> {
     let mut out = Vec::new();
-    for p in state.providers.iter() {
+    for p in state.providers.destinations() {
         out.push(ProviderStatus {
             provider: p.kind(),
             connected: p.is_connected(),
@@ -218,7 +223,7 @@ pub async fn check_provider_api(
     state: State<'_, AppState>,
     provider: ProviderKind,
 ) -> Result<Vec<String>> {
-    get_provider(&state, provider)?.list_api_tools().await
+    get_destination(&state, provider)?.list_api_tools().await
 }
 
 #[tauri::command]
@@ -226,13 +231,13 @@ pub async fn connect_provider(
     state: State<'_, AppState>,
     provider: ProviderKind,
 ) -> Result<String> {
-    let p = get_provider(&state, provider)?;
+    let p = get_destination(&state, provider)?;
     p.connect().await
 }
 
 #[tauri::command]
 pub async fn disconnect_provider(state: State<'_, AppState>, provider: ProviderKind) -> Result<()> {
-    get_provider(&state, provider)?.disconnect().await
+    get_destination(&state, provider)?.disconnect().await
 }
 
 /// Full sync: activities, health, fitness, then tracks + adaptive review.
@@ -367,8 +372,11 @@ async fn run_full_sync_inner(
     provider: ProviderKind,
 ) -> Result<SyncReport> {
     let p = get_provider(state, provider)?;
+    let source = state.providers.source(provider).ok_or_else(|| {
+        AppError::Other(format!("activity source {} not built", provider_name(provider)))
+    })?;
     let mut messages = Vec::new();
-    let activities_new = p.sync_activities(&state.store, 30).await?;
+    let activities_new = source.sync_activities(&state.store, 30).await?;
     // Take the channel's newer copy before reconciling, on either device: the
     // phone's edits reach the desktop this way and the desktop's reach the
     // phone, and an imported plan's workouts are matched against the
@@ -379,7 +387,7 @@ async fn run_full_sync_inner(
     }
     let health_days = p.sync_health(&state.store, 14).await?;
     p.sync_fitness(&state.store).await?;
-    let tracks = p.sync_tracks(&state.store, 20).await.unwrap_or_else(|e| {
+    let tracks = source.sync_tracks(&state.store, 20).await.unwrap_or_else(|e| {
         messages.push(format!("track sync skipped: {e}"));
         0
     });
@@ -400,7 +408,8 @@ async fn run_full_sync_inner(
                 // we just adjusted it (or new data arrived), re-push so the
                 // watch schedule always mirrors the local plan.
                 if !adjustments.is_empty() && plan.status == PlanStatus::Pushed {
-                    match p.push_plan(&plan, &workouts, None).await {
+                    let destination = get_destination(state, provider)?;
+                    match destination.push_plan(&plan, &workouts, None).await {
                         Ok(Some(id)) => {
                             let _ = state.store.set_plan_pushed_id(&plan.id, &id);
                             messages.push(format!("plan re-synced to COROS ({id})"));
@@ -877,7 +886,7 @@ pub async fn push_plan_to_provider(
         .store
         .current_plan()?
         .ok_or_else(|| AppError::Other("no active plan".into()))?;
-    let p = get_provider(&state, provider)?;
+    let p = get_destination(&state, provider)?;
     // The COROS round-trip takes tens of seconds; report each stage so the
     // Plan page can show a live percentage instead of a dead button.
     let emit = |stage: &str, percent: u8| {
@@ -921,7 +930,7 @@ pub async fn abort_plan(app: tauri::AppHandle, state: State<'_, AppState>, expec
         // show the schedule.
         let mut provider_note = None;
         if plan.status == PlanStatus::Pushed {
-            match get_provider(&state, ProviderKind::Coros) {
+            match get_destination(&state, ProviderKind::Coros) {
                 Ok(p) => {
                     let emit = |stage: &str, percent: u8| {
                         let _ = app.emit(
@@ -995,7 +1004,7 @@ pub async fn clear_local_plan_data(app: tauri::AppHandle, state: State<'_, AppSt
         // abort_plan: once the local row is gone there is no pushed id left
         // to cancel with.
         if plan.status == PlanStatus::Pushed {
-            if let Ok(p) = get_provider(&state, ProviderKind::Coros) {
+            if let Ok(p) = get_destination(&state, ProviderKind::Coros) {
                 let emit = |stage: &str, percent: u8| {
                     let _ = app.emit(
                         "plan://sync",
@@ -1457,7 +1466,7 @@ async fn after_schedule_change(
                     return;
                 }
                 let plan = latest;
-                let result = match get_provider(&state, ProviderKind::Coros) {
+                let result = match get_destination(&state, ProviderKind::Coros) {
                     Ok(p) => p.push_plan(&plan, &workouts, None).await,
                     Err(e) => Err(e),
                 };
@@ -1605,7 +1614,7 @@ async fn apply_workout_edits(
     app: &tauri::AppHandle,
     op: &str,
     state: &AppState,
-    provider: Option<Arc<dyn Provider>>,
+    provider: Option<Arc<dyn WorkoutDestination>>,
     edits: &[WorkoutEdit],
 ) -> Result<Vec<PlanWorkout>> {
     let (plan, workouts) = state
@@ -1775,7 +1784,7 @@ pub async fn apply_proposal(
     if p.status != ProposalStatus::Pending {
         return Err(AppError::Other("this offer was already answered".into()));
     }
-    let prov = get_provider(&state, provider).ok();
+    let prov = get_destination(&state, provider).ok();
     let fresh = if p.source == ProposalSource::Pacing {
         let Some((offset, from)) = p.plan_quality_offset_sec_km.zip(p.plan_quality_offset_from)
         else {
@@ -1787,6 +1796,9 @@ pub async fn apply_proposal(
             .store
             .current_plan()?
             .ok_or_else(|| AppError::Other("no active plan".into()))?;
+        if offset < plan.quality_offset_sec_km {
+            return Err(AppError::Other("Faster pacing offers are unavailable; dismiss this offer and keep the current plan.".into()));
+        }
         if state.store.plan_workouts(&plan.id)?.iter().any(|workout| workout.customization.as_ref().is_some_and(|value| value.prescription.is_some())) {
             return Err(AppError::Other("This pacing offer predates your difficulty adjustment. Use Edit plan instead.".into()));
         }
@@ -1812,15 +1824,6 @@ pub async fn apply_proposal(
         let expected = pacing::adaptation_edits(&state.store, &plan, offset, from)?;
         if !p.edits.is_empty() && serde_json::to_value(&expected)? != serde_json::to_value(&p.edits)? {
             return Err(AppError::Other("the proposed sessions changed; dismiss this offer and review again".into()));
-        }
-        if offset < plan.quality_offset_sec_km {
-            let scores = metrics::compute_scores(&state.store, &thresholds(&state))?;
-            let ratio = state.store.latest_training_load()?.and_then(|load| load.ratio);
-            if state.store.latest_pain()?.is_some() || scores.recovery_score <= thresholds(&state).recovery_fatigued
-                || scores.injury_risk >= 60 || !ratio.is_some_and(|value| value.is_finite() && value <= 1.3)
-            {
-                return Err(AppError::Other("recovery or load no longer supports progression; keep the current plan".into()));
-            }
         }
         state.store.accept_pacing_proposal(&plan, &p)?;
         // The stored plan moved; the mirrors below must be built from the

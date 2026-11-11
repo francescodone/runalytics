@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 
-use super::Provider;
+use super::{ActivitySource, Provider, ProviderConnection, WorkoutDestination};
 use crate::error::{AppError, Result};
 use crate::store::Store;
 use crate::types::*;
@@ -26,7 +26,7 @@ fn unsupported() -> Result<()> {
 }
 
 #[async_trait]
-impl Provider for GarminProvider {
+impl ProviderConnection for GarminProvider {
     fn kind(&self) -> ProviderKind {
         ProviderKind::Garmin
     }
@@ -40,10 +40,10 @@ impl Provider for GarminProvider {
     async fn disconnect(&self) -> Result<()> {
         unsupported()
     }
-    async fn sync_activities(&self, _store: &Store, _days_back: i64) -> Result<u32> {
-        unsupported()?;
-        Ok(0)
-    }
+}
+
+#[async_trait]
+impl Provider for GarminProvider {
     async fn sync_health(&self, _store: &Store, _days_back: i64) -> Result<u32> {
         unsupported()?;
         Ok(0)
@@ -51,10 +51,22 @@ impl Provider for GarminProvider {
     async fn sync_fitness(&self, _store: &Store) -> Result<()> {
         unsupported()
     }
+}
+
+#[async_trait]
+impl ActivitySource for GarminProvider {
+    async fn sync_activities(&self, _store: &Store, _days_back: i64) -> Result<u32> {
+        unsupported()?;
+        Ok(0)
+    }
     async fn sync_tracks(&self, _store: &Store, _budget: u32) -> Result<u32> {
         unsupported()?;
         Ok(0)
     }
+}
+
+#[async_trait]
+impl WorkoutDestination for GarminProvider {
     async fn push_plan(
         &self,
         _plan: &TrainingPlan,

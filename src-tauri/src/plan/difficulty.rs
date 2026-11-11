@@ -301,7 +301,7 @@ pub fn context(store: &Store) -> Result<Option<FeedbackContext>> {
 
 pub fn apply(
     store: &Store,
-    thresholds: &Thresholds,
+    _thresholds: &Thresholds,
     plan_id: &str,
     revision: i64,
     direction: Option<Direction>,
@@ -350,11 +350,10 @@ pub fn apply(
         reason: "Feedback saved.".into(),
     };
     if let Some(direction) = requested {
-        let allowed = direction == Direction::Easier
-            || super::pacing::progression_allowed(store, thresholds)?;
+        let allowed = direction == Direction::Easier;
         if !allowed {
-            outcome.reason = if feedback.is_some() { "Feedback saved. Harder adjustments are unavailable with the current pain, recovery or training-load evidence." }
-                else { "No sessions changed: harder adjustments are unavailable with the current pain, recovery or training-load evidence." }.into();
+            outcome.reason = if feedback.is_some() { "Feedback saved. Harder adjustments are not available." }
+                else { "No sessions changed: harder adjustments are not available." }.into();
         } else {
             let today = Local::now().date_naive();
             let completions = store.calendar_completions()?;
@@ -625,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn harder_transfers_easy_mileage_and_undo_restores_it() {
+    fn healthy_signals_do_not_enable_harder_adjustments() {
         let (store, plan, workouts) = seed();
         store.upsert_health(ProviderKind::Coros, &HealthDaily {
             date: Utc::now().date_naive(), steps: Some(8000), avg_hr: None,
@@ -660,8 +659,7 @@ mod tests {
                 assert!(workouts.iter().filter(week).any(|easy| easy.kind == WorkoutKind::Easy && updated.iter().find(|workout| workout.id == easy.id).unwrap().distance_m < easy.distance_m));
             }
         }
-        assert!(transferred, "Expected an eligible tempo to gain mileage from an easy run");
-        store.undo_difficulty(&plan.id).unwrap();
+        assert!(!transferred);
         let restored = store.plan_workouts(&plan.id).unwrap();
         for original in &workouts {
             assert_eq!(restored.iter().find(|workout| workout.id == original.id).unwrap().distance_m, original.distance_m);
@@ -685,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_harder_requests_persist_next_and_later_tempo_sessions() {
+    fn repeated_harder_requests_do_not_change_sessions() {
         let (store, plan, workouts) = seed();
         store.upsert_health(ProviderKind::Coros, &HealthDaily {
             date: Utc::now().date_naive(), steps: Some(8000), avg_hr: None,
@@ -699,14 +697,13 @@ mod tests {
         let candidates: Vec<_> = workouts.iter().filter(|workout| {
             !workout.done && workout.kind == WorkoutKind::Tempo && workout.date >= Local::now().date_naive()
         }).collect();
-        let earliest = candidates.iter().map(|workout| workout.date).min().unwrap();
         let revision = store.current_plan_rev().unwrap().unwrap();
         let first = apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Harder), None).unwrap();
-        assert!(first.changed > 0, "{}", first.reason);
+        assert_eq!(first.changed, 0);
         let after_first = store.plan_workouts(&plan.id).unwrap();
         let revision = store.current_plan_rev().unwrap().unwrap();
         let second = apply(&store, &Thresholds::default(), &plan.id, revision, Some(Direction::Harder), None).unwrap();
-        assert!(second.changed > 0, "{}", second.reason);
+        assert_eq!(second.changed, 0);
         let after_second = store.plan_workouts(&plan.id).unwrap();
         let mut increased = Vec::new();
         for before in candidates {
@@ -719,8 +716,7 @@ mod tests {
                 increased.push(before.date);
             }
         }
-        assert!(increased.len() >= 2, "Expected repeated increases in upcoming and later tempo sessions: {increased:?}");
-        assert!(increased.contains(&earliest), "The next tempo must change after both requests: {increased:?}");
+        assert!(increased.is_empty());
     }
 
     #[test]
@@ -996,7 +992,7 @@ mod tests {
             None,
         ).unwrap();
         assert_eq!(direct.changed, 0);
-        assert!(direct.reason.contains("pain, recovery or training-load evidence"));
+        assert!(direct.reason.contains("harder adjustments are not available"));
         assert_eq!(store.current_plan_rev().unwrap(), Some(revision));
         let outcome = apply(
             &store,
@@ -1008,7 +1004,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome.changed, 0);
-        assert!(outcome.reason.contains("unavailable"));
+        assert!(outcome.reason.contains("not available"));
         let saved = store
             .plan_workouts(&plan.id)
             .unwrap()

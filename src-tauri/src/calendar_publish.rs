@@ -475,7 +475,7 @@ mod tests {
         let state = AppState {
             store: crate::store::Store::open(Path::new(":memory:")).unwrap(),
             settings: std::sync::Mutex::new(Default::default()),
-            providers: Vec::new(),
+            providers: Default::default(),
             data_dir: directory.clone(),
             syncing: std::sync::atomic::AtomicBool::new(false),
             sync_lock: tokio::sync::Mutex::new(()),

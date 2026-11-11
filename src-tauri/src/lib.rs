@@ -129,8 +129,8 @@ pub fn run() {
                 let state = handle.state::<AppState>();
                 let connected = state
                     .providers
-                    .iter()
-                    .any(|p| p.kind() == crate::types::ProviderKind::Coros && p.is_connected());
+                    .source(crate::types::ProviderKind::Coros)
+                    .is_some_and(|source| source.is_connected());
                 if connected {
                     if let Err(e) =
                         commands::run_full_sync(&handle, &state, crate::types::ProviderKind::Coros)
