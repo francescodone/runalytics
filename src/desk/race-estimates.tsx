@@ -1,7 +1,7 @@
 import { t, duration as fmtDuration, date as fmtDateDMY } from "./i18n";
 import type { PlanDefaults, PlanWorkout, TrainingPlan } from "../lib/types";
 import { dateValue, monday, today } from "./data";
-import { InfoDialog } from "./ui";
+import { CountUp, InfoDialog } from "./ui";
 
 export function trainingRaceTime(threshold: number, offset: number, kilometers: number): number {
   const effective = threshold + offset;
@@ -34,7 +34,7 @@ export function RaceEstimates({ plan, proposedOffset, watch, workouts }: { plan:
       const seconds = trainingRaceTime(plan.thresholdSecKm,current,Number(kilometers));
       const proposed = trainingRaceTime(plan.thresholdSecKm,proposedOffset ?? current,Number(kilometers));
       const projection = projectedThreshold != null && distance === plan.distance ? trainingRaceTime(projectedThreshold, 0, Number(kilometers)) : 0;
-      return <tr key={String(label)}><th scope="row">{label}</th>{!preview && <td>{typeof watchSeconds === "number" && Number.isFinite(watchSeconds) && watchSeconds > 0 ? fmtDuration(watchSeconds, Number(kilometers) <= 10) : t("Not available")}</td>}<td data-seconds={seconds}>{seconds ? fmtDuration(seconds, Number(kilometers) <= 10) : t("Not available")}</td>{preview ? <td data-seconds={proposed}>{proposed ? fmtDuration(proposed, Number(kilometers) <= 10) : t("Not available")}</td> : <td data-projection={projection || undefined}>{projection ? fmtDuration(projection, Number(kilometers) <= 10) : "—"}</td>}</tr>;
+      return <tr key={String(label)}><th scope="row">{label}</th>{!preview && <td>{typeof watchSeconds === "number" && Number.isFinite(watchSeconds) && watchSeconds > 0 ? <CountUp format={progress => fmtDuration(watchSeconds * progress, Number(kilometers) <= 10)} /> : t("Not available")}</td>}<td data-seconds={seconds}>{seconds ? <CountUp format={progress => fmtDuration(seconds * progress, Number(kilometers) <= 10)} /> : t("Not available")}</td>{preview ? <td data-seconds={proposed}>{proposed ? <CountUp format={progress => fmtDuration(proposed * progress, Number(kilometers) <= 10)} /> : t("Not available")}</td> : <td data-projection={projection || undefined}>{projection ? <CountUp format={progress => fmtDuration(projection * progress, Number(kilometers) <= 10)} /> : "—"}</td>}</tr>;
     })}</tbody></table></div>
     {!preview && <p className="muted">{t("Watch predictions reflect the latest sync and may not be from today.")}</p>}
     <InfoDialog title={t("Estimate basis")}><p>{t("Riegel model (exponent 1.06), treating the plan threshold plus accepted quality-pace offset as a one-hour effort pace. Training performance is not a race result; course, endurance, weather and fatigue can change outcomes.")}</p>{!preview && <p>{t("Race day is an estimate based on the plan's peak weekly distance and remaining time, not a guarantee. It is shown only for an active race plan with a known starting volume.")}</p>}</InfoDialog>

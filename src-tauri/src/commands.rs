@@ -444,13 +444,7 @@ pub async fn dashboard(state: State<'_, AppState>, range: TimeRange) -> Result<D
     let th = thresholds(&state);
     let stats = state.store.range_stats(days)?;
     let health = state.store.recent_health(days)?;
-    let (risk_factors, risk_total) = metrics::compute_risk_factors(&state.store, days, &th)?;
-    let mut scores = metrics::compute_scores(&state.store, &th)?;
-    // Blend the range-aware heuristic sum into the headline risk percentage.
-    let range_risk = (10.0 + risk_total * 55.0).clamp(0.0, 100.0).round() as u32;
-    scores.injury_risk = ((scores.injury_risk + range_risk) / 2).clamp(0, 100);
-    // Built from the blended scores so the cards' newest point matches the
-    // headline numbers exactly (struct fields move, so compute before them).
+    let scores = metrics::compute_scores(&state.store, &th)?;
     let score_history = metrics::score_history(&state.store, days, &scores, &th)?;
     let load = state.store.latest_training_load()?;
     // The training-status chart is a trend, so it keeps a readable window even
@@ -488,7 +482,6 @@ pub async fn dashboard(state: State<'_, AppState>, range: TimeRange) -> Result<D
         range,
         stats,
         health,
-        risk_factors,
         active_pain: state.store.latest_pain()?,
         pending_proposal: state.store.pending_proposal()?,
     })
@@ -518,7 +511,6 @@ pub struct DashboardPayload {
     pub range: TimeRange,
     pub stats: RangeStats,
     pub health: Vec<HealthDaily>,
-    pub risk_factors: Vec<RiskFactor>,
     /// The most recent unresolved pain entry, for the Today-tab banner.
     pub active_pain: Option<PainEntry>,
     /// An unanswered plan-change offer, surfaced with Accept right there.
@@ -538,8 +530,7 @@ pub async fn all_activities(state: State<'_, AppState>) -> Result<Vec<Activity>>
 }
 
 /// Everything for the activity detail sheet: GPS track, session data, the
-/// recovery signals for that day, and the injury-risk heuristics evaluated
-/// as of that day.
+/// recovery signals for that day.
 #[tauri::command]
 pub async fn activity_detail(
     state: State<'_, AppState>,
@@ -551,32 +542,12 @@ pub async fn activity_detail(
         .activity_by_id(activity_id)?
         .ok_or_else(|| AppError::Other(format!("activity {activity_id} not found")))?;
     let day = activity.start_time.date_naive();
-    let days = range.days();
-    let th = thresholds(&state);
-    let (risk_factors, _risk_total) = metrics::compute_risk_factors_as_of(
-        &state.store,
-        day,
-        days,
-        &th,
-        Some(activity.start_time.timestamp()),
-    )?;
-    // The same blended headline the dashboard hero shows, as of the run's
-    // day — not just the factor-sum half of it — so the sheet, the calendar
-    // description, and the dashboard agree on one number.
-    let injury_risk = metrics::risk_headline_as_of(
-        &state.store,
-        day,
-        days,
-        &th,
-        Some(activity.start_time.timestamp()),
-    )?;
+    let _ = range;
     Ok(ActivityDetail {
         track: state.store.track_points(activity_id, 2000)?,
         health: state.store.health_on(day)?,
         load: state.store.training_load_on_or_before(day)?,
         fitness: state.store.fitness_on_or_before(day)?,
-        risk_factors,
-        injury_risk,
         activity,
     })
 }
@@ -641,9 +612,7 @@ pub(crate) fn activity_review_for_store(
 
 // ---- plans ----------------------------------------------------------------
 
-/// One run's frozen score snapshot with its injury-risk impact — how many
-/// points this session moved the runner's risk (risk with the run minus risk
-/// without it) — exposed so the plan page can mark each done session.
+/// One run's frozen load snapshot, exposed so the plan page can mark each done session.
 /// `workout_id` is set when the run matched a plan session, which is how the
 /// plan page keys the map.
 #[derive(serde::Serialize)]
@@ -652,28 +621,26 @@ pub struct RunScore {
     pub activity_id: i64,
     pub workout_id: Option<String>,
     pub load: Option<f64>,
-    pub risk: u32,
-    pub risk_delta: i64,
 }
 
 #[tauri::command]
 pub async fn run_scores(state: State<'_, AppState>) -> Result<Vec<RunScore>> {
-    let workout_by_activity: std::collections::HashMap<i64, String> = state
-        .store
+    run_scores_for_store(&state.store)
+}
+
+pub(crate) fn run_scores_for_store(store: &crate::store::Store) -> Result<Vec<RunScore>> {
+    let workout_by_activity: std::collections::HashMap<i64, String> = store
         .calendar_completions()?
         .into_iter()
         .map(|(workout_id, activity_id, _)| (activity_id, workout_id))
         .collect();
-    Ok(state
-        .store
+    Ok(store
         .activity_scores()?
         .into_iter()
-        .map(|(activity_id, load, risk, risk_delta)| RunScore {
+        .map(|(activity_id, load)| RunScore {
             activity_id,
             workout_id: workout_by_activity.get(&activity_id).cloned(),
             load,
-            risk,
-            risk_delta,
         })
         .collect())
 }
@@ -1516,6 +1483,35 @@ pub async fn save_session_feedback(
 }
 
 #[tauri::command]
+pub async fn preview_plan_difficulty(
+    state: State<'_, AppState>,
+    plan_id: String,
+    revision: i64,
+    direction: crate::plan::difficulty::Direction,
+) -> Result<crate::plan::difficulty::DifficultyPreview> {
+    let _guard = state.sync_lock.lock().await;
+    crate::plan::difficulty::preview(&state.store, &thresholds(&state), &plan_id, revision, direction)
+}
+
+#[tauri::command]
+pub async fn approve_plan_difficulty(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    preview: crate::plan::difficulty::DifficultyPreview,
+) -> Result<crate::plan::difficulty::Outcome> {
+    let _guard = state.sync_lock.lock().await;
+    prepare_plan_change(&app, &state).await?;
+    let outcome = crate::plan::difficulty::approve(&state.store, &thresholds(&state), &preview)?;
+    if outcome.changed > 0 {
+        let _ = app.emit("plan://updated", serde_json::json!({ "local": true }));
+        if after_schedule_change(&app, &state, "difficulty").await.is_err() {
+            let _ = app.emit("plan://stage", serde_json::json!({ "op":"difficulty", "target":"op", "state":"error", "detail":"Saved locally; publishing will retry on the next sync." }));
+        }
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
 pub async fn adjust_plan_difficulty(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1827,7 +1823,7 @@ pub async fn apply_proposal(
             let scores = metrics::compute_scores(&state.store, &thresholds(&state))?;
             let ratio = state.store.latest_training_load()?.and_then(|load| load.ratio);
             if state.store.latest_pain()?.is_some() || scores.recovery_score <= thresholds(&state).recovery_fatigued
-                || scores.injury_risk >= 60 || !ratio.is_some_and(|value| value.is_finite() && value <= 1.3)
+                || !ratio.is_some_and(|value| value.is_finite() && value <= 1.3)
             {
                 return Err(AppError::Other("recovery or load no longer supports progression; keep the current plan".into()));
             }

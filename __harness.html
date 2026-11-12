@@ -84,14 +84,12 @@
           date: day(n),
           training: 60 + ((n * 17) % 30),
           recovery: 45 + ((n * 11) % 40),
-          risk: 20 + ((n * 7) % 45),
         };
       });
       scoreHistory[scoreHistory.length - 1] = {
         date: day(0),
         training: 78,
         recovery: 61,
-        risk: 34,
       };
       const health = (n) => ({
         date: day(n),
@@ -176,7 +174,7 @@
         resolvedOn: null, followupAt: null,
       };
       const dashboard = {
-        scores: { trainingScore: 78, injuryRisk: painMode ? 65 : 34, recoveryScore: 61, globalScore: painMode ? 45 : 68, notes: [] },
+        scores: { trainingScore: 78, recoveryScore: 61, globalScore: 71, notes: [] },
         scoreHistory,
         fitness: {
           date: day(0), vo2max: 54.2, thresholdSecKm: 278,
@@ -206,21 +204,9 @@
         range: "7d",
         stats: { distanceM: 52300, durationS: 14400, sessions: 5, avgPaceSKm: 332, avgHr: 151 },
         health: [0, 1, 2, 3, 4, 5, 6].map(health),
-        // Mixed on purpose: the backend reports per-factor severity, so a
-        // healthy signal legitimately lands at 0 and the row has to say so.
-        riskFactors: [
-          { label: "Load ratio (ACWR)", detail: "1.13 — within optimized range", contribution: 0 },
-          { label: "Volume spike", detail: "within baseline (106%)", contribution: 0 },
-          { label: "Sleep quality", detail: "78/100 avg", contribution: 0 },
-          { label: "HRV trend", detail: "41 ms vs 52 ms baseline", contribution: 0.46 },
-          { label: "Resting HR drift", detail: "52 bpm vs 50 bpm baseline", contribution: 0 },
-          { label: "Recovery debt", detail: "71/100 recovery from sleep, HRV and resting HR", contribution: 0 },
-          ...(painMode ? [{ label: "Reported pain", detail: "right knee 6/10", contribution: 0.6 }] : []),
-        ],
         activePain: painMode ? painEntry : null,
         pendingProposal: null,
       };
-      if (painMode) scoreHistory[scoreHistory.length - 1].risk = 65;
       window.__TAURI_INTERNALS__ = {
         invoke: async (cmd, args) => {
           if (cmd === "provider_status") return [{ provider: "coros", connected: true, lastSync: day(0), detail: "" }];
@@ -250,8 +236,6 @@
               health: health(1),
               load: dashboard.load,
               fitness: dashboard.fitness,
-              riskFactors: dashboard.riskFactors,
-              injuryRisk: 34,
             };
           }
           if (cmd === "activity_review") {
@@ -372,12 +356,6 @@
             <div id="status-panel"></div>
           </section>
           <div class="body-pair">
-            <section id="risk" class="panel">
-              <header class="panel-head">
-                <h2>Injury risk</h2>
-              </header>
-              <div id="risk-panel" class="risk-body"></div>
-            </section>
             <section id="recovery" class="panel">
               <header class="panel-head">
                 <h2>Body &amp; recovery</h2>

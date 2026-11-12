@@ -1,10 +1,11 @@
 import { useId, useState } from "react";
 import { IconArrowDown, IconArrowUp, IconCheck, IconX } from "@tabler/icons-react";
-import { tauri } from "../lib/ipc";
-import type { FeedbackContext, FeedbackSession } from "../lib/types";
+import { fmtPace, tauri } from "../lib/ipc";
+import type { DifficultyDetails, FeedbackContext, FeedbackSession } from "../lib/types";
 import { sessionTitle, shortDate, useCommand, useRemote, useWorkspace } from "./data";
-import { t, text } from "./i18n";
-import { Button, ErrorNotice } from "./ui";
+import { distance, t, text } from "./i18n";
+import { Presence } from "./interaction";
+import { Button, Dialog, ErrorNotice, Loading } from "./ui";
 
 const labels = ["Much too easy", "Slightly easy", "About right", "Slightly hard", "Much too hard"] as const;
 
@@ -62,21 +63,53 @@ export function FeedbackReminder() {
 
 export function EditPlan({ planId }: { planId: string }) {
   const feedback = useRemote(tauri.sessionFeedback);
-  const command = useCommand();
   const { notify } = useWorkspace();
   const [result, setResult] = useState("");
+  const [direction, setDirection] = useState<"easier" | "harder" | null>(null);
   const context = feedback.data;
-  const adjust = (direction: "easier" | "harder") => command.run(async () => {
+  return <section className="edit-plan" aria-label={t("Edit plan")}><h3>{t("Edit plan")}</h3>
+    <div className="feedback-actions"><Button disabled={!context || context.planId !== planId} onClick={() => setDirection("easier")}><IconArrowDown size={18} />{t("Make plan slightly easier")}</Button>
+      <Button disabled={!context || context.planId !== planId} onClick={() => setDirection("harder")}><IconArrowUp size={18} />{t("Make plan slightly harder")}</Button></div>
+    <ErrorNotice error={feedback.error} retry={feedback.retry} />
+    {result && <p role="status">{result}</p>}
+    <Presence>{direction && <DifficultyReview planId={planId} direction={direction} onClose={() => setDirection(null)} onApplied={reason => {
+      setResult(text(reason));
+      notify(text(reason), { label: t("Undo"), run: () => tauri.undoPlanDifficulty(planId) });
+    }} />}</Presence>
+  </section>;
+}
+
+function Prescription({ details, previous }: { details: DifficultyDetails; previous?: DifficultyDetails }) {
+  return <div>{details.steps.map((step, index) => {
+    const original = previous?.steps.find((candidate, candidateIndex) => candidateIndex === index && candidate.label === step.label && candidate.openEnded === step.openEnded)
+      ?? previous?.steps.find(candidate => candidate.label === step.label && candidate.openEnded === step.openEnded);
+    const changed = (value: boolean, content: string) => previous && value ? <strong>{content}</strong> : content;
+    const pace = step.paceLoSKm != null ? `${fmtPace(step.paceLoSKm)}${!step.openEnded && step.paceHiSKm != null ? ` - ${fmtPace(step.paceHiSKm)}` : "+"} /km` : "-";
+    const recoveryPace = step.recoveryPaceLoSKm != null ? `${fmtPace(step.recoveryPaceLoSKm)}${step.recoveryPaceHiSKm != null ? ` - ${fmtPace(step.recoveryPaceHiSKm)}` : "+"} /km` : "-";
+    return <p key={index}>
+      {text(step.label)}: {step.repeats > 1 || original && original.repeats !== step.repeats ? <>{changed(!original || original.repeats !== step.repeats, `${step.repeats} ×`)} </> : null}{changed(!original || original.distanceM !== step.distanceM, distance(step.distanceM))}
+      {(step.paceLoSKm != null || original?.paceLoSKm != null) && <> · {changed(!original || original.paceLoSKm !== step.paceLoSKm || original.paceHiSKm !== step.paceHiSKm || original.openEnded !== step.openEnded, pace)}</>}
+      {(step.recoveryM > 0 || (original?.recoveryM ?? 0) > 0) && <> · {t("Recovery")}: {changed(!original || original.recoveryM !== step.recoveryM, distance(step.recoveryM))}{(step.recoveryPaceLoSKm != null || original?.recoveryPaceLoSKm != null) && <> · {changed(!original || original.recoveryPaceLoSKm !== step.recoveryPaceLoSKm || original.recoveryPaceHiSKm !== step.recoveryPaceHiSKm, recoveryPace)}</>}</>}
+    </p>;
+  })}</div>;
+}
+
+function DifficultyReview({ planId, direction, onClose, onApplied }: { planId: string; direction: "easier" | "harder"; onClose: () => void; onApplied: (reason: string) => void }) {
+  const command = useCommand();
+  const proposal = useRemote(async () => {
     const latest = await tauri.sessionFeedback();
     if (!latest || latest.planId !== planId) throw new Error(t("The plan changed. Refresh before trying again."));
-    const outcome = await tauri.adjustPlanDifficulty(planId, latest.revision, direction);
-    setResult(text(outcome.reason));
-    if (outcome.changed > 0) notify(text(outcome.reason), { label: t("Undo"), run: () => tauri.undoPlanDifficulty(planId) });
-  });
-  return <section className="edit-plan" aria-label={t("Edit plan")}><h3>{t("Edit plan")}</h3>
-    <div className="feedback-actions"><Button disabled={command.busy || !context || context.planId !== planId} onClick={() => void adjust("easier")}><IconArrowDown size={18} />{t("Make plan slightly easier")}</Button>
-      <Button disabled={command.busy || !context || context.planId !== planId} onClick={() => void adjust("harder")}><IconArrowUp size={18} />{t("Make plan slightly harder")}</Button></div>
-    <ErrorNotice error={command.error ?? feedback.error} retry={feedback.retry} />
-    {result && <p role="status">{result}</p>}
-  </section>;
+    return tauri.previewPlanDifficulty(planId, latest.revision, direction);
+  }, [planId, direction]);
+  const preview = proposal.data;
+  return <Dialog title={t("Review plan changes")} wide onClose={() => { if (!command.busy) onClose(); }}>
+    <h3>{t(direction === "easier" ? "Make plan slightly easier" : "Make plan slightly harder")}</h3>
+    {proposal.loading && <Loading />}
+    {preview && <><p>{text(preview.outcome.reason)}</p>
+      {preview.changes.length > 0 && <div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Proposed session changes")}><table><thead><tr><th>{t("Date")}</th><th>{t("Current session")}</th><th>{t("Proposed session")}</th></tr></thead><tbody>{preview.changes.map(change => <tr key={change.workoutId}><th>{shortDate(change.date)}<small className="table-date">{sessionTitle(change.title)}</small></th><td><Prescription details={change.before} /></td><td><Prescription details={change.after} previous={change.before} /></td></tr>)}</tbody></table></div>}</>}
+    <ErrorNotice error={command.error ?? proposal.error} retry={proposal.error ? proposal.retry : undefined} />
+    <div className="form-actions"><Button disabled={command.busy} onClick={onClose}>{t("Dismiss changes")}</Button>{preview && preview.changes.length > 0 && <Button tone="primary" busy={command.busy} onClick={async () => {
+      if (await command.run(async () => { const outcome = await tauri.approvePlanDifficulty(preview); if (outcome.changed > 0) onApplied(outcome.reason); })) onClose();
+    }}>{t("Apply changes")}</Button>}</div>
+  </Dialog>;
 }

@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Daily runner | Runalytics objects</title>
+    <style>
+      :root {
+        font-family: "Avenir Next", Avenir, sans-serif;
+        color: #292b31;
+        background: #f7f8fa;
+        font-synthesis: none;
+        --ink: #292b31;
+        --muted: #6a6d76;
+        --line: #e3e5e9;
+        --accent: #f35d70;
+      }
+      * { box-sizing: border-box; letter-spacing: 0; }
+      body { margin: 0; min-width: 280px; }
+      button { font: inherit; color: inherit; cursor: pointer; }
+      button:disabled { cursor: wait; opacity: .45; }
+      button:focus-visible { outline: 3px solid #315da8; outline-offset: 5px; }
+      .workspace { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; }
+      header, footer { margin-inline: 5%; }
+      header { min-height: 80px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
+      .wordmark { font-size: 17px; font-weight: 750; }
+      .collection { color: var(--muted); font-size: 13px; }
+      main { position: relative; display: grid; grid-template-rows: auto minmax(300px, 1fr) auto; padding-top: 30px; }
+      .heading { text-align: center; padding-inline: 20px; }
+      h1 { font-size: 30px; line-height: 1.2; font-weight: 650; margin: 0 0 8px; }
+      .edition { font-size: 13px; color: var(--muted); margin: 0; }
+      .stage { position: relative; min-height: 340px; height: min(57svh, 560px); width: 100%; align-self: center; }
+      .stage canvas { display: block; width: 100%; height: 100%; }
+      .shoe-hit { position: absolute; width: min(88%, 540px); height: 86%; top: 7%; left: 50%; transform: translateX(-50%); border: 0; padding: 0; background: transparent; border-radius: 8px; touch-action: pan-y; -webkit-tap-highlight-color: transparent; }
+      .shoe-hit:focus-visible { outline-offset: -10px; }
+      .loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; color: var(--muted); padding: 24px; text-align: center; pointer-events: none; }
+      .loading[hidden] { display: none; }
+      .tools { display: flex; justify-content: center; align-items: center; gap: 22px; padding: 6px 20px 32px; flex-wrap: wrap; }
+      .swatches { display: flex; align-items: center; gap: 12px; border: 0; margin: 0; padding: 0; }
+      .swatch { position: relative; width: 26px; height: 26px; border: 1px solid #292b311c; border-radius: 50%; padding: 0; background: var(--swatch); }
+      .swatch[aria-pressed="true"]::after { content: ""; position: absolute; inset: -5px; border: 1px solid var(--ink); border-radius: 50%; }
+      .divider { width: 1px; height: 24px; background: var(--line); }
+      .actions { display: flex; gap: 6px; }
+      .tool { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; min-width: 40px; padding: 8px; background: transparent; border: 0; border-radius: 8px; }
+      .tool:hover:not(:disabled) { background: #e9ecf0; }
+      .tool img { width: 19px; height: 19px; pointer-events: none; }
+      .download { padding-inline: 12px; font-size: 13px; }
+      footer { border-top: 1px solid var(--line); min-height: 108px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 20px; }
+      .specimen { display: flex; align-items: center; gap: 16px; }
+      .specimen img { object-fit: contain; }
+      .specimen div { display: grid; gap: 4px; }
+      .specimen strong { font-size: 13px; font-weight: 600; }
+      .specimen span, .state { font-size: 12px; color: var(--muted); }
+      .state { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+      .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #698b7a; }
+      [data-state="animating"] .state::before { background: var(--accent); }
+      .error { color: #a0243c; }
+      @media (max-width: 540px) {
+        header { min-height: 66px; }
+        main { padding-top: 28px; }
+        h1 { font-size: 26px; }
+        .stage { height: min(52svh, 440px); min-height: 290px; }
+        .tools { gap: 16px; padding-bottom: 28px; }
+        footer { gap: 12px; min-height: 94px; }
+        .specimen { gap: 8px; }
+        .specimen img { width: 52px; height: 52px; }
+        .specimen strong { font-size: 12px; }
+        .download span { display: none; }
+      }
+      @media (pointer: coarse) {
+        .swatch { width: 32px; height: 32px; }
+        .swatch::before { content: ""; position: absolute; inset: -6px; }
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="workspace" data-state="loading">
+      <header>
+        <span class="wordmark">Runalytics</span>
+        <span class="collection">Object studies / 001</span>
+      </header>
+      <main>
+        <div class="heading">
+          <h1>Daily runner</h1>
+          <p class="edition" id="edition">Coral / soft-knit edition</p>
+        </div>
+        <div class="stage" id="stage">
+          <button class="shoe-hit" id="shoe" type="button" aria-label="Animate running shoe" title="Animate running shoe" disabled></button>
+          <div class="loading" id="loading" role="status">Preparing the shoe...</div>
+        </div>
+        <div class="tools" aria-label="Shoe controls">
+          <div class="swatches" role="group" aria-label="Shoe color">
+            <button class="swatch" type="button" data-color="coral" aria-label="Coral" aria-pressed="true" title="Coral" style="--swatch: #f36c79" disabled></button>
+            <button class="swatch" type="button" data-color="chalk" aria-label="Chalk" aria-pressed="false" title="Chalk" style="--swatch: #d5d9e2" disabled></button>
+            <button class="swatch" type="button" data-color="sage" aria-label="Sage" aria-pressed="false" title="Sage" style="--swatch: #86b8a7" disabled></button>
+          </div>
+          <span class="divider" aria-hidden="true"></span>
+          <div class="actions">
+            <button class="tool" id="replay" type="button" aria-label="Replay animation" title="Replay animation" disabled><img alt="" src="https://cdn.jsdelivr.net/npm/@tabler/icons@3.49.0/icons/outline/player-play.svg" /></button>
+            <button class="tool" id="stop" type="button" aria-label="Stop animation" title="Stop animation" disabled><img alt="" src="https://cdn.jsdelivr.net/npm/@tabler/icons@3.49.0/icons/outline/player-stop.svg" /></button>
+            <button class="tool download" id="download" type="button" title="Download transparent PNG" aria-label="Download transparent PNG" disabled><img alt="" src="https://cdn.jsdelivr.net/npm/@tabler/icons@3.49.0/icons/outline/download.svg" /><span>PNG</span></button>
+          </div>
+        </div>
+      </main>
+      <footer>
+        <div class="specimen">
+          <img id="thumbnail" width="72" height="72" alt="" hidden />
+          <div><strong>Daily runner</strong><span id="finish">Coral knit / ivory foam</span></div>
+        </div>
+        <output class="state" id="state" aria-live="off">Loading</output>
+      </footer>
+    </div>
+    <script type="module">
+      const workspace = document.querySelector(".workspace");
+      const loading = document.querySelector("#loading");
+      const stateLabel = document.querySelector("#state");
+      try {
+        const THREE = await import("https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js");
+        const { RoomEnvironment } = await import("https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/environments/RoomEnvironment.js");
+        const stage = document.querySelector("#stage");
+        const hit = document.querySelector("#shoe");
+        const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        renderer.setClearColor(0x000000, 0);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.15;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.domElement.setAttribute("aria-hidden", "true");
+        stage.prepend(renderer.domElement);
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-3, 3, 2.4, -2.4, .1, 40);
+        camera.position.set(4.2, 3.5, 7.5);
+        camera.lookAt(0, .75, 0);
+        const environment = new THREE.PMREMGenerator(renderer);
+        const room = new RoomEnvironment();
+        const environmentMap = environment.fromScene(room, .04);
+        scene.environment = environmentMap.texture;
+        room.dispose();
+        environment.dispose();
+        scene.add(new THREE.HemisphereLight(0xffffff, 0xaaa7b6, 2));
+        const key = new THREE.DirectionalLight(0xfff5ed, 4);
+        key.position.set(-3, 6, 5);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        key.shadow.camera.left = key.shadow.camera.bottom = -3;
+        key.shadow.camera.right = key.shadow.camera.top = 3;
+        key.shadow.normalBias = .025;
+        key.shadow.bias = -.0002;
+        scene.add(key);
+        const rim = new THREE.DirectionalLight(0xe7efff, 2.5);
+        rim.position.set(2, 3, -4);
+        scene.add(rim);
+        const shoe = new THREE.Group();
+        scene.add(shoe);
+
+        function knitTexture() {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = 128;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#939393";
+          context.fillRect(0, 0, 128, 128);
+          context.lineWidth = 1.6;
+          for (let row = -1; row < 18; row++) {
+            for (let column = -1; column < 18; column++) {
+              const horizontal = column * 8 + (row % 2) * 4;
+              const vertical = row * 8;
+              context.strokeStyle = "#c5c5c5";
+              context.beginPath();
+              context.moveTo(horizontal, vertical);
+              context.quadraticCurveTo(horizontal + 1, vertical + 4, horizontal + 4, vertical + 6);
+              context.quadraticCurveTo(horizontal + 7, vertical + 4, horizontal + 8, vertical);
+              context.stroke();
+              context.fillStyle = "#595959";
+              context.fillRect(horizontal + 3, vertical + 2, 1.5, 2);
+            }
+          }
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+          texture.repeat.set(5, 2);
+          texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+          return texture;
+        }
+        const knit = knitTexture();
+        const upperMaterial = new THREE.MeshStandardMaterial({ color: 0xf36c79, roughness: .92, bumpMap: knit, bumpScale: .024 });
+        const toeMaterial = new THREE.MeshStandardMaterial({ color: 0xf7858d, roughness: .86, bumpMap: knit, bumpScale: .014 });
+        const heelMaterial = new THREE.MeshStandardMaterial({ color: 0xdd4e65, roughness: .78 });
+        const liningMaterial = new THREE.MeshStandardMaterial({ color: 0xa44b5d, roughness: 1, side: THREE.DoubleSide });
+        const tongueMaterial = new THREE.MeshStandardMaterial({ color: 0xffd7cd, roughness: .95, bumpMap: knit, bumpScale: .018, side: THREE.DoubleSide });
+        const foamMaterial = new THREE.MeshStandardMaterial({ color: 0xfff8eb, roughness: .72 });
+        const seamMaterial = new THREE.MeshStandardMaterial({ color: 0xe2d8ce, roughness: .9 });
+        const rubberMaterial = new THREE.MeshStandardMaterial({ color: 0x4b4651, roughness: .95 });
+        const laceMaterial = new THREE.MeshStandardMaterial({ color: 0xfff9ef, roughness: .75 });
+        const eyeletMaterial = new THREE.MeshStandardMaterial({ color: 0xc74d64, metalness: .15, roughness: .6 });
+        const profile = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-1.5, .58, .07), new THREE.Vector3(-1.4, 1.03, .34),
+          new THREE.Vector3(-1.16, 1.26, .43), new THREE.Vector3(-.8, 1.31, .45),
+          new THREE.Vector3(-.45, 1.15, .46), new THREE.Vector3(-.05, .96, .5),
+          new THREE.Vector3(.4, .79, .55), new THREE.Vector3(.92, .71, .55),
+          new THREE.Vector3(1.35, .61, .4), new THREE.Vector3(1.58, .45, .015),
+        ], false, "catmullrom", .25);
+        const sections = profile.getPoints(200);
+        function sectionAt(horizontal) {
+          for (let index = 1; index < sections.length; index++) {
+            if (sections[index].x >= horizontal) {
+              const previous = sections[index - 1];
+              const next = sections[index];
+              return previous.clone().lerp(next, (horizontal - previous.x) / (next.x - previous.x));
+            }
+          }
+          return sections.at(-1).clone();
+        }
+        function surface(horizontal, angle, offset = 0) {
+          const section = sectionAt(horizontal);
+          const height = .4 + (section.y - .4) * Math.pow(Math.sin(angle), .8);
+          return new THREE.Vector3(horizontal, height + offset, (section.z + offset) * Math.cos(angle));
+        }
+        function topAt(horizontal, depth) {
+          const section = sectionAt(horizontal);
+          const angle = Math.acos(THREE.MathUtils.clamp(depth / section.z, -1, 1));
+          return surface(horizontal, angle).y;
+        }
+        function mesh(geometry, material, parent = shoe) {
+          const object = new THREE.Mesh(geometry, material);
+          object.castShadow = object.receiveShadow = true;
+          parent.add(object);
+          return object;
+        }
+        function tube(points, radius, material, closed = false) {
+          const curve = new THREE.CatmullRomCurve3(points.map(point => point.isVector3 ? point : new THREE.Vector3(...point)), closed, "catmullrom", .35);
+          return mesh(new THREE.TubeGeometry(curve, Math.max(32, points.length * 5), radius, 8, closed), material);
+        }
+        function upperPatch(start, end, material, offset = 0, opening = false) {
+          const positions = [], coordinates = [], indices = [];
+          const lengthSegments = 100, roundSegments = 48;
+          for (let lengthIndex = 0; lengthIndex <= lengthSegments; lengthIndex++) {
+            const horizontal = THREE.MathUtils.lerp(start, end, lengthIndex / lengthSegments);
+            for (let roundIndex = 0; roundIndex <= roundSegments; roundIndex++) {
+              const angle = .001 + (Math.PI - .002) * roundIndex / roundSegments;
+              const position = surface(horizontal, angle, offset);
+              positions.push(position.x, position.y, position.z);
+              coordinates.push(lengthIndex / lengthSegments, roundIndex / roundSegments);
+              if (lengthIndex === lengthSegments || roundIndex === roundSegments) continue;
+              const middle = surface(horizontal + (end - start) / lengthSegments / 2, angle + Math.PI / roundSegments / 2);
+              const inOpening = Math.pow((middle.x + .97) / .41, 2) + Math.pow(middle.z / .29, 2) < 1;
+              if (opening && inOpening) continue;
+              const current = lengthIndex * (roundSegments + 1) + roundIndex;
+              indices.push(current, current + roundSegments + 1, current + 1, current + 1, current + roundSegments + 1, current + roundSegments + 2);
+            }
+          }
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(coordinates, 2));
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals();
+          return mesh(geometry, material);
+        }
+        function sole(top, thickness, bevel, material) {
+          const footprint = new THREE.Shape();
+          footprint.moveTo(-1.46, -.25);
+          footprint.bezierCurveTo(-1.61, -.52, -1.04, -.55, -.56, -.46);
+          footprint.bezierCurveTo(-.05, -.43, .49, -.67, 1.06, -.57);
+          footprint.bezierCurveTo(1.55, -.53, 1.76, -.25, 1.67, .08);
+          footprint.bezierCurveTo(1.64, .5, 1.26, .64, .77, .6);
+          footprint.bezierCurveTo(.2, .58, -.22, .41, -.68, .47);
+          footprint.bezierCurveTo(-1.19, .55, -1.62, .52, -1.46, -.25);
+          const geometry = new THREE.ExtrudeGeometry(footprint, { depth: thickness, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 6, steps: 1, curveSegments: 32 });
+          geometry.rotateX(Math.PI / 2);
+          const object = mesh(geometry, material);
+          object.position.y = top;
+          return object;
+        }
+        sole(.205, .075, .045, rubberMaterial);
+        sole(.4, .17, .075, foamMaterial);
+        sole(.438, .025, .025, seamMaterial);
+        upperPatch(-1.5, 1.58, upperMaterial, 0, true);
+        upperPatch(.85, 1.576, toeMaterial, .014);
+        upperPatch(-1.493, -1.31, heelMaterial, .018);
+
+        const collarPoints = [];
+        for (let index = 0; index < 64; index++) {
+          const angle = index / 64 * Math.PI * 2;
+          const horizontal = -.97 + .425 * Math.cos(angle);
+          const depth = .307 * Math.sin(angle);
+          collarPoints.push([horizontal, topAt(horizontal, depth) + .012, depth]);
+        }
+        tube(collarPoints, .072, heelMaterial, true);
+        const bowlPositions = [], bowlIndices = [];
+        for (let ring = 0; ring <= 12; ring++) {
+          const radius = 1 - ring / 12 * .98;
+          for (let index = 0; index <= 64; index++) {
+            const angle = index / 64 * Math.PI * 2;
+            const horizontal = -.97 + .415 * Math.cos(angle) * radius;
+            const depth = .298 * Math.sin(angle) * radius;
+            const rimHeight = topAt(-.97 + .415 * Math.cos(angle), .298 * Math.sin(angle));
+            const height = .68 + (rimHeight - .68) * Math.pow(radius, 3);
+            bowlPositions.push(horizontal, height, depth);
+            if (ring < 12 && index < 64) {
+              const current = ring * 65 + index;
+              bowlIndices.push(current, current + 1, current + 65, current + 1, current + 66, current + 65);
+            }
+          }
+        }
+        const bowl = new THREE.BufferGeometry();
+        bowl.setAttribute("position", new THREE.Float32BufferAttribute(bowlPositions, 3));
+        bowl.setIndex(bowlIndices);
+        bowl.computeVertexNormals();
+        mesh(bowl, liningMaterial);
+
+        const tonguePositions = [], tongueCoordinates = [], tongueIndices = [];
+        for (let lengthIndex = 0; lengthIndex <= 32; lengthIndex++) {
+          const horizontal = -.59 + lengthIndex / 32 * 1.27;
+          const width = .215 * Math.sin(.4 + lengthIndex / 32 * 2.25);
+          for (let roundIndex = 0; roundIndex <= 12; roundIndex++) {
+            const depth = (roundIndex / 12 * 2 - 1) * width;
+            tonguePositions.push(horizontal, topAt(horizontal, depth) + .038, depth);
+            tongueCoordinates.push(lengthIndex / 32, roundIndex / 12);
+            if (lengthIndex < 32 && roundIndex < 12) {
+              const current = lengthIndex * 13 + roundIndex;
+              tongueIndices.push(current, current + 13, current + 1, current + 1, current + 13, current + 14);
+            }
+          }
+        }
+        const tongue = new THREE.BufferGeometry();
+        tongue.setAttribute("position", new THREE.Float32BufferAttribute(tonguePositions, 3));
+        tongue.setAttribute("uv", new THREE.Float32BufferAttribute(tongueCoordinates, 2));
+        tongue.setIndex(tongueIndices);
+        tongue.computeVertexNormals();
+        mesh(tongue, tongueMaterial);
+        for (let index = 0; index < 5; index++) {
+          const horizontal = -.36 + index * .19;
+          const width = .23 + index * .009;
+          for (const side of [-1, 1]) {
+            const eyelet = mesh(new THREE.TorusGeometry(.043, .012, 8, 20), eyeletMaterial);
+            eyelet.rotation.x = Math.PI / 2;
+            eyelet.position.set(horizontal, topAt(horizontal, width * side) + .041, width * side);
+          }
+          for (const direction of [-1, 1]) {
+            tube([
+              [horizontal - .028, topAt(horizontal, -width) + .057, -width],
+              [horizontal + .04 * direction, topAt(horizontal, 0) + .095, 0],
+              [horizontal + .055 * direction, topAt(horizontal, width) + .057, width],
+            ], .026, laceMaterial);
+          }
+        }
+        tube([[-1.28, 1.27, -.055], [-1.43, 1.53, -.065], [-1.4, 1.6, .065], [-1.25, 1.31, .065]], .034, heelMaterial);
+        tube([[-.39, 1.17, -.05], [-.55, 1.27, -.13], [-.64, 1.28, -.04], [-.4, 1.19, 0], [-.52, 1.29, .13], [-.65, 1.27, .13], [-.44, 1.18, .03]], .022, laceMaterial);
+        for (const side of [-1, 1]) {
+          const toeSeam = [];
+          for (let index = 0; index <= 24; index++) {
+            const angle = .06 + index / 24 * (Math.PI - .12);
+            toeSeam.push(surface(.85, angle, .024));
+          }
+          if (side === 1) tube(toeSeam, .011, heelMaterial);
+          tube([[-1.27, .58, side * .405], [-.88, .65, side * .459], [-.53, .87, side * .381], [-.42, 1.04, side * .25]], .013, heelMaterial);
+          tube([[-1.2, .32, side * .49], [-.7, .305, side * .492], [-.15, .29, side * .486], [.45, .31, side * .58], [1.12, .33, side * .55]], .013, seamMaterial);
+          for (let index = 0; index < 6; index++) {
+            const horizontal = .33 + index * .16;
+            tube([[horizontal, .24, side * .59], [horizontal + .07, .31, side * .606]], .011, seamMaterial);
+          }
+        }
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.ShadowMaterial({ opacity: .13 }));
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = .018;
+        ground.receiveShadow = true;
+        scene.add(ground);
+        shoe.rotation.set(-.04, -.22, -.08);
+        shoe.position.y = .1;
+        const restRotation = shoe.rotation.clone();
+        const restHeight = shoe.position.y;
+        let animation = null;
+        let frameId = 0;
+        let renderCount = 0;
+        let disposed = false;
+        let contextLost = false;
+        let intersecting = true;
+        let color = "coral";
+        let width = 0, height = 0;
+        const listeners = new AbortController();
+        const signal = listeners.signal;
+        function setState(state) {
+          workspace.dataset.state = state;
+          stateLabel.textContent = state === "animating" ? "In motion" : "At rest";
+          document.querySelector("#stop").disabled = state !== "animating";
+        }
+        function render() {
+          if (disposed || contextLost) return;
+          renderer.render(scene, camera);
+          renderCount++;
+        }
+        function rest() {
+          shoe.rotation.copy(restRotation);
+          shoe.position.y = restHeight;
+          shoe.scale.setScalar(1);
+        }
+        function stop() {
+          cancelAnimationFrame(frameId);
+          frameId = 0;
+          animation = null;
+          rest();
+          if (!disposed) { setState("idle"); render(); }
+        }
+        function tick(now) {
+          frameId = 0;
+          if (!animation || disposed) return;
+          const progress = Math.min((now - animation.start) / animation.duration, 1);
+          const blend = Math.min(progress / .18, 1);
+          const easedBlend = 1 - Math.pow(1 - blend, 3);
+          const arc = Math.pow(Math.sin(progress * Math.PI), 2);
+          const rock = Math.sin(progress * Math.PI * 2) * Math.sin(progress * Math.PI);
+          shoe.position.y = THREE.MathUtils.lerp(animation.height, restHeight + arc * animation.lift, easedBlend);
+          shoe.rotation.x = THREE.MathUtils.lerp(animation.rotation.x, restRotation.x - arc * .12, easedBlend);
+          shoe.rotation.y = THREE.MathUtils.lerp(animation.rotation.y, restRotation.y + rock * animation.turn, easedBlend);
+          shoe.rotation.z = THREE.MathUtils.lerp(animation.rotation.z, restRotation.z - rock * .18, easedBlend);
+          shoe.scale.setScalar(1 + arc * .025);
+          if (progress >= 1) { stop(); return; }
+          render();
+          frameId = requestAnimationFrame(tick);
+        }
+        function play(kind = "tap") {
+          if (disposed || contextLost || document.hidden || !intersecting) return;
+          if (reducedMotion.matches) { stop(); return; }
+          cancelAnimationFrame(frameId);
+          animation = { start: performance.now(), duration: kind === "hover" ? 950 : 1350, lift: kind === "hover" ? .18 : .42, turn: kind === "hover" ? .2 : .48, height: shoe.position.y, rotation: shoe.rotation.clone() };
+          setState("animating");
+          frameId = requestAnimationFrame(tick);
+        }
+        function resize() {
+          const bounds = stage.getBoundingClientRect();
+          if (bounds.width === width && bounds.height === height) return;
+          width = bounds.width;
+          height = bounds.height;
+          renderer.setSize(width, height, false);
+          const aspect = width / height;
+          const halfHeight = Math.max(1.65, 1.95 / aspect);
+          camera.left = -halfHeight * aspect;
+          camera.right = halfHeight * aspect;
+          camera.top = halfHeight;
+          camera.bottom = -halfHeight;
+          camera.updateProjectionMatrix();
+          render();
+        }
+        function snapshot(size) {
+          const previousSize = renderer.getSize(new THREE.Vector2());
+          const previousRatio = renderer.getPixelRatio();
+          const exportCamera = camera.clone();
+          exportCamera.left = exportCamera.bottom = -1.95;
+          exportCamera.right = exportCamera.top = 1.95;
+          exportCamera.updateProjectionMatrix();
+          const position = shoe.position.clone();
+          const rotation = shoe.rotation.clone();
+          const scale = shoe.scale.clone();
+          rest();
+          ground.visible = false;
+          try {
+            renderer.setPixelRatio(1);
+            renderer.setSize(size, size, false);
+            renderer.render(scene, exportCamera);
+            return renderer.domElement.toDataURL("image/png");
+          } finally {
+            shoe.position.copy(position);
+            shoe.rotation.copy(rotation);
+            shoe.scale.copy(scale);
+            ground.visible = true;
+            renderer.setPixelRatio(previousRatio);
+            renderer.setSize(previousSize.x, previousSize.y, false);
+            render();
+          }
+        }
+        function updateThumbnail() {
+          const thumbnail = document.querySelector("#thumbnail");
+          thumbnail.src = snapshot(192);
+          thumbnail.hidden = false;
+        }
+        const palettes = {
+          coral: { name: "Coral", upper: 0xf36c79, toe: 0xf7858d, heel: 0xdd4e65, lining: 0xa44b5d, tongue: 0xffd7cd },
+          chalk: { name: "Chalk", upper: 0xcbd1dc, toe: 0xe0e4eb, heel: 0x8e9cae, lining: 0x657389, tongue: 0xf5f2ed },
+          sage: { name: "Sage", upper: 0x86b8a7, toe: 0xa1cbbb, heel: 0x528b79, lining: 0x456f65, tongue: 0xe3eadb },
+        };
+        function setColor(next) {
+          if (!palettes[next] || disposed) return;
+          color = next;
+          const palette = palettes[next];
+          for (const [material, value] of [[upperMaterial, palette.upper], [toeMaterial, palette.toe], [heelMaterial, palette.heel], [liningMaterial, palette.lining], [tongueMaterial, palette.tongue], [eyeletMaterial, palette.heel]]) material.color.setHex(value);
+          document.querySelector("#edition").textContent = `${palette.name} / soft-knit edition`;
+          document.querySelector("#finish").textContent = `${palette.name} knit / ivory foam`;
+          document.querySelectorAll("[data-color]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.color === next)));
+          render();
+          updateThumbnail();
+        }
+        hit.addEventListener("pointerenter", event => { if (event.pointerType === "mouse") play("hover"); }, { signal });
+        hit.addEventListener("click", () => play(), { signal });
+        hit.addEventListener("pointercancel", stop, { signal });
+        hit.addEventListener("blur", stop, { signal });
+        document.querySelector("#replay").addEventListener("click", () => play(), { signal });
+        document.querySelector("#stop").addEventListener("click", stop, { signal });
+        document.querySelectorAll("[data-color]").forEach(button => button.addEventListener("click", () => setColor(button.dataset.color), { signal }));
+        document.querySelector("#download").addEventListener("click", () => {
+          const link = document.createElement("a");
+          link.download = `daily-runner-${color}-1024.png`;
+          link.href = snapshot(1024);
+          link.click();
+        }, { signal });
+        document.addEventListener("keydown", event => { if (event.key === "Escape") stop(); }, { signal });
+        document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); }, { signal });
+        window.addEventListener("blur", stop, { signal });
+        reducedMotion.addEventListener("change", stop, { signal });
+        renderer.domElement.addEventListener("webglcontextlost", event => {
+          event.preventDefault();
+          contextLost = true;
+          stop();
+          loading.hidden = false;
+          loading.textContent = "3D rendering paused. Waiting for graphics to recover.";
+        }, { signal });
+        renderer.domElement.addEventListener("webglcontextrestored", () => { contextLost = false; loading.hidden = true; render(); }, { signal });
+        const resizeObserver = new ResizeObserver(resize);
+        resizeObserver.observe(stage);
+        const intersectionObserver = new IntersectionObserver(entries => {
+          intersecting = entries[0].isIntersecting;
+          if (!intersecting) stop();
+        });
+        intersectionObserver.observe(stage);
+        function dispose() {
+          if (disposed) return;
+          stop();
+          disposed = true;
+          listeners.abort();
+          resizeObserver.disconnect();
+          intersectionObserver.disconnect();
+          scene.traverse(object => object.geometry?.dispose());
+          for (const material of new Set([upperMaterial, toeMaterial, heelMaterial, liningMaterial, tongueMaterial, foamMaterial, seamMaterial, rubberMaterial, laceMaterial, eyeletMaterial, ground.material])) material.dispose();
+          knit.dispose();
+          environmentMap.dispose();
+          renderer.dispose();
+        }
+        window.addEventListener("pagehide", event => { if (event.persisted) stop(); else dispose(); }, { signal });
+        window.shoeIcon = { play, stop, setColor, dispose, get state() { return { animating: Boolean(animation), pendingFrame: Boolean(frameId), renderCount, reducedMotion: reducedMotion.matches, color, disposed, rotation: shoe.rotation.toArray().slice(0, 3), height: shoe.position.y }; } };
+        resize();
+        updateThumbnail();
+        document.querySelectorAll("button").forEach(button => { button.disabled = false; });
+        loading.hidden = true;
+        setState("idle");
+      } catch (error) {
+        console.error(error);
+        workspace.dataset.state = "error";
+        loading.textContent = "The 3D preview could not load. Check WebGL support and the connection to cdn.jsdelivr.net.";
+        loading.classList.add("error");
+        stateLabel.textContent = "Preview unavailable";
+      }
+    </script>
+  </body>
+</html>

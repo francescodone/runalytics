@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, ty
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useIsPresent, useReducedMotion, type AnimationPlaybackControls } from "motion/react";
 import { animate as animateNative } from "motion/mini";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { entranceFor, modalTransition, tempo } from "./motion";
+import { entranceFor, modalTransition, motionOrder, motionVisible, tempo } from "./motion";
 import "./tokens.css";
 
 export { tempo } from "./motion";
@@ -150,10 +150,10 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     };
   }, []);
   useLayoutEffect(() => {
-    const selector = "[data-entrance], .desk-navigation > a, .desk-utilities > button, .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-context > *, .health-history > *, .trend-chart, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, fieldset, .connection-summary, .form-grid, .form-actions, .consistency-week, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-labels, .month-day, .day-lane > header, .mobile-date-ribbon, .pain-episode > header, .episode-notes, .episode-actions, .episode-chat > h3, .episode-chat > form, .chat-message, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .dialog-action > .desk-button, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > header";
+    const selector = "[data-entrance], h1, h2, h3, h4, .section-heading, .desk-metric, .definition-list > div, .data-table-scroll, .desk-navigation > a, .desk-utilities > button, .workspace-heading, .training-context, .desk-toolbar, .health-verdict, .health-context > *, .health-history > *, .trend-chart, .session-tile, .activity-row, .roadmap-row, .settings-task-list > a, .settings-editor > header, .settings-editor > p, fieldset:not(.onboarding-options), .connection-summary, .form-grid, .form-actions, .consistency-week, .milestone-list > article, .desk-empty, .review-section, .review-heading, .plan-basis, .adjustment-evidence, .route-figure, .setup-band, .prescribed-session, .month-labels, .month-day, .day-lane > header, .mobile-date-ribbon, .pain-episode > header, .episode-notes, .episode-actions, .episode-chat > form, .chat-message, .proposal-prompt, .pace-next, .pace-insights-figure, .pace-session-detail, .race-estimates, .dialog-action > .desk-button, .journal-tools, .session-management, .session-recording, .watch-predictions, .composer-summary, .dialog-surface > header, .review-tabs, .pace-mode, .pace-session-picker, .schedule-summary, .onboarding-header, .onboarding-progress, .onboarding-step > label, .onboarding-step > p, .onboarding-options > legend:not(.sr-only), .onboarding-options > label, .onboarding-step summary, .onboarding-preview > li";
     const pending = new Set<HTMLElement>();
     const revealed = new WeakSet<HTMLElement>();
-    const running = new Map<HTMLElement, { animation: AnimationPlaybackControls; opacity: string; transform: string }>();
+    const running = new Map<HTMLElement, { animation: AnimationPlaybackControls; opacity: string; transform?: string }>();
     const order = new WeakMap<HTMLElement, number>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     const compact = matchMedia("(max-width: 800px)");
@@ -161,6 +161,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     let unlocking = true;
     let sequence = 0;
     let landingFrame = 0;
+    let revealFrame = 0;
     const landingRoots = new Set<HTMLElement>();
     const settleElement = (element: HTMLElement) => {
       const current = running.get(element);
@@ -168,33 +169,27 @@ export function MotionSystem({ children }: { children: ReactNode }) {
         running.delete(element);
         current.animation.cancel();
         element.style.opacity = current.opacity;
-        element.style.transform = current.transform;
+        if (current.transform !== undefined) element.style.transform = current.transform;
       }
       observer.unobserve(element);
       pending.delete(element);
       revealed.add(element);
       element.dataset.reveal = "settled";
+      element.dispatchEvent(new CustomEvent("desk:reveal", { bubbles: true, detail: { delay: 0 } }));
     };
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of [...entries].sort((first, second) => first.target.compareDocumentPosition(second.target) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)) {
-        if (!entry.isIntersecting || entry.intersectionRatio < .08) continue;
-        const element = entry.target as HTMLElement;
-        if (!pending.has(element)) continue;
+    const revealVisible = () => {
+      revealFrame = 0;
+      const visible = motionOrder([...pending].filter(element => motionVisible(element)));
+      for (const [index, element] of visible.entries()) {
         const unlock = unlocking && performance.now() - started < tempo.landing * 1000;
-        if (reduced.matches || element.contains(document.activeElement)) { settleElement(element); continue; }
+        if (reduced.matches || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
         observer.unobserve(element);
         pending.delete(element);
         revealed.add(element);
-        const group = unlock ? document : element.closest(".motion-change") ?? document;
-        const visible = [...group.querySelectorAll<HTMLElement>('[data-reveal]:not([data-reveal="container"])')].filter(candidate => {
-          const bounds = candidate.getBoundingClientRect();
-          return candidate.checkVisibility() && !candidate.closest("[inert]") && bounds.bottom > 0 && bounds.top < innerHeight;
-        });
-        const index = visible.indexOf(element);
         const preset = entranceFor(`${element.className}:${order.get(element)}`, Math.max(0, index), unlock);
-        const delay = unlock ? Math.max(0, preset.delay - (performance.now() - started) / 1000) : preset.delay;
+        const delay = preset.delay;
         const opacity = element.style.opacity;
-        const transform = element.style.transform;
+        const transform = element.matches("[data-motion-layout]") ? undefined : element.style.transform;
         element.dataset.reveal = "visible";
         element.dataset.entranceKind = unlock ? "unlock" : "component";
         element.style.setProperty("--reveal-delay", `${delay}s`);
@@ -203,15 +198,18 @@ export function MotionSystem({ children }: { children: ReactNode }) {
           ...(element.matches("[data-motion-layout]") ? {} : { transform: [`translate3d(0px, ${preset.initial.y}px, 0)`, "translate3d(0px, 0px, 0)"] }),
         }, { duration: tempo.landing, ease: tempo.soft, delay });
         running.set(element, { animation, opacity, transform });
+        element.dispatchEvent(new CustomEvent("desk:reveal", { bubbles: true, detail: { delay } }));
         void animation.then(() => { if (running.get(element)?.animation === animation) settleElement(element); });
       }
-    }, { threshold: .08, rootMargin: "0px 0px -24px 0px" });
+    };
+    const scheduleReveals = () => { if (!revealFrame) revealFrame = requestAnimationFrame(revealVisible); };
+    const observer = new IntersectionObserver(scheduleReveals, { threshold: [0, tempo.viewportThreshold], rootMargin: `0px 0px -${tempo.viewportInset}px 0px` });
     const register = (root: ParentNode, replay = false) => {
       const elements = [...root.querySelectorAll<HTMLElement>(selector)];
       if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
       for (const element of elements) {
-        if (element.closest('[inert], [data-transition-state="exiting"]') || !element.checkVisibility()) continue;
-        if (element.closest(".motion-disclosure")) continue;
+        if (element.closest('[inert], [data-transition-state="exiting"], [data-step-state="exiting"]') || !element.checkVisibility()) continue;
+        if (element.closest('.sr-only, [data-entrance="none"]')) continue;
         if (element.querySelector(".desk-inspector, .desk-dialog, .notification-viewport")) continue;
         const ancestor = element.parentElement?.closest<HTMLElement>('[data-reveal]:not([data-reveal="container"])');
         if (ancestor && (elements.includes(ancestor) || pending.has(ancestor) || running.has(ancestor))) continue;
@@ -224,11 +222,12 @@ export function MotionSystem({ children }: { children: ReactNode }) {
           delete descendant.dataset.reveal;
         }
         order.set(element, sequence++);
-        if (reduced.matches || element.contains(document.activeElement) || !replay && element.matches("[data-motion-layout]")) { settleElement(element); continue; }
+        if (reduced.matches || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
         element.dataset.reveal = "waiting";
         pending.add(element);
         observer.observe(element);
       }
+      scheduleReveals();
     };
     const mutations = new MutationObserver(records => {
       for (const element of pending) {
@@ -237,14 +236,20 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       for (const element of running.keys()) if (!element.isConnected) settleElement(element);
       for (const record of records) {
         for (const node of record.addedNodes) if (node instanceof HTMLElement) register(node);
+        if (record.type === "attributes" && record.target instanceof HTMLElement) register(record.target);
       }
     });
     register(document);
-    mutations.observe(document.body, { childList: true, subtree: true });
+    mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "hidden", "inert", "data-state"] });
+    const toggle = (event: Event) => { if (event.target instanceof HTMLElement) register(event.target); };
+    document.addEventListener("toggle", toggle, true);
+    document.addEventListener("scroll", scheduleReveals, { capture: true, passive: true });
+    window.addEventListener("resize", scheduleReveals);
     const landView = (event: Event) => {
       if (!(event.target instanceof HTMLElement) || reduced.matches) return;
       landingRoots.add(event.target);
       cancelAnimationFrame(landingFrame);
+      cancelAnimationFrame(revealFrame);
       landingFrame = requestAnimationFrame(() => {
         const roots = [...landingRoots].filter(root => root.isConnected && ![...landingRoots].some(other => other !== root && other.contains(root)));
         landingRoots.clear();
@@ -254,17 +259,19 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     document.addEventListener("desk:view-arrive", landView);
     const settleInteraction = (event: Event) => {
       if (!(event.target instanceof Element)) return;
+      if (event.type === "focusin" && event.target.matches("h1, h2, h3, h4")) return;
       for (let element = event.target.closest<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]'); element; element = element.parentElement?.closest<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]') ?? null) settleElement(element);
     };
     document.addEventListener("focusin", settleInteraction);
     document.addEventListener("pointerdown", settleInteraction, true);
     const endUnlock = () => {
       unlocking = false;
-      document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      for (const element of running.keys()) settleElement(element);
     };
     window.addEventListener("hashchange", endUnlock);
     const settleMotion = () => {
-      if (reduced.matches || compact.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      else { for (const element of running.keys()) settleElement(element); scheduleReveals(); }
     };
     reduced.addEventListener("change", settleMotion);
     compact.addEventListener("change", settleMotion);
@@ -276,6 +283,9 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       compact.removeEventListener("change", settleMotion);
       window.removeEventListener("hashchange", endUnlock);
       document.removeEventListener("desk:view-arrive", landView);
+      document.removeEventListener("toggle", toggle, true);
+      document.removeEventListener("scroll", scheduleReveals, true);
+      window.removeEventListener("resize", scheduleReveals);
       document.removeEventListener("focusin", settleInteraction); document.removeEventListener("pointerdown", settleInteraction, true);
     };
   }, []);
@@ -354,17 +364,16 @@ export function Presence({ children }: { children: ReactNode }) {
 
 export function Disclosure({ children, id, open, className = "", mountOnOpen = false }: { children: ReactNode; id: string; open: boolean; className?: string; mountOnOpen?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
+  const tail = useCascadeExit(host, open, !reduced);
   const [opened, setOpened] = useState(open);
   useEffect(() => { if (open) setOpened(true); }, [open]);
   useLayoutEffect(() => {
-    const elements = host.current?.querySelectorAll<HTMLElement>(".motion-disclosure-content > *") ?? [];
-    elements.forEach((element, index) => element.style.setProperty("--disclosure-delay", `${index * tempo.stagger}s`));
-    host.current?.style.setProperty("--disclosure-tail", `${Math.max(0, elements.length - 1) * tempo.stagger}s`);
     if (!open && host.current?.contains(document.activeElement)) {
       [...document.querySelectorAll<HTMLElement>("[aria-controls]")].find(control => control.getAttribute("aria-controls") === id)?.focus({ preventScroll: true });
     }
   }, [id, open, children]);
-  return <div ref={host} id={id} className="motion-disclosure" data-state={open ? "open" : "closed"} inert={!open} aria-hidden={!open}>
+  return <div ref={host} id={id} className="motion-disclosure" style={{ "--disclosure-tail": `${tail}s` } as React.CSSProperties} data-state={open ? "open" : "closed"} inert={!open} aria-hidden={!open}>
     <div className="motion-disclosure-clip"><div className={`motion-disclosure-content ${className}`}>{!mountOnOpen || open || opened ? children : null}</div></div>
   </div>;
 }
@@ -379,10 +388,7 @@ export function SelectionMarker({ identity = "selection" }: { identity?: string 
 }
 
 function visibleReveals(root: HTMLElement | null) {
-  return [...(root?.querySelectorAll<HTMLElement>('[data-reveal="settled"]') ?? [])].filter(element => {
-    const bounds = element.getBoundingClientRect();
-    return element.checkVisibility() && bounds.bottom > 0 && bounds.top < innerHeight;
-  });
+  return motionOrder([...(root?.querySelectorAll<HTMLElement>('[data-reveal="settled"], [data-reveal="visible"]') ?? [])].filter(element => motionVisible(element, true)));
 }
 
 export function useCascadeExit(host: RefObject<HTMLElement | null>, present: boolean, enabled: boolean) {
@@ -392,7 +398,7 @@ export function useCascadeExit(host: RefObject<HTMLElement | null>, present: boo
     const animations = visibleReveals(root).map((element, index) => {
       const transform = element.style.transform;
       const opacity = element.style.opacity;
-      const animation = animateNative(element, { opacity: 0, ...(element.matches("[data-motion-layout]") ? {} : { transform: "translate3d(0px, -14px, 0)" }) }, { duration: tempo.exit, delay: index * tempo.stagger, ease: tempo.soft });
+      const animation = animateNative(element, { opacity: 0, ...(element.matches("[data-motion-layout]") ? {} : { transform: `translate3d(0px, ${tempo.exitDistance}px, 0)` }) }, { duration: tempo.exit, delay: index * tempo.stagger, ease: tempo.soft });
       return () => { animation.cancel(); element.style.transform = transform; element.style.opacity = opacity; };
     });
     return () => animations.forEach(stop => stop());
@@ -447,12 +453,12 @@ export function useSurfaceMotion(_kind: "dialog" | "inspector", host: RefObject<
   const reduced = useReducedMotion();
   const present = useIsPresent();
   const tail = useCascadeExit(host, present, !reduced);
-  const offset = reduced ? {} : { x: 0, y: 14, scale: 1 };
+  const offset = reduced ? {} : { x: 0, y: tempo.distance, scale: 1 };
   return {
     compact,
     reduced,
     initial: { opacity: reduced ? 1 : 0, ...offset },
     animate: { ...modalTransition.animate, transition: reduced ? { duration: 0 } : tempo.spring },
-    exit: { opacity: 0, ...(reduced ? {} : { x: 0, y: -14, scale: 1 }), transition: { duration: reduced ? 0 : tempo.exit, delay: tail, ease: tempo.soft } },
+    exit: { opacity: 0, ...(reduced ? {} : { x: 0, y: tempo.exitDistance, scale: 1 }), transition: { duration: reduced ? 0 : tempo.exit, delay: tail, ease: tempo.soft } },
   };
 }

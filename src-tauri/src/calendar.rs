@@ -6,7 +6,6 @@ use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use serde::Serialize;
 
 use crate::error::{AppError, Result};
-use crate::metrics;
 use crate::plan::session;
 use crate::store::Store;
 use crate::types::*;
@@ -314,18 +313,12 @@ pub fn match_activity(store: &Store, workout_id: &str, activity_id: i64) -> Resu
     store.complete_calendar_workout(workout_id, activity.id, &workout_notes(workout, &plan))
 }
 
-/// Snapshot the runner's load ratio and injury risk for every run activity
-/// that does not have one yet, evaluated as of the day it was banked. This
-/// is the calendar's half of "update the injury risk after every new done
-/// activity": the numbers are frozen when the run lands, so a description
-/// written in October keeps saying what the risk was in October even after
-/// November's health data arrives. Called from every calendar refresh, so
-/// both matched sessions and standalone synced runs are covered.
-pub fn snapshot_scores(store: &Store, th: &Thresholds) -> Result<()> {
+/// Freeze each run's load ratio on its recorded day.
+pub fn snapshot_scores(store: &Store) -> Result<()> {
     let have: HashSet<i64> = store
         .activity_scores()?
         .into_iter()
-        .map(|(activity_id, _, _, _)| activity_id)
+        .map(|(activity_id, _)| activity_id)
         .collect();
     for activity in store.list_activities(-1)?.into_iter().filter(is_run) {
         if have.contains(&activity.id) || activity.duration_s <= 0.0 {
@@ -336,55 +329,26 @@ pub fn snapshot_scores(store: &Store, th: &Thresholds) -> Result<()> {
         let load = store
             .training_load_on_or_before(day)?
             .and_then(|entry| entry.ratio);
-        // The same headline the dashboard hero shows, evaluated as of that
-        // day: the blended risk (point-in-time formula averaged with the
-        // range-aware factor sum), with the recent-sessions window pinned to
-        // this run's own start — so the run being scored counts in its own
-        // week's pressure, and an easy jog and a threshold session on the
-        // same day get different numbers.
-        let session_ts = activity.start_time.timestamp();
-        let risk = metrics::risk_headline_as_of(store, day, 30, th, Some(session_ts))?;
-        // The run's own impact: the same headline minus itself. Every run
-        // has one — that is the point of the model — so every description
-        // gets a delta, and it stays the same number no matter when the
-        // snapshot is taken or how the model later evolves.
-        let risk_delta =
-            metrics::session_risk_impact(store, day, 30, th, session_ts, activity.id)?;
-        store.insert_activity_score(activity.id, load, risk, risk_delta)?;
+        store.insert_activity_score(activity.id, load)?;
     }
     Ok(())
 }
 
-/// The stat block appended to a banked run's description: the load and injury
-/// risk the body was carrying, then what was actually run. The scores are
-/// percentages — injury risk is already 0..=100, and the load ratio is the
-/// COROS Intensity Trend percentage (1.35 reads as 135 %, the number the
-/// training-status chart's band is named by). The risk delta is the run's own
-/// impact — risk with the session minus risk without it — so it is never
-/// missing: an easy jog moves the number a little, a threshold session a lot.
-/// The load delta compares against the run banked before this one (snapshots
-/// arrive oldest first), and a first-ever run simply has no earlier ratio to
-/// change against.
-///
-/// The `Ran:` line closes the block because it answers a different question
-/// than the two above it: those say what the load did to the runner, this one
-/// says what the runner did that day. A matched session keeps the planned
-/// distance in its title, so without this line the description would restate
-/// the plan and never record the outcome.
+/// The recorded load percentage, change from the previous run, and actual result.
 fn score_lines(
-    snapshots: &[(i64, Option<f64>, u32, i64)],
+    snapshots: &[(i64, Option<f64>)],
     index: Option<usize>,
     activity: &Activity,
 ) -> String {
     let mut lines = Vec::new();
     if let Some(index) = index {
-        let (id, load, risk, risk_delta) = snapshots[index];
+        let (id, load) = snapshots[index];
         debug_assert_eq!(id, activity.id);
         let previous = index.checked_sub(1).map(|i| snapshots[i]);
         if let Some(ratio) = load {
             let load_pct = ratio * 100.0;
             let mut load_line = format!("Load: {load_pct:.0}%");
-            if let Some((_, Some(before), _, _)) = previous {
+            if let Some((_, Some(before))) = previous {
                 let delta = load_pct - before * 100.0;
                 if delta.abs() >= 0.5 {
                     let _ = write!(load_line, " ({delta:+.0}%)");
@@ -392,16 +356,12 @@ fn score_lines(
             }
             lines.push(load_line);
         }
-        lines.push(format!("Injury risk: {risk}% ({risk_delta:+}%)"));
     }
     // A run the provider never scored still has a distance and a pace, so the
     // block is not tied to the snapshots existing.
     if let Some(ran) = ran_line(activity) {
         lines.push(ran);
     }
-    // The block always starts with its own blank line, whatever it ends up
-    // holding — a run with no Load line must not have its risk line glued to
-    // the paragraph above.
     if lines.is_empty() {
         String::new()
     } else {
@@ -811,7 +771,7 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
     let snapshot_index: HashMap<i64, usize> = snapshots
         .iter()
         .enumerate()
-        .map(|(i, (activity_id, _, _, _))| (*activity_id, i))
+        .map(|(i, (activity_id, _))| (*activity_id, i))
         .collect();
     let planned: HashMap<&str, (String, String)> = current
         .iter()
@@ -1704,27 +1664,22 @@ mod tests {
 
     #[test]
     fn score_lines_show_each_value_and_its_change_since_the_previous_run() {
-        // (activity_id, load, risk, own impact) — oldest run first.
         let snapshots = vec![
-            (1, Some(1.20), 30, 2),
-            (2, Some(1.35), 35, 5),
-            (3, None, 35, -1),
+            (1, Some(1.20)),
+            (2, Some(1.35)),
+            (3, None),
         ];
-        // The first banked run has no earlier ratio to change against, but
-        // its own impact is always there.
         assert_eq!(
             score_lines(&snapshots, Some(0), &scored_run(1, 10_000.0, Some(300.0))),
-            "\n\nLoad: 120%\nInjury risk: 30% (+2%)\nRan: 10.0 km @ 5:00/km"
+            "\n\nLoad: 120%\nRan: 10.0 km @ 5:00/km"
         );
         assert_eq!(
             score_lines(&snapshots, Some(1), &scored_run(2, 12_500.0, Some(291.4))),
-            "\n\nLoad: 135% (+15%)\nInjury risk: 35% (+5%)\nRan: 12.5 km @ 4:51/km"
+            "\n\nLoad: 135% (+15%)\nRan: 12.5 km @ 4:51/km"
         );
-        // A run that diluted a heavy week comes out negative, and a run the
-        // provider never scored for load simply has no Load line.
         assert_eq!(
             score_lines(&snapshots, Some(2), &scored_run(3, 6_400.0, None)),
-            "\n\nInjury risk: 35% (-1%)\nRan: 6.4 km"
+            "\n\nRan: 6.4 km"
         );
     }
 
@@ -1798,8 +1753,7 @@ mod tests {
                 .unwrap();
             insert_run(&store, workout, "run", record);
         }
-        let th = Thresholds::default();
-        snapshot_scores(&store, &th).unwrap();
+        snapshot_scores(&store).unwrap();
         // Idempotent: the snapshot is what the run landed with, so a later
         // refresh must not overwrite it even when the load row has moved on.
         store
@@ -1814,10 +1768,21 @@ mod tests {
                 },
             )
             .unwrap();
-        snapshot_scores(&store, &th).unwrap();
+        snapshot_scores(&store).unwrap();
         let stored = store.activity_scores().unwrap();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].1, Some(1.2));
+
+        let payload = serde_json::to_value(crate::commands::run_scores_for_store(&store).unwrap()).unwrap();
+        let scores = payload.as_array().unwrap();
+        assert_eq!(scores.len(), stored.len());
+        for (score, (activity_id, load)) in scores.iter().zip(&stored) {
+            assert_eq!(score, &serde_json::json!({
+                "activityId": activity_id,
+                "workoutId": null,
+                "load": load,
+            }));
+        }
 
         let entries = events(&store).unwrap();
         // The runs are unmatched, so each day also holds its planned session:
@@ -1839,23 +1804,14 @@ mod tests {
         };
         let first = run_notes(days[0].date);
         let second = run_notes(days[1].date);
-        // The first banked run has no earlier ratio to change against, but
-        // its own risk impact is always there. Both values are percentages:
-        // the 1.35 ratio reads as the chart's 135 %. The risk value itself
-        // depends on the fixture's volumes, so only its line shape is pinned
-        // here.
-        let lines: Vec<&str> = first.lines().rev().take(3).collect();
+        assert!(!first.contains("Injury risk"), "{first}");
+        assert!(!second.contains("Injury risk"), "{second}");
+        let lines: Vec<&str> = first.lines().rev().take(2).collect();
         assert_eq!(lines[0], ran_line(&days[0]), "{first}");
-        assert!(
-            lines[1].starts_with("Injury risk: ") && lines[1].ends_with("%)")
-                && lines[1].contains("% ("),
-            "{first}"
-        );
-        assert_eq!(lines[2], "Load: 120%", "{first}");
-        let lines: Vec<&str> = second.lines().rev().take(3).collect();
+        assert_eq!(lines[1], "Load: 120%", "{first}");
+        let lines: Vec<&str> = second.lines().rev().take(2).collect();
         assert_eq!(lines[0], ran_line(&days[1]), "{second}");
-        assert!(lines[1].starts_with("Injury risk: "), "{second}");
-        assert_eq!(lines[2], "Load: 135% (+15%)", "{second}");
+        assert_eq!(lines[1], "Load: 135% (+15%)", "{second}");
     }
 
     #[test]

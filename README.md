@@ -23,8 +23,8 @@ distributed.
   sync actions appear when needed.
 - **Journal**: searchable activity history with sport, source and date filters;
   selected-run routes, recorded laps, kilometre splits, prescribed targets and
-  stored load/risk impact. A separate training map shows all recorded routes.
-- **Health**: readiness, recovery, training load, injury risk, fitness, wearable
+  stored training load. A separate training map shows all recorded routes.
+- **Health**: readiness, recovery, training load, fitness, wearable
   history, pain episodes, reviewed adjustments and consistency milestones.
 - **Pace insights**: Health > Pace insights compares the last five eligible
   Speed (interval/tempo) or pace-targeted Long sessions. The chart shows each
@@ -159,7 +159,7 @@ distributed.
   they are never sent through plan sync, calendar publishing or diagnostics.
 4. Enable **Update paired activity descriptions** and confirm the privacy
   notice. The payload is the same completed-session text as **Copy
-  prescription**, including results and any training-load or injury-risk lines.
+  prescription**, including results and training-load information.
   It inherits the activity's Strava visibility and may therefore be public.
 
 Only activities recorded from the first activation time on that device/account
@@ -239,7 +239,7 @@ of +/-20 seconds/km. Only planned tempo/interval distances in the next 14 days
 can change: approximately +3% for progression or -5% for easing, rounded to 10m.
 Completed, skipped, easy, long and race sessions keep their distances, as do
 sessions in the final 14 days before the target date. Faster progression requires
-normal-or-better recovery, injury risk below 60%, no unresolved pain and a finite
+normal-or-better recovery, no unresolved pain and a finite
 load ratio no higher than 1.3. Missing load evidence prevents progression.
 
 Review shows the proposed distance and shifted pace range before approval.
@@ -256,9 +256,11 @@ modeled. Watch/provider predictions are never overwritten.
 
 ### Health Percentages
 
-Readiness, recovery, training and injury-risk scores use fixed 0-100% axes, not
+Readiness, recovery and training scores use fixed 0-100% axes, not
 the minimum and maximum of the selected period. Readiness history uses the same
-45% training + 35% recovery + 20% inverse-risk formula as the current score.
+training/recovery formula as the current score: `(45 * training + 35 * recovery) / 80`,
+or 56.25% training and 43.75% recovery. Reported pain remains a separate safety
+input for reviewed plan adjustments, not a component of readiness.
 Normalized training load is `100 * raw ratio / configured optimized-load ceiling`,
 clamped to 0-100%. Values above the ceiling remain 100%; the unmodified ratio and
 short-/long-term load remain visible. Missing values are not rendered as zero.

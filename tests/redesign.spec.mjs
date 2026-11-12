@@ -252,10 +252,10 @@ test("Plan is the home for the full plan and current week", async ({ page }) => 
   await expect(page.locator("#cal-week")).toHaveCount(0);
 });
 
-test("Today shows only today's session and three training signals", async ({ page }) => {
+test("Today shows only today's session and two training signals", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".today-action")).toContainText("Today's session");
-  await expect(page.locator(".pillar-name")).toHaveText(["Training load", "Injury risk", "Body state"]);
+  await expect(page.locator(".pillar-name")).toHaveText(["Training load", "Body state"]);
   await expect(page.locator(".week-dates")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Training check", exact: true })).toBeVisible();
   await expect(page.locator(".today-context").getByRole("link")).toHaveAttribute("href", "plan.html");
@@ -284,14 +284,14 @@ test("performance overview discloses details and honours the body-state link", a
   await expect(page.locator("#status-panel")).toBeVisible();
   await expect(page.locator("#volume-panel")).toBeVisible();
   await expect(page.locator("#recovery-panel")).toBeHidden();
-  await expect(page.locator("#risk-panel")).toBeHidden();
+  await expect(page.locator("#risk-panel")).toHaveCount(0);
   await page.locator("#recovery > summary").click();
   await expect(page.locator("#recovery-panel")).toBeVisible();
   await page.goto("/");
   await page.locator('a.pillar[href="achievements.html#recovery"]').click();
   await expect(page.locator("#recovery")).toHaveAttribute("open");
   await expect(page.locator("#recovery-panel")).toBeVisible();
-  await expect(page.locator("#risk-panel")).toBeHidden();
+  await expect(page.locator("#risk-panel")).toHaveCount(0);
 });
 
 for (const kind of ["race", "improvement", "maintenance"]) {

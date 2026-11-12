@@ -43,7 +43,6 @@ import type {
   LoadRecommendation,
   PainEntry,
   PlanWorkout,
-  RiskFactor,
   Settings,
   Thresholds,
   TimeRange,
@@ -80,9 +79,7 @@ interface DashExtras {
 }
 
 // ---- today hero ------------------------------------------------------------
-// The dashboard opens with a training decision grounded in load, injury risk
-// and recovery. Readiness is supporting context; today's plan stays beside
-// the decision, and the three linked signals lead into their detailed panels.
+// The dashboard opens with training load and recovery beside today's plan.
 
 function scoreTone(v: number, invert = false): "good" | "warn" | "bad" {
   const t = invert ? 100 - v : v;
@@ -187,13 +184,6 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
     latestHealth?.hrvAvg != null ? `HRV ${Math.round(latestHealth.hrvAvg)} ms` : null,
     latestHealth?.restingHr != null ? `Resting HR ${latestHealth.restingHr} bpm` : null,
   ].filter((value) => value != null).slice(0, 2).join(" · ") || "No recent wearable signals";
-  const topFactor = [...data.riskFactors].sort((a, b) => b.contribution - a.contribution)[0];
-  const riskDetail = extras.activePain.length
-    ? `${extras.activePain.length} unresolved pain ${extras.activePain.length === 1 ? "entry" : "entries"} logged`
-    : topFactor && topFactor.contribution >= RISK_QUIET
-      ? `Strongest signal: ${topFactor.label}`
-      : "No strong risk factors right now";
-  const riskLabel = scores.injuryRisk <= 30 ? "Low" : scores.injuryRisk <= 55 ? "Moderate" : "High";
   const loadDetail = data.load?.shortTerm != null && data.load?.longTerm != null
     ? `7-day load ${data.load.shortTerm.toFixed(0)} · usual ${data.load.longTerm.toFixed(0)}`
     : "More runs needed for a load trend";
@@ -218,13 +208,6 @@ function renderTodayHero(data: DashboardPayload, extras: DashExtras): void {
           <strong>${ratio != null ? `${ratio.toFixed(2)}×` : "—"}</strong>
           <span class="pillar-state">${escapeHtml(data.trainingStatus?.label ?? "No trend yet")}</span>
           <small>${loadDetail}</small>
-        </a>
-        <a class="pillar tone-${scoreTone(scores.injuryRisk, true)}" href="injury.html">
-          <span class="pillar-name">${icons.heart} Injury risk</span>
-          ${signalDial(scores.injuryRisk, 100)}
-          <strong>${scores.injuryRisk}<span class="signal-unit">/100</span></strong>
-          <span class="pillar-state">${riskLabel}</span>
-          <small>${escapeHtml(riskDetail)}</small>
         </a>
         <a class="pillar tone-${latestHealth ? scoreTone(scores.recoveryScore) : "neutral"}" href="achievements.html#recovery">
           <span class="pillar-name">${icons.moon} Body state</span>
@@ -915,83 +898,6 @@ function renderVolume(extras: DashExtras, rec: LoadRecommendation | null): void 
   })), "Weekly running mileage");
 }
 
-/// A factor bar is per-signal severity, so an empty one is a verdict rather
-/// than a hole in the chart — but only once the row says so. "Sleep quality
-/// 78/100 avg" beside a bare track reads as broken; beside a check it reads as
-/// good news. One predicate, shared by the row and the panel-wide note, so
-/// they can never disagree about what "quiet" means.
-const RISK_QUIET = 0.05;
-const riskQuiet = (f: RiskFactor): boolean =>
-  Math.min(1, Math.max(0, f.contribution)) < RISK_QUIET;
-
-function riskFactorBars(factors: RiskFactor[], tagQuietRows: boolean): string {
-  return factors
-    .map((f) => {
-      const v = Math.min(1, Math.max(0, f.contribution));
-      const quiet = riskQuiet(f);
-      // When every row is quiet the panel says it once, above the list — six
-      // "quiet" tags under one sentence would be the same fact shouted twice.
-      const tag = quiet && tagQuietRows;
-      return `<div class="risk-bar${quiet ? " quiet" : ""}" title="${escapeHtml(f.detail)}">
-        <span class="risk-bar-label">${escapeHtml(f.label)}</span>
-        <span class="meter${quiet ? " muted" : ""}" style="--value:${v.toFixed(3)}"><i></i></span>
-        <span class="risk-bar-detail">${escapeHtml(f.detail)}${
-          tag ? `<i class="risk-row-quiet">${icons.check}quiet</i>` : ""
-        }</span>
-      </div>`;
-    })
-    .join("");
-}
-
-/// The injury-risk panel: the gauge answers "how risky is today", the band
-/// chart underneath answers "has it been, and where's the line". Same band
-/// machinery as training status and recovery, cut at the same 30/55 the
-/// verdict above uses — the chart's bands and the gauge's tone are the one
-/// decision shown twice, never two decisions.
-function renderRiskPanel(data: DashboardPayload): void {
-  const risk = data.scores.injuryRisk;
-  const tone = risk <= 30 ? "good" : risk <= 55 ? "warn" : "bad";
-  const verdict = risk <= 30 ? "Low — train normally" : risk <= 55 ? "Moderate — ease intensity" : "High — consider a rest day";
-  // An all-empty set of severity bars is real news, not a rendering gap:
-  // nothing is currently pushing the risk up. Stated once for the whole panel
-  // in that case, and per row whenever at least one signal is loud.
-  const allQuiet = data.riskFactors.length > 0 && data.riskFactors.every(riskQuiet);
-  const bars = riskFactorBars(data.riskFactors, !allQuiet);
-  const quiet = allQuiet
-    ? `<p class="risk-quiet">Nothing is pushing your risk up right now — every signal below is quiet.</p>`
-    : "";
-  const series = data.scoreHistory.map((p) => p.risk);
-  const chart =
-    series.length >= 2
-      ? `<div class="risk-chart">
-          ${bandChart(series, [30, 55], ["zone-risk-low", "zone-risk-moderate", "zone-risk-high"], 0, 100, (v) => `${Math.round(v)}%`, data.scoreHistory.map((point) => point.date))}
-          <div class="band-foot">
-            <span class="chart-axis">Injury risk · ${fmtDateDMY(data.scoreHistory[0].date)} → today</span>
-            <div class="zone-legend">
-              <span class="zone-key"><i class="zone-risk-high"></i>High</span>
-              <span class="zone-key"><i class="zone-risk-moderate"></i>Moderate</span>
-              <span class="zone-key"><i class="zone-risk-low"></i>Low</span>
-            </div>
-          </div>
-        </div>`
-      : "";
-  // The panel itself carries `.signal.tone-*` (the line colour hook) and the
-  // gauge number carries `.live-value`, so hovering the chart swaps the
-  // gauge's figure for that day's risk — the same scrub the status chart
-  // does with its verdict word. The tone class is re-stamped per render.
-  const panel = el("risk-panel");
-  panel.classList.remove("tone-good", "tone-warn", "tone-bad");
-  panel.classList.add("signal", `tone-${tone}`);
-  panel.innerHTML = `
-    <div class="band-verdict">
-      <div class="card-value band-value">${risk}%</div>
-      <div class="score-hint band-reason">${verdict}</div>
-    </div>
-    ${chart || `<div class="chart-empty">Not enough history</div>`}
-    <div class="risk-factors">${quiet}${bars}</div>`;
-  bindChartHover(panel);
-}
-
 /// The 7-day load target row: this week's goal from the build cycle, measured
 /// against the acute load already banked. The bar fills toward the target, so
 /// "how much room is left this week" reads without arithmetic. On a down week
@@ -1025,8 +931,7 @@ function targetRow(rec: LoadRecommendation | null, acute: number): string {
 // drifted away from Settings the moment a runner edited a boundary.
 
 /// The band chart: one line drawn across horizontal colour-coded zones, used
-/// by all three "where am I on the scale?" panels — training status, recovery,
-/// and injury risk. Unlike the sparklines the y-domain is anchored rather than
+/// by training status and recovery. Unlike the sparklines the y-domain is anchored rather than
 /// fitted to the data, because bands that moved with the series would stop
 /// meaning anything; it only grows when a value actually climbs past the top,
 /// which is exactly when it has to be visible. `bands` are the zone classes
@@ -1242,7 +1147,6 @@ function renderDashboard(data: DashboardPayload, extras: DashExtras): void {
   renderPlanTimeline(extras);
   renderVolume(extras, data.loadRecommendation);
   renderRecoveryPanel(data);
-  renderRiskPanel(data);
   renderWearables(data.health);
   renderStatusPanel(data);
 
@@ -1278,7 +1182,7 @@ function card(label: string, value: string, hint = ""): string {
 
 /// The pending plan-change offer sits above the training decision until it is
 /// reviewed. Reported pain without an offer is already visible in the lead
-/// decision and risk signal, with a direct route to the journal.
+/// decision, with a direct route to the journal.
 function renderPainBanner(data: DashboardPayload): void {
   const banner = el("pain-banner");
   const offer = data.pendingProposal;
@@ -1362,8 +1266,7 @@ async function initMap(points: HeatPoint[], settings: Settings): Promise<void> {
 
 // ---- activity detail sheet --------------------------------------------------
 // Clicking a history row opens a slide-over with the run's GPS track, the
-// session data, the recovery signals for that day, and the injury-risk
-// heuristics evaluated *as of* that day.
+// session data and the recovery signals for that day.
 
 let sheetMap: maplibregl.Map | null = null;
 let activitySheet: Sheet | null = null;
@@ -1404,14 +1307,12 @@ function renderActivitySheet(
     <section><h3>Route</h3><div class="sheet-map"></div></section>
     <section><h3>Session data</h3><div class="sheet-data tile-grid"></div></section>
     <section><h3>Laps</h3><div class="sheet-laps"></div></section>
-    <section><h3>Splits</h3><div class="sheet-splits"></div></section>
-    <section><h3>Injury risk that day</h3><div class="sheet-risk risk-panel"></div></section>`;
+    <section><h3>Splits</h3><div class="sheet-splits"></div></section>`;
   // Look these up within the sheet's own subtree, never document-wide: the
   // sheet is a detached-then-attached component, so a global getElementById is
   // both racy (a reopen mid-fetch) and wrong (it would match a stale node).
   const mapEl = sheet.body.querySelector<HTMLElement>(".sheet-map")!;
   const dataEl = sheet.body.querySelector<HTMLElement>(".sheet-data")!;
-  const riskEl = sheet.body.querySelector<HTMLElement>(".sheet-risk")!;
   // The lap breakdown is a second command, and a run whose review failed to
   // build should still show its route and stats — so it arrives as an optional
   // argument and says so in the two panes it owns when it is missing.
@@ -1445,35 +1346,6 @@ function renderActivitySheet(
   if (d.fitness?.thresholdSecKm != null)
     tiles.push(statTile(`${fmtPace(d.fitness.thresholdSecKm)}/km`, "threshold"));
   dataEl.innerHTML = tiles.join("");
-
-  // Injury-risk heuristics as of that day (same gauge + factor bars as the
-  // Training tab, evaluated on the day of the activity).
-  const risk = d.injuryRisk;
-  const tone = risk <= 30 ? "good" : risk <= 55 ? "warn" : "bad";
-  const verdict =
-    risk <= 30
-      ? "Low — train normally"
-      : risk <= 55
-        ? "Moderate — ease intensity"
-        : "High — consider a rest day";
-  const bars = riskFactorBars(d.riskFactors, !d.riskFactors.every(riskQuiet));
-  const quiet = d.riskFactors.every(riskQuiet)
-    ? `<p class="risk-quiet">Nothing was pushing the risk up that day — every signal below was quiet.</p>`
-    : "";
-  riskEl.innerHTML = `
-    <div class="risk-readout ${tone}">
-      <div class="risk-gauge">
-        <svg viewBox="0 0 120 120" aria-hidden="true">
-          <circle class="gauge-track" cx="60" cy="60" r="52" fill="none" stroke-width="10"/>
-          <circle class="gauge-fill" cx="60" cy="60" r="52" fill="none" stroke-width="10"
-            stroke-dasharray="${(2 * Math.PI * 52).toFixed(1)}"
-            stroke-dashoffset="${(2 * Math.PI * 52 * (1 - risk / 100)).toFixed(1)}"/>
-        </svg>
-        <div class="risk-num">${risk}<span>%</span></div>
-      </div>
-      <div class="risk-verdict">${verdict}</div>
-    </div>
-    <div class="risk-factors">${quiet}${bars}</div>`;
 
   return mapEl;
 }

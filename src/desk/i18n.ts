@@ -17,7 +17,17 @@ export function resolveLocale(language: string | undefined): Locale {
   return base && Object.prototype.hasOwnProperty.call(catalogs, base) ? base as Locale : "en";
 }
 
-export const locale = resolveLocale(typeof navigator === "undefined" ? undefined : navigator.language);
+export function languagePreference(): Locale | "system" {
+  try {
+    const saved = localStorage.getItem("runalytics.language");
+    return saved && Object.prototype.hasOwnProperty.call(catalogs, saved) ? saved as Locale : "system";
+  } catch {
+    return "system";
+  }
+}
+
+const preference = languagePreference();
+export const locale = preference === "system" ? resolveLocale(typeof navigator === "undefined" ? undefined : navigator.language) : preference;
 export const formatLocale = locale === "en" ? "en-GB" : locale === "zh" ? "zh-CN" : locale;
 const i18n = createInstance();
 void i18n.init({

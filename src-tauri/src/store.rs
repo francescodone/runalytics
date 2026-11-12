@@ -167,8 +167,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     -- a pain entry is one report of where it hurts and how badly, `started_on`
     -- is when the runner says it began (not when it was logged), and
     -- `resolved_on` is set once they confirm it went away. NULL resolved_on
-    -- means still hurting, which is what the risk blend and the proposals key
-    -- off — a long-healed injury must not inflate risk forever.
+    -- means still hurting, which keeps the episode eligible for plan adjustments.
     CREATE TABLE IF NOT EXISTS pain_entries (
         id TEXT PRIMARY KEY,
         body_part TEXT NOT NULL,
@@ -682,12 +681,22 @@ impl Store {
                 conn.pragma_update(None, "user_version", v)?;
             }
         }
+        let snapshot_columns: Vec<String> = conn.prepare("PRAGMA table_info(activity_scores)")?
+            .query_map([], |row| row.get(1))?
+            .collect::<std::result::Result<_, _>>()?;
+        let transaction = conn.unchecked_transaction()?;
+        for retired in ["risk", "risk_delta"] {
+            if snapshot_columns.iter().any(|column| column == retired) {
+                transaction.execute(&format!("ALTER TABLE activity_scores DROP COLUMN {retired}"), [])?;
+            }
+        }
+        transaction.commit()?;
         // Schema-drift repair. `followup_ts` was added to the pain_entries
         // definition in migration 4 *after* that migration had already run on
         // existing installs, and CREATE TABLE IF NOT EXISTS is a no-op once the
         // table exists — so those databases never gained the column while every
         // pain read and write names it. Logging pain, the journal, the body-map
-        // tints, the dashboard's active pain and the injury-risk score all fail
+        // tints and the dashboard's active pain all fail
         // together as a result. Bumping user_version would not help: the
         // databases in the wild are already at 4. This check is idempotent, so
         // it runs on every open and heals both cases.
@@ -1533,14 +1542,13 @@ impl Store {
     // ---- run score snapshots ----------------------------------------------
 
     /// Every stored run snapshot, oldest run first — the order the calendar
-    /// needs to look a snapshot up by activity. The 4th element is the run's
-    /// own risk impact: risk with the session minus risk without it.
+    /// needs to look a snapshot up by activity.
     pub fn activity_scores(
         &self,
-    ) -> Result<Vec<(i64, Option<f64>, u32, i64)>> {
+    ) -> Result<Vec<(i64, Option<f64>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT s.activity_id, s.load, s.risk, s.risk_delta
+            "SELECT s.activity_id, s.load
              FROM activity_scores s JOIN activities a ON a.id = s.activity_id
              ORDER BY a.start_ts",
         )?;
@@ -1548,8 +1556,6 @@ impl Store {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
-                row.get::<_, i64>(2)? as u32,
-                row.get::<_, i64>(3)?,
             ))
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -1562,13 +1568,11 @@ impl Store {
         &self,
         activity_id: i64,
         load: Option<f64>,
-        risk: u32,
-        risk_delta: i64,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO activity_scores (activity_id, load, risk, risk_delta) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(activity_id) DO NOTHING",
-            params![activity_id, load, risk as i64, risk_delta],
+            "INSERT INTO activity_scores (activity_id, load) VALUES (?1, ?2) ON CONFLICT(activity_id) DO NOTHING",
+            params![activity_id, load],
         )?;
         Ok(())
     }
@@ -2245,7 +2249,7 @@ impl Store {
         "id, body_part, intensity, started_on, notes, created_ts, resolved_on, followup_ts";
 
     /// Newest-reported first. Includes resolved episodes — the journal shows
-    /// the whole history; risk queries filter on `resolved_on` themselves.
+    /// the whole history, while plan adjustments use unresolved episodes.
     pub fn list_pain_entries(&self, limit: i64) -> Result<Vec<PainEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
@@ -2279,8 +2283,7 @@ impl Store {
 
     /// Worst intensity among episodes still hurting on `day` (an episode hurts
     /// on day D when it started on or before D and has not resolved by D).
-    /// The `resolved_on > day` arm matters: without it a long-healed injury
-    /// would inflate the risk score forever.
+    /// The `resolved_on > day` arm excludes episodes healed by that day.
     pub fn max_pain_intensity_since(&self, day: NaiveDate) -> Result<Option<(u32, String)>> {
         let conn = self.conn.lock().unwrap();
         let day_s = day.format("%Y-%m-%d").to_string();
@@ -3083,9 +3086,7 @@ impl Store {
     }
 
     /// Run activities started within `[from_ts, to_ts)` (unix seconds),
-    /// oldest first. Feeds the recent-sessions risk factor, which weighs each
-    /// of the last week's runs by its own intensity — so it needs the per-run
-    /// HR and pace columns, not just the distance sum.
+    /// oldest first, including per-run HR and pace for threshold evaluation.
     pub fn runs_between(&self, from_ts: i64, to_ts: i64) -> Result<Vec<Activity>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -3374,6 +3375,32 @@ mod tests {
             .expect("insert ride");
     }
 
+    #[test]
+    fn migrate_removes_risk_columns_and_preserves_load_snapshots() {
+        let database = std::env::temp_dir().join(format!("rk-load-upgrade-{}.sqlite", uuid::Uuid::new_v4()));
+        let original = Store::open(&database).unwrap();
+        run(&original, Utc::now().date_naive(), 5.0);
+        let activity_id = original.list_activities(1).unwrap()[0].id;
+        {
+            let connection = original.conn.lock().unwrap();
+            connection.execute_batch("ALTER TABLE activity_scores ADD COLUMN risk INTEGER NOT NULL DEFAULT 90;
+                ALTER TABLE activity_scores ADD COLUMN risk_delta INTEGER NOT NULL DEFAULT 12;").unwrap();
+            connection.execute("INSERT INTO activity_scores (activity_id, load) VALUES (?1, 1.2)", params![activity_id]).unwrap();
+        }
+        drop(original);
+        for _ in 0..2 {
+            let upgraded = Store::open(&database).unwrap();
+            assert_eq!(upgraded.activity_scores().unwrap(), vec![(activity_id, Some(1.2))]);
+            upgraded.insert_activity_score(activity_id, Some(2.0)).unwrap();
+            assert_eq!(upgraded.activity_scores().unwrap()[0].1, Some(1.2));
+            let connection = upgraded.conn.lock().unwrap();
+            let columns: Vec<String> = connection.prepare("PRAGMA table_info(activity_scores)").unwrap()
+                .query_map([], |row| row.get(1)).unwrap().collect::<std::result::Result<_, _>>().unwrap();
+            assert_eq!(columns, vec!["activity_id", "load"]);
+        }
+        let _ = std::fs::remove_file(database);
+    }
+
     /// The plan baseline must be a real number. `weekly_volumes` once filtered
     /// with `'-N weeks'`, which SQLite rejects (no such modifier), so the
     /// expression yielded NULL, every row was filtered out, and every plan
@@ -3478,9 +3505,6 @@ mod tests {
         assert_eq!(m.sessions, 1);
     }
 
-    /// The volume-spike risk factor reads `distance_window`. It used to sum
-    /// every sport, so a long weekend spin registered as a running volume
-    /// spike and the plan got cut for a ride that never stressed the legs.
     #[test]
     fn distance_window_counts_runs_and_not_other_sports() {
         let s = store();

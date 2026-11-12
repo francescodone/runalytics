@@ -484,7 +484,6 @@ pub(super) fn progression_allowed(store: &Store, th: &Thresholds) -> Result<bool
     let load = store.latest_training_load()?.and_then(|load| load.ratio);
     Ok(store.latest_pain()?.is_none()
         && scores.recovery_score > th.recovery_fatigued
-        && scores.injury_risk < 60
         && load.is_some_and(|ratio| ratio.is_finite() && ratio <= 1.3))
 }
 
@@ -1197,6 +1196,33 @@ mod tests {
             date:Utc::now().date_naive(),short_term:Some(80.0),long_term:Some(50.0),ratio:Some(1.6),comment:None,
         }).unwrap();
         assert!(build(&store, &plan, &Thresholds::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn faster_progression_retains_pain_and_recovery_guards() {
+        let store = store();
+        let thresholds = Thresholds::default();
+        let today = Utc::now().date_naive();
+        assert!(progression_allowed(&store, &thresholds).unwrap());
+        store.insert_pain_entry(&PainEntry {
+            id: "progression-pain".into(),
+            body_part: "knee.left".into(),
+            intensity: 1,
+            started_on: today,
+            notes: String::new(),
+            created_at: Utc::now(),
+            resolved_on: None,
+            followup_at: None,
+        }).unwrap();
+        assert!(!progression_allowed(&store, &thresholds).unwrap());
+        store.resolve_pain("progression-pain", today).unwrap();
+        assert!(progression_allowed(&store, &thresholds).unwrap());
+        store.upsert_health(ProviderKind::Coros, &HealthDaily {
+            date: today, steps: None, avg_hr: None, resting_hr: None,
+            stress_avg: None, sleep_score: Some(0), sleep_min: Some(0),
+            deep_min: None, rem_min: None, hrv_avg: None,
+        }).unwrap();
+        assert!(!progression_allowed(&store, &thresholds).unwrap());
     }
 
     /// A run that leans one way and then another is not a trend in either.

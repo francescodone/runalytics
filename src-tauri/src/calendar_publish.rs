@@ -399,11 +399,7 @@ pub async fn refresh(state: &AppState) -> Result<String> {
 
 async fn refresh_locked(state: &AppState) -> Result<String> {
     calendar::reconcile(&state.store)?;
-    // Freeze each new run's load and injury risk before rendering, so every
-    // banked session's description carries the numbers the body was carrying
-    // when it landed.
-    let thresholds = state.settings.lock().unwrap().thresholds();
-    calendar::snapshot_scores(&state.store, &thresholds)?;
+    calendar::snapshot_scores(&state.store)?;
     let path = CalendarExport::new(&state.data_dir).regenerate(&state.store)?;
     let mut config = load(&state.data_dir)?;
     if config.enabled {

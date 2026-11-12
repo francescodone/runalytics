@@ -72,7 +72,7 @@ export function NotificationViewport({ children }: { children: ReactNode }) {
 export function Notification({ children, label, onDismiss, dismissDisabled, countdown = true, countdownKey, elementRef, actions }: { children: ReactNode; label?: string; onDismiss: () => void; dismissDisabled?: boolean; countdown?: boolean; countdownKey?: string; elementRef?: React.Ref<HTMLDivElement>; actions?: ReactNode }) {
   const reduced = useReducedMotion();
   return <motion.div ref={elementRef} layout={reduced ? false : "position"} className={`desk-notice${label ? " desk-stages" : ""}`} role="status" aria-label={label} aria-atomic="true"
-    initial={reduced ? { opacity: 0 } : slideUp} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ ...fadeOut, y: reduced ? 0 : -14, transition: reduced ? { duration: 0 } : fadeOut.transition }} transition={reduced ? { duration: 0 } : tempo.spring}>
+    initial={reduced ? { opacity: 0 } : slideUp} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ ...fadeOut, y: reduced ? 0 : tempo.exitDistance, transition: reduced ? { duration: 0 } : fadeOut.transition }} transition={reduced ? { duration: 0 } : tempo.spring}>
     <div className="notice-content">{children}</div>{actions}
     <button type="button" className="desk-button icon-button notice-close" aria-label={t("Dismiss notification")} disabled={dismissDisabled} onClick={onDismiss}><IconX size={18} aria-hidden="true" />{countdown && <svg key={countdownKey} className="stage-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" /></svg>}</button>
   </motion.div>;

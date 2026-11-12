@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { IconArrowLeft, IconArrowRight, IconCheck, IconChevronDown } from "@tabler/icons-react";
-import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
+import { AnimatePresence, usePresence, useReducedMotion } from "motion/react";
 import { tauri, fmtPace, parsePace } from "../lib/ipc";
 import type { PlanKind, PlanRequest, PlanWorkout, TrainingPlan } from "../lib/types";
 import { t, date as formatDate, number } from "./i18n";
 import { monday, shiftDate, today, useRemote } from "./data";
 import { Button, ErrorNotice, Loading } from "./ui";
 import { tempo } from "./motion";
+import { useCascadeExit } from "./interaction";
 import { WatchSettings, StravaSettings, DeviceSync, CalendarSettings } from "./settings";
 import { ConnectionTransfer } from "./connection-transfer";
 
@@ -24,18 +25,22 @@ function loadDraft(): Draft {
 }
 
 function OnboardingStep({ children }: { children: ReactNode }) {
-  const present = useIsPresent();
+  const [present, remove] = usePresence();
   const reduced = useReducedMotion();
   const host = useRef<HTMLElement>(null);
+  const tail = useCascadeExit(host, present, !reduced);
+  useEffect(() => {
+    if (present) return;
+    if (reduced) { remove?.(); return; }
+    const timer = setTimeout(() => remove?.(), (tempo.exit + tail) * 1000);
+    return () => clearTimeout(timer);
+  }, [present, reduced, remove, tail]);
   useLayoutEffect(() => {
     if (!present || !host.current) return;
     host.current.closest(".onboarding-shell")?.scrollTo({ top: 0, behavior: "instant" });
     host.current.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
   }, [present]);
-  return <motion.section ref={host} className="onboarding-step" data-step-state={present ? "present" : "exiting"} inert={!present}
-    initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }}
-    exit={{ opacity: 0, transition: { duration: reduced ? 0 : tempo.exit, ease: tempo.soft } }}
-    transition={{ duration: reduced ? 0 : tempo.surface, ease: tempo.soft }}>{children}</motion.section>;
+  return <section ref={host} className="onboarding-step" data-step-state={present ? "present" : "exiting"} inert={!present}>{children}</section>;
 }
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {

@@ -60,6 +60,13 @@ export const deskFixture = `(function () {
       if(!args.dismiss){session.rating=args.rating;session.submitted=true;}session.pending=false;deskFeedback.revision++;
       return {changed,unchanged:0,reason:changed?'Future quality sessions adjusted. Weekly mileage is unchanged.':'Feedback saved.'};
     }
+    if (cmd === 'preview_plan_difficulty') {
+      if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');
+      if (connectionParams.has('difficultyEmpty')) return {planId:args.planId,revision:args.revision,direction:args.direction,outcome:{changed:0,unchanged:2,reason:'No sessions changed: the plan is already at its safe adjustment limits.'},changes:[]};
+      const step = distanceM => ({label:'Tempo',repeats:4,distanceM,paceLoSKm:300,paceHiSKm:310,recoveryM:200,recoveryPaceLoSKm:360,recoveryPaceHiSKm:380,openEnded:false});
+      return {planId:args.planId,revision:args.revision,direction:args.direction,outcome:{changed:1,unchanged:0,reason:'Future quality sessions adjusted. Weekly mileage is unchanged.'},changes:[{workoutId:'preview-tempo',title:'Tempo',date:'2026-11-20',before:{purpose:'',estimatedMin:30,steps:[step(1000)]},after:{purpose:'',estimatedMin:30,steps:[step(args.direction==='easier'?900:1100)]}}]};
+    }
+    if (cmd === 'approve_plan_difficulty') { if(args.preview.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');deskFeedback.revision++;return args.preview.outcome; }
     if (cmd === 'adjust_plan_difficulty') { if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');deskFeedback.revision++;return {changed:2,unchanged:0,reason:'Future quality sessions adjusted. Weekly mileage is unchanged.'}; }
     if (cmd === 'undo_plan_difficulty') { deskFeedback.revision++; return null; }
     if (cmd === 'plugin:updater|check') return window.__deskNoUpdate ? null : {rid:73,currentVersion:'0.25.0',version:'0.26.0'};
@@ -124,7 +131,7 @@ export const deskFixture = `(function () {
       deskCurrent = [{id:'synthetic-plan',...args.request,status:'active',createdAt:new Date().toISOString(),pushedId:null,baselineWeeklyKm:args.request.currentWeeklyKm,qualityOffsetSecKm:0,qualityOffsetFrom:null},[]];
       return deskCurrent;
     }
-    if (cmd === 'run_scores') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, workoutId: workout.id, load: 120 + index * 15, risk: 40 + index, riskDelta: index % 2 ? 1.4 : -0.8 })).concat([{ activityId: 4, workoutId: null, load: 96, risk: 38, riskDelta: -1.2 }]); }
+    if (cmd === 'run_scores') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, workoutId: workout.id, load: 120 + index * 15 })).concat([{ activityId: 4, workoutId: null, load: 96 }]); }
     if (cmd === 'matched_sessions') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, title: workout.title, purpose: 'Build endurance at conversational pace so the body adapts without accumulating fatigue.', notes: 'Made with Runalytics - a virtual personal vibecoded coach \\n\\n' + workout.title + '\\n\\nPlan:\\n  2 km easy\\n\\nWhy: Build endurance at conversational pace.' })); }
     if (cmd === 'calendar_events') {
       const pair = await window.__TAURI_INTERNALS__.invoke('current_plan');

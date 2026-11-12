@@ -79,6 +79,7 @@ function App() {
     if (initial.current) { initial.current = false; return; }
     document.getElementById("workspace")?.scrollTo({ top: 0, behavior: "instant" });
     heading.current?.focus({ preventScroll: true });
+    heading.current?.parentElement?.dispatchEvent(new Event("desk:view-arrive", { bubbles: true }));
   }, [route.workspace]);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");

@@ -3,6 +3,23 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+test("setup wordmark uses the shoe PoC brand typography", async ({ page }, testInfo) => {
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 740 });
+    await page.goto("/desk.html?noPlan#training");
+    const wordmark = page.locator(".onboarding-header strong");
+    await expect(wordmark).toBeVisible();
+    await expect(wordmark).toHaveCSS("font-family", '"Avenir Next", Avenir, Outfit, "Avenir Next", sans-serif');
+    await expect(wordmark).toHaveCSS("font-size", "17px");
+    await expect(wordmark).toHaveCSS("font-weight", "750");
+    await expect(wordmark).toHaveCSS("font-synthesis", "none");
+    await expect(wordmark).toHaveCSS("letter-spacing", /^(normal|0px)$/);
+    await expect(page.getByRole("heading").first()).toHaveCSS("font-family", 'Outfit, "Avenir Next", sans-serif');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath(`wordmark-setup-${width}.png`), fullPage: true });
+  }
+});
+
 test("synthetic preview limits four-day plans to one quality session", async ({ page }) => {
   await page.goto("/desk.html?noPlan#training");
   const weeks = await page.evaluate(async () => {
@@ -126,6 +143,24 @@ for (const width of [320, 1440]) test(`wizard steps fit and remain reachable at 
   }
 });
 
+for (const width of [320, 1440]) test(`setup viewport reveals keep long previews scroll-driven at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 640 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "preview", name: "Ada", threshold: "4:40" })));
+  await page.goto("/desk.html?noPlan#training");
+  const heading = page.locator('.onboarding-step[data-step-state="present"] h1');
+  await expect(heading).toHaveAttribute("data-reveal", "settled");
+  const week = page.locator(".onboarding-step details").nth(1);
+  await week.locator("summary").click();
+  const row = week.locator("li").last();
+  await row.scrollIntoViewIfNeeded();
+  await expect(row).toHaveAttribute("data-reveal", "settled");
+  await expect(page.locator(".onboarding-step")).toHaveCSS("transform", "none");
+  await page.screenshot({ path: testInfo.outputPath(`setup-scroll-${width}.png`) });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator('[data-reveal="waiting"], [data-reveal="visible"]')).toHaveCount(0);
+});
+
 test("step transitions animate in and out while the exiting step is inert", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/desk.html?noPlan#training");
@@ -138,10 +173,11 @@ test("step transitions animate in and out while the exiting step is inert", asyn
   const values = await page.evaluate(() => {
     const oldStep = document.querySelector('.onboarding-step[data-step-state="exiting"]');
     const newStep = document.querySelector('.onboarding-step[data-step-state="present"]');
-    return { old: Number(getComputedStyle(oldStep).opacity), next: Number(getComputedStyle(newStep).opacity) };
+    return { old: getComputedStyle(oldStep).transform, next: getComputedStyle(newStep).transform, leaves: [...oldStep.querySelectorAll('[data-reveal]'), ...newStep.querySelectorAll('[data-reveal]')].filter(element => element.getAnimations().length).length };
   });
-  expect(values.old).toBeLessThan(1);
-  expect(values.next).toBeLessThan(1);
+  expect(values.old).toBe("none");
+  expect(values.next).toBe("none");
+  expect(values.leaves).toBeGreaterThan(0);
   await expect(outgoing).toHaveCount(0);
   await expect.poll(() => incoming.evaluate(element => Number(getComputedStyle(element).opacity))).toBe(1);
 });

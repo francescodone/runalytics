@@ -173,6 +173,8 @@ pub fn run() {
             commands::session_feedback,
             commands::save_session_feedback,
             commands::adjust_plan_difficulty,
+            commands::preview_plan_difficulty,
+            commands::approve_plan_difficulty,
             commands::undo_plan_difficulty,
             commands::down_weeks,
             commands::push_plan_to_provider,

@@ -237,12 +237,57 @@ pub struct FeedbackSession {
     pub pending: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outcome {
     pub changed: usize,
     pub unchanged: usize,
     pub reason: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DifficultyChange {
+    pub workout_id: String,
+    pub title: String,
+    pub date: chrono::NaiveDate,
+    pub before: WorkoutDetails,
+    pub after: WorkoutDetails,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DifficultyPreview {
+    pub plan_id: String,
+    pub revision: i64,
+    pub direction: Direction,
+    pub outcome: Outcome,
+    pub changes: Vec<DifficultyChange>,
+}
+
+pub fn preview(store: &Store, thresholds: &Thresholds, plan_id: &str, revision: i64, direction: Direction) -> Result<DifficultyPreview> {
+    let (outcome, workouts, updates) = calculate(store, thresholds, plan_id, revision, Some(direction), None)?;
+    let (plan, _) = store.current_plan()?.ok_or_else(|| AppError::Other("No active plan".into()))?;
+    let mut changes: Vec<_> = updates.iter().filter_map(|updated| {
+        let original = workouts.iter().find(|workout| workout.id == updated.id)?;
+        Some(DifficultyChange {
+            workout_id: updated.id.clone(),
+            title: updated.title.clone(),
+            date: updated.date,
+            before: super::session::details_for_plan(original, &plan),
+            after: super::session::details_for_plan(updated, &plan),
+        })
+    }).collect();
+    changes.sort_by(|left, right| left.date.cmp(&right.date).then(left.workout_id.cmp(&right.workout_id)));
+    Ok(DifficultyPreview { plan_id: plan_id.into(), revision, direction, outcome, changes })
+}
+
+pub fn approve(store: &Store, thresholds: &Thresholds, approved: &DifficultyPreview) -> Result<Outcome> {
+    let current = preview(store, thresholds, &approved.plan_id, approved.revision, approved.direction)?;
+    if serde_json::to_value(&current).ok() != serde_json::to_value(approved).ok() {
+        return Err(AppError::Other("The plan changed. Refresh before trying again.".into()));
+    }
+    apply(store, thresholds, &approved.plan_id, approved.revision, Some(approved.direction), None)
 }
 
 pub fn eligible(workout: &PlanWorkout) -> bool {
@@ -307,6 +352,21 @@ pub fn apply(
     direction: Option<Direction>,
     feedback: Option<(&str, Option<u8>, bool)>,
 ) -> Result<Outcome> {
+    let (outcome, workouts, updates) = calculate(store, thresholds, plan_id, revision, direction, feedback)?;
+    if !updates.is_empty() {
+        store.commit_difficulty(plan_id, revision, &workouts, &updates)?;
+    }
+    Ok(outcome)
+}
+
+fn calculate(
+    store: &Store,
+    thresholds: &Thresholds,
+    plan_id: &str,
+    revision: i64,
+    direction: Option<Direction>,
+    feedback: Option<(&str, Option<u8>, bool)>,
+) -> Result<(Outcome, Vec<PlanWorkout>, Vec<PlanWorkout>)> {
     let (plan, workouts) = store
         .current_plan()?
         .ok_or_else(|| AppError::Other("No active plan".into()))?;
@@ -516,10 +576,7 @@ pub fn apply(
                 else { "Future quality sessions adjusted. Weekly mileage is unchanged." }.into();
         }
     }
-    if !updates.is_empty() {
-        store.commit_difficulty(plan_id, revision, &workouts, &updates)?;
-    }
-    Ok(outcome)
+    Ok((outcome, workouts, updates))
 }
 
 #[cfg(test)]
@@ -624,6 +681,29 @@ mod tests {
         store.insert_plan(&plan).unwrap();
         store.insert_workouts(&workouts).unwrap();
         (store, plan, workouts)
+    }
+
+    #[test]
+    fn preview_is_read_only_and_approval_checks_the_reviewed_changes() {
+        let (store, plan, _) = seed();
+        let revision = store.current_plan_rev().unwrap().unwrap();
+        let original = serde_json::to_value(store.plan_workouts(&plan.id).unwrap()).unwrap();
+        let mut proposed = preview(&store, &Thresholds::default(), &plan.id, revision, Direction::Easier).unwrap();
+        assert!(!proposed.changes.is_empty());
+        assert_eq!(store.current_plan_rev().unwrap(), Some(revision));
+        assert_eq!(serde_json::to_value(store.plan_workouts(&plan.id).unwrap()).unwrap(), original);
+        proposed.changes[0].after.steps[0].distance_m += 100.0;
+        assert!(approve(&store, &Thresholds::default(), &proposed).is_err());
+        assert_eq!(serde_json::to_value(store.plan_workouts(&plan.id).unwrap()).unwrap(), original);
+        let proposed = preview(&store, &Thresholds::default(), &plan.id, revision, Direction::Easier).unwrap();
+        let outcome = approve(&store, &Thresholds::default(), &proposed).unwrap();
+        assert_eq!(outcome.changed, proposed.outcome.changed);
+        assert!(approve(&store, &Thresholds::default(), &proposed).is_err());
+        let updated = store.plan_workouts(&plan.id).unwrap();
+        for change in &proposed.changes {
+            let workout = updated.iter().find(|workout| workout.id == change.workout_id).unwrap();
+            assert_eq!(serde_json::to_value(super::super::session::details_for_plan(workout, &plan)).unwrap(), serde_json::to_value(&change.after).unwrap());
+        }
     }
 
     #[test]

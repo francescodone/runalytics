@@ -123,7 +123,7 @@ function AchievementCelebrations() {
   return <Dialog title={t("Earned")} onClose={() => setQueue(previous => previous.slice(1))}>
     <div className="achievement-celebration" key={badge.id}>
       <motion.div className="achievement-celebration-icon" aria-hidden="true" initial={reduced ? false : { opacity: 0, scale: .6, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={tempo.spring} dangerouslySetInnerHTML={{ __html: badge.icon }} />
-      <motion.div initial={reduced ? false : { opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...tempo.spring, delay: reduced ? 0 : tempo.landingStagger }}><h3>{text(badge.name)}</h3><p>{text(badge.desc)}</p></motion.div>
+      <div data-entrance><h3>{text(badge.name)}</h3><p>{text(badge.desc)}</p></div>
       <Button tone="primary" onClick={() => setQueue(previous => previous.slice(1))}>{t("Continue")}</Button>
     </div>
   </Dialog>;
