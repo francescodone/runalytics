@@ -5,6 +5,178 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
+  test(`load-only activity review has no injury risk ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?pain=1&theme=${theme}#journal/1`);
+    const review = page.locator(".activity-review");
+    await expect(review.getByRole("heading", { name: "Recorded session impact" })).toBeVisible();
+    await expect(review).toContainText("Training load");
+    await expect(review).not.toContainText(/injury risk|risk at completion|risk change|risk contributors/i);
+    const payloads = await page.evaluate(async () => Promise.all([
+      window.__TAURI_INTERNALS__.invoke("dashboard", { range: "7d" }),
+      window.__TAURI_INTERNALS__.invoke("activity_detail", { activityId: 1, range: "7d" }),
+      window.__TAURI_INTERNALS__.invoke("run_scores"),
+    ]));
+    expect(JSON.stringify(payloads)).not.toMatch(/"(?:risk|riskDelta|riskFactors|injuryRisk)"/);
+    expect(payloads[0].activePain.intensity).toBe(6);
+    expect(payloads[0].scores.globalScore).toBe(71);
+    expect(payloads[2][0].load).toBe(120);
+    await review.getByRole("tab", { name: "Training context", exact: true }).click();
+    await expect(review.getByRole("tabpanel")).toContainText("Load ratio");
+    await expect(review.getByRole("tabpanel")).toContainText("VO2 max");
+    await expect(review).not.toContainText(/injury risk|risk contributors/i);
+    await page.screenshot({ path: testInfo.outputPath(`load-only-context-${theme}-${width}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  });
+}
+
+for (const width of [320, 1440]) test(`new synced achievements celebrate once in order at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 740 });
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__achievementVibrations = [];
+    navigator.vibrate = pattern => { window.__achievementVibrations.push(pattern); return true; };
+    window.__achievementActivities = [];
+    window.__achievementReads = 0;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => { if (command === 'all_activities') { window.__achievementReads++; return window.__achievementActivities; } return invoke(command, args); };
+    window.__originalActivities = () => invoke('all_activities', {});
+  });
+  await page.goto('/desk.html#milestones');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('runalytics.earned-achievements'))).not.toBeNull();
+  await page.evaluate(async () => {
+    const [sample] = await window.__originalActivities();
+    window.__achievementActivities = [
+      {...sample, id: 501, startTime: '2026-11-07T10:00:00', distanceM: 1000},
+      {...sample, id: 502, startTime: '2026-11-08T10:00:00', distanceM: 1000},
+    ];
+    window.__deskEmit('sync://completed', {ok: false});
+  });
+  await expect(page.getByRole('dialog', {name:'Earned'})).toHaveCount(0);
+  await page.evaluate(() => window.__deskEmit('sync://completed', {ok: true}));
+  const dialog = page.getByRole('dialog', {name:'Earned'});
+  await expect(dialog).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath(`achievement-${width}.png`)});
+  const names = [];
+  while (await dialog.count()) {
+    names.push(await dialog.locator('h3').innerText());
+    await dialog.getByRole('button', {name:'Continue'}).click();
+  }
+  expect(names).toContain('Weekend warrior');
+  expect(new Set(names).size).toBe(names.length);
+  expect(await page.evaluate(() => window.__achievementVibrations.length)).toBe(names.length);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  const reads = await page.evaluate(() => { const count = window.__achievementReads; window.__deskEmit('sync://completed', {ok: true}); return count; });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads);
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() => { window.__achievementActivities = []; window.__deskEmit('sync://completed', {ok:true}); });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads + 1);
+  await page.evaluate(async () => {
+    const [sample] = await window.__originalActivities();
+    window.__achievementActivities = [{...sample, id:501, startTime:'2026-11-07T10:00:00', distanceM:1000}, {...sample, id:502, startTime:'2026-11-08T10:00:00', distanceM:1000}];
+    window.__deskEmit('sync://completed', {ok:true});
+  });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads + 2);
+  await expect(dialog).toHaveCount(0);
+});
+
+test('achievement celebration requests native haptics and animates when motion is enabled', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion:'no-preference' });
+  await page.addInitScript(() => { window.isTauri = true; });
+  await page.goto('/desk.html#milestones');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('runalytics.earned-achievements'))).not.toBeNull();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('runalytics:achievements-unlocked', {detail:[{id:'test',name:'First mile',desc:'Log your first run',icon:'<svg viewBox="0 0 24 24"></svg>',earned:true}]})));
+  await expect(page.getByRole('dialog', {name:'Earned'})).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === 'plugin:haptics|notification_feedback').map(call => call.args))).toEqual([{type:'success'}]);
+  await expect.poll(() => page.locator('.achievement-celebration-icon').evaluate(element => element.getAnimations().length)).toBeGreaterThan(0);
+});
+
+test('startup reconciles achievements against a saved baseline', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('runalytics.earned-achievements', '[]'));
+  await page.goto('/desk.html#milestones');
+  await expect(page.getByRole('dialog', {name:'Earned'})).toBeVisible();
+  await expect(page.locator('.achievement-celebration h3')).not.toBeEmpty();
+});
+
+test('retired assistant settings and help are unavailable', async ({ page }) => {
+  await page.goto('/desk.html#settings/assistant');
+  await expect(page.getByRole('region', { name: 'Third-party connections' })).toBeVisible();
+  await expect(page.getByText('Injury assistant', { exact: true })).toHaveCount(0);
+  await page.goto('/desk.html#help');
+  await page.getByRole('searchbox', { name: 'Search help' }).fill('assistant');
+  await expect(page.getByText('No matching topics')).toBeVisible();
+  expect(await page.evaluate(() => window.__deskCalls.some(call => ['llm_status', 'ask_assistant', 'set_llm_api_key'].includes(call.command)))).toBe(false);
+});
+
+for (const width of [320, 1440]) test(`pacing evidence appears in pace insights instead of the plan at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/desk.html?pacingProposal=1#training/plan');
+  await expect(page.getByRole('heading', { name: 'Training horizon' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pacing evidence' })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath(`plan-${width}.png`), fullPage: true });
+  await page.getByRole('link', { name: 'Pace insights' }).click();
+  await expect(page.getByRole('heading', { name: 'Pacing evidence' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review changes', exact: true })).toBeVisible();
+  const alignment = await page.locator('.pace-insights').evaluate(section => {
+    const parent = section.getBoundingClientRect();
+    const selector = section.querySelector('.pace-mode').getBoundingClientRect();
+    return Math.abs((parent.left + parent.right - selector.left - selector.right) / 2);
+  });
+  expect(alignment).toBeLessThanOrEqual(1);
+  const mode = page.getByRole('group', { name: 'Pace workout type' });
+  await mode.getByRole('button', { name: 'Long', exact: true }).click();
+  await expect(mode.getByRole('button', { name: 'Long', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await mode.screenshot({ path: testInfo.outputPath(`pace-mode-${width}.png`) });
+  await mode.getByRole('button', { name: 'Speed', exact: true }).click();
+  await expect(mode.getByRole('button', { name: 'Speed', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+for (const width of [320, 1440]) test(`race estimates compare watch and plan with race day at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/desk.html#pace');
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  await expect(estimates.getByRole('columnheader', { name: 'Watch · Today' })).toBeVisible();
+  await expect(estimates.getByRole('columnheader', { name: 'Plan · Today' })).toBeVisible();
+  await expect(estimates.getByRole('columnheader', { name: 'Race day projection' })).toBeAttached();
+  await expect(estimates.getByRole('row', { name: /5 km/ }).locator('td').first().locator('.sr-only')).toHaveText('20m 00s');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await estimates.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath(`race-estimates-${width}.png`), fullPage: true });
+  expect(await page.evaluate(async () => {
+    const { raceDayThreshold, trainingRaceTime } = await import('/src/desk/race-estimates.tsx');
+    const plan = {kind:'race',status:'active',targetDate:'2027-03-15',distance:'21K',baselineWeeklyKm:40,thresholdSecKm:300,qualityOffsetSecKm:0};
+    const workouts = [{date:'2027-02-15',kind:'easy',distanceM:20000},{date:'2027-02-17',kind:'long_run',distanceM:24000},{date:'2027-03-15',kind:'race',distanceM:100000}];
+    const threshold = raceDayThreshold(plan, workouts, '2027-02-15');
+    return [threshold, trainingRaceTime(threshold, 0, 21.0975), raceDayThreshold({...plan,kind:'maintenance'},workouts,'2027-02-15'), raceDayThreshold({...plan,baselineWeeklyKm:null},workouts,'2027-02-15'), raceDayThreshold(plan,workouts,'2027-03-15'), raceDayThreshold(plan,[workouts[2]],'2027-02-15')];
+  })).toEqual([294, 6408, null, null, null, null]);
+});
+
+test('missing watch prediction does not hide plan estimates', async ({ page }) => {
+  await page.goto('/desk.html?noWatchPredictions#pace');
+  const row = page.getByRole('region', { name: 'Training race estimates', exact: true }).getByRole('row', { name: /5 km/ });
+  await expect(row.locator('td').first()).toHaveText('Not available');
+  await expect(row.locator('td[data-seconds]')).not.toHaveText('Not available');
+  await expect(page.getByText('Watch predictions reflect the latest sync and may not be from today.')).toBeVisible();
+});
+
+for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`pace and milestones navigation ${theme} ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto(`/desk.html?theme=${theme}#health/pace`);
+  const navigation = page.locator(".desk-navigation");
+  await expect(navigation.locator("a")).toHaveCount(4);
+  await expect(navigation.getByRole("link", { name: "Pace insights" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("region", { name: "Training race estimates" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Pace workout type" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await navigation.getByRole("link", { name: "Milestones" }).click();
+  await expect(page.getByRole("heading", { name: "Last 12 weeks" })).toBeVisible();
+  await page.goto(`/desk.html?theme=${theme}#health/milestones`);
+  await expect(page.getByRole("heading", { name: "Last 12 weeks" })).toBeVisible();
+  await page.goto(`/desk.html?theme=${theme}#training/plan`);
+  await expect(page.getByRole("region", { name: "Training race estimates" })).toHaveCount(0);
+});
+
 test("optional session feedback keeps failed drafts and never defaults to a rating", async ({ page }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -38,22 +210,87 @@ test("optional session feedback dismisses without rating and manual controls pre
   await page.goto("/desk.html?feedback#training/plan");
   const before = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[1].map(workout => workout.distanceM));
   await page.getByRole("button", { name: "Make plan slightly easier" }).click();
+  let dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await expect(dialog.getByRole("region", { name: "Proposed session changes" })).toContainText("0.9 km");
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty").length)).toBe(0);
+  await dialog.getByRole("button", { name: "Dismiss changes" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Make plan slightly easier" }).click();
+  dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
   await expect(page.locator(".edit-plan [role=status]")).toContainText("Weekly mileage is unchanged");
   await page.getByRole("button", { name: "Make plan slightly harder" }).click();
-  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").length)).toBe(2);
+  dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await expect(dialog.getByRole("region", { name: "Proposed session changes" })).toContainText("1.1 km");
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty").length)).toBe(2);
   const after = await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke("current_plan"))[1].map(workout => workout.distanceM));
   expect(after).toEqual(before);
-  const calls = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty"));
-  expect(calls.map(call => call.args.direction)).toEqual(["easier", "harder"]);
-  expect(calls[1].args.revision).toBeGreaterThan(calls[0].args.revision);
+  const calls = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty"));
+  expect(calls.map(call => call.args.preview.direction)).toEqual(["easier", "harder"]);
+  expect(calls[1].args.preview.revision).toBeGreaterThan(calls[0].args.preview.revision);
+  await page.getByRole("button", { name: "Make plan slightly harder" }).click();
+  dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await expect(dialog.getByRole("button", { name: "Apply changes" })).toBeVisible();
   await page.evaluate(async ({ planId, revision }) => {
     await window.__TAURI_INTERNALS__.invoke("adjust_plan_difficulty", { planId, revision: revision + 1, direction: "harder" });
-  }, calls[1].args);
+  }, calls[1].args.preview);
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("The plan changed");
+  await dialog.getByRole("button", { name: "Dismiss changes" }).click();
+});
+
+for (const width of [320, 1440]) for (const theme of ["light", "dark"]) test(`difficulty review responsive ${theme} ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 740 });
+  await page.goto(`/desk.html?feedback&theme=${theme}#training/plan`);
+  const opener = page.getByRole("button", { name: "Make plan slightly easier" });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await expect(dialog.getByRole("button", { name: "Apply changes" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath(`difficulty-review-${theme}-${width}.png`) });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty").length)).toBe(0);
+});
+
+test("difficulty review emphasizes only changed proposed values", async ({ page }) => {
+  await page.goto("/desk.html?feedback#training/plan");
+  await page.evaluate(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      if (command !== "preview_plan_difficulty") return result;
+      const change = result.changes[0];
+      const original = change.before.steps[0];
+      change.before.steps.push({ ...original, label: "Cool down", repeats: 1, openEnded: true, recoveryM: 0 });
+      change.after.steps = [
+        { ...original, distanceM: 900, paceLoSKm: 295, paceHiSKm: 305, recoveryM: 300, recoveryPaceLoSKm: 350, recoveryPaceHiSKm: 370 },
+        { ...original, label: "New step", repeats: 1, recoveryM: 0 },
+        { ...change.before.steps[1] },
+      ];
+      return result;
+    };
+  });
+  await page.getByRole("button", { name: "Make plan slightly easier" }).click();
+  const row = page.getByRole("region", { name: "Proposed session changes" }).locator("tbody tr").first();
+  const current = row.locator("td").nth(0);
+  const proposed = row.locator("td").nth(1);
+  await expect(proposed.locator("p").first().locator("strong")).toHaveText(["0.9 km", "4:55 - 5:05 /km", "0.3 km", "5:50 - 6:10 /km"]);
+  await expect(current.locator("strong")).toHaveCount(0);
+  await expect(proposed.locator("p").nth(1).locator("strong")).not.toHaveCount(0);
+  await expect(proposed.locator("p").nth(2).locator("strong")).toHaveCount(0);
+});
+
+test("difficulty review explains when there are no changes", async ({ page }) => {
+  await page.goto("/desk.html?feedback&difficultyEmpty#training/plan");
   await page.getByRole("button", { name: "Make plan slightly harder" }).click();
-  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").length)).toBe(4);
-  await expect(page.locator(".edit-plan [role=alert]")).toHaveCount(0);
-  const latest = await page.evaluate(() => window.__deskCalls.filter(call => call.command === "adjust_plan_difficulty").at(-1));
-  expect(latest.args.revision).toBe(calls[1].args.revision + 2);
+  const dialog = page.getByRole("dialog", { name: "Review plan changes" });
+  await expect(dialog).toContainText("safe adjustment limits");
+  await expect(dialog.getByRole("button", { name: "Apply changes" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Dismiss changes" }).click();
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty").length)).toBe(0);
 });
 
 for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`session feedback responsive ${theme} ${width}px`, async ({ page }, testInfo) => {
@@ -88,12 +325,12 @@ for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion p
     };
     window.__packagedCounts = [];
     new MutationObserver(() => {
-      const counter = document.querySelector('.health-verdict .sr-only + [aria-hidden="true"]');
+      const counter = document.querySelector('.race-estimates .sr-only + [aria-hidden="true"]');
       if (counter) window.__packagedCounts.push({ value: counter.textContent, time: performance.now() });
     }).observe(document, { subtree: true, characterData: true, childList: true });
   });
-  await page.goto("/desk.html#health");
-  const counter = page.locator('.health-verdict .sr-only + [aria-hidden="true"]').first();
+  await page.goto("/desk.html#pace");
+  const counter = page.locator('.race-estimates .sr-only + [aria-hidden="true"]').first();
   await expect(counter).toBeVisible();
   expect(errors).toEqual([]);
   const final = counter.locator("..").locator(".sr-only");
@@ -103,13 +340,13 @@ for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion p
     const counts = await page.evaluate(() => window.__packagedCounts);
     expect(new Set(counts.map(sample => sample.value)).size).toBeGreaterThan(2);
     expect(counts.at(-1).time - counts[0].time).toBeGreaterThan(200);
-    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    await expect(page.locator(".race-estimates")).toHaveAttribute("data-reveal", "settled");
     const frames = await page.getByRole("link", { name: "Activities", exact: true }).evaluate(async link => {
       link.click();
       const frames = [];
       for (let index = 0; index < 12; index++) {
         await new Promise(requestAnimationFrame);
-        const leaf = document.querySelector('[data-transition-state="exiting"] .health-verdict');
+        const leaf = document.querySelector('[data-transition-state="exiting"] .race-estimates');
         if (leaf) frames.push({ opacity: Number(getComputedStyle(leaf).opacity), y: new DOMMatrixReadOnly(getComputedStyle(leaf).transform).m42 });
       }
       return frames;
@@ -120,7 +357,7 @@ for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion p
     await expect(page.locator(".activity-row")).toHaveCount(9);
   } else {
     expect(new Set(await page.evaluate(() => window.__packagedCounts.map(sample => sample.value))).size).toBe(1);
-    expect(await page.locator(".health-verdict").evaluate(element => element.getAnimations().length)).toBe(0);
+    expect(await page.locator(".race-estimates").evaluate(element => element.getAnimations().length)).toBe(0);
   }
   expect(errors).toEqual([]);
 });
@@ -577,7 +814,8 @@ test.describe("Strava settings", () => {
     await expect(toggle).not.toBeChecked();
     await toggle.click();
     const confirmation = page.getByRole("dialog", { name: "Enable Strava description updates?" });
-    await expect(confirmation).toContainText("injury-risk information");
+    await expect(confirmation).toContainText("results and training load");
+    await expect(confirmation).not.toContainText(/risk/i);
     await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(toggle).not.toBeChecked();
     await toggle.click();
@@ -959,8 +1197,8 @@ test.describe("motion system", () => {
   test("Motion desktop exits retain outgoing content and cascade vertically in DOM order", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.goto("/desk.html#health");
-    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    await page.goto("/desk.html#pace");
+    await expect(page.locator(".race-estimates")).toHaveAttribute("data-reveal", "settled");
     const frames = await page.getByRole("link", { name: "Activities", exact: true }).evaluate(async link => {
       link.click();
       const frames = [];
@@ -969,7 +1207,7 @@ test.describe("motion system", () => {
         const outgoing = document.querySelector('.desk-workspace > .motion-change[data-transition-state="exiting"]');
         if (!outgoing) continue;
         const style = getComputedStyle(outgoing);
-        const verdict = outgoing.querySelector(".health-verdict");
+        const verdict = outgoing.querySelector(".race-estimates");
         const leaves = [...outgoing.querySelectorAll('[data-reveal="settled"]')].filter(element => element.getAnimations().length);
         frames.push({ connected: outgoing.isConnected, inert: outgoing.inert, transform: style.transform, filter: style.filter, y: verdict ? new DOMMatrixReadOnly(getComputedStyle(verdict).transform).m42 : 0, delays: leaves.map(element => element.getAnimations()[0].effect.getTiming().delay) });
       }
@@ -1002,8 +1240,8 @@ test.describe("motion system", () => {
   test("Motion Bezier choreography uses exact DOM order without jitter or scale", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.goto("/desk.html#health");
-    await expect(page.locator('.health-verdict')).toHaveAttribute("data-reveal", "settled");
+    await page.goto("/desk.html#pace");
+    await expect(page.locator('.race-estimates')).toHaveAttribute("data-reveal", "settled");
     await page.evaluate(() => {
       const root = document.createElement("section");
       root.className = "motion-change";
@@ -1032,8 +1270,8 @@ test.describe("motion system", () => {
   test("Motion reveals complete nested visual units", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.goto("/desk.html#health");
-    await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
+    await page.goto("/desk.html#pace");
+    await expect(page.locator(".race-estimates")).toHaveAttribute("data-reveal", "settled");
     await page.evaluate(() => {
       const root = document.createElement("section");
       root.className = "motion-change";
@@ -1046,11 +1284,170 @@ test.describe("motion system", () => {
     await expect(unit).toHaveAttribute("data-reveal", "settled");
   });
 
+  test("week rest days join the viewport reveal stagger", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.addInitScript(() => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = (command, args) => command === "calendar_events" ? Promise.resolve([]) : invoke(command, args);
+      window.__restReveals = [];
+      document.addEventListener("desk:reveal", event => {
+        if (event.target.matches(".rest-label") && event.target.dataset.reveal === "visible") window.__restReveals.push(event.detail.delay);
+      });
+    });
+    await page.goto("/desk.html#training/week");
+    await expect(page.locator(".rest-label")).toHaveCount(7);
+    await expect.poll(() => page.evaluate(() => window.__restReveals.length)).toBe(7);
+    const delays = await page.evaluate(() => window.__restReveals);
+    expect(delays[0]).toBeGreaterThan(0);
+    for (let index = 1; index < delays.length; index++) expect(delays[index] - delays[index - 1]).toBeCloseTo(.06, 5);
+    await expect(page.locator(".rest-label").last()).toHaveAttribute("data-reveal", "settled");
+  });
+
+  for (const width of [390, 1440]) for (const native of [false, true]) test(`unified viewport choreography follows visual order and fresh batches ${width}px native=${native}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    if (native) await page.addInitScript(() => { window.isTauri = true; });
+    await page.goto("/desk.html#pace");
+    await expect(page.locator(".race-estimates")).toHaveAttribute("data-reveal", "settled");
+    await page.evaluate(() => {
+      const root = document.createElement("section");
+      root.id = "viewport-motion-probe";
+      root.className = "motion-change";
+      Object.assign(root.style, { position: "fixed", top: "120px", left: "10px", width: "280px", height: "220px", overflow: "auto", display: "flex", flexDirection: "column", zIndex: "9999" });
+      for (const order of [2, 0, 1]) {
+        const leaf = document.createElement("div");
+        leaf.dataset.entrance = "";
+        leaf.textContent = `Evidence ${order}`;
+        Object.assign(leaf.style, { order: String(order), height: "64px", flex: "none" });
+        root.append(leaf);
+      }
+      document.body.append(root);
+    });
+    const leaves = page.locator("#viewport-motion-probe > div");
+    await expect.poll(() => leaves.evaluateAll(elements => elements.filter(element => element.getAnimations().length).length)).toBe(3);
+    expect(await leaves.evaluateAll(elements => elements.map(element => element.getAnimations()[0].effect.getTiming().delay))).toEqual([120, 0, 60]);
+    await expect(leaves.first()).toHaveAttribute("data-reveal", "settled");
+    await page.evaluate(() => {
+      const late = document.createElement("div");
+      late.id = "late-visible-leaf";
+      late.dataset.entrance = "";
+      late.textContent = "New evidence";
+      Object.assign(late.style, { order: "-1", height: "40px", flex: "none" });
+      document.querySelector("#viewport-motion-probe").append(late);
+    });
+    await expect(page.locator("#late-visible-leaf")).toHaveAttribute("data-reveal", "visible");
+    expect(await page.locator("#late-visible-leaf").evaluate(element => element.getAnimations()[0].effect.getTiming().delay)).toBe(0);
+    await page.evaluate(() => {
+      const clipped = document.createElement("div");
+      clipped.id = "clipped-leaf";
+      clipped.dataset.entrance = "";
+      clipped.textContent = "Only when scrolled";
+      Object.assign(clipped.style, { order: "4", height: "64px", flex: "none" });
+      document.querySelector("#viewport-motion-probe").append(clipped);
+    });
+    const clipped = page.locator("#clipped-leaf");
+    await expect(clipped).toHaveAttribute("data-reveal", "waiting");
+    await page.locator("#viewport-motion-probe").evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect(clipped).toHaveAttribute("data-reveal", "settled");
+    await page.locator("#viewport-motion-probe").evaluate(element => { element.scrollTop = 0; });
+    await expect(clipped).toHaveAttribute("data-reveal", "settled");
+    expect(await clipped.evaluate(element => element.getAnimations().length)).toBe(0);
+  });
+
+  for (const width of [390, 1440]) for (const reducedMotion of ["no-preference", "reduce"]) test(`unified counters keep final geometry and viewport lifecycle ${width}px ${reducedMotion}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 740 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/desk.html#training/plan");
+    const metric = page.locator(".plan-overview .desk-metric").filter({ has: page.locator("dt", { hasText: "Runs per week" }) });
+    const counter = metric.locator(".motion-number");
+    await expect(counter).toBeAttached();
+    await counter.scrollIntoViewIfNeeded();
+    const samples = await counter.evaluate(async element => {
+      const samples = [];
+      for (let index = 0; index < 70; index++) {
+        samples.push({ width: element.getBoundingClientRect().width, value: element.querySelector('.sr-only + [aria-hidden="true"]').textContent, final: element.querySelector(".sr-only").textContent });
+        await new Promise(requestAnimationFrame);
+      }
+      return samples;
+    });
+    expect(samples.at(-1).value).toBe(samples.at(-1).final);
+    expect(Math.max(...samples.map(sample => sample.width)) - Math.min(...samples.map(sample => sample.width))).toBeLessThanOrEqual(.5);
+    if (reducedMotion === "reduce") expect(samples.every(sample => sample.value === sample.final)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`counter-${width}-${reducedMotion}.png`) });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(await counter.locator(".sr-only").textContent());
+  });
+
+  for (const width of [390, 1440]) for (const theme of ["light", "dark"]) test(`unified motion covers active workspaces and settings ${theme} ${width}px`, async ({ page }, testInfo) => {
+    test.setTimeout(180000);
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    const routes = ["training", "training/month", "training/plan", "journal", "pace", "milestones", "settings", ...["watch", "strava", "appearance", "thresholds", "training", "calendar", "devices", "transfer", "maps", "about"].map(section => `settings/${section}`), "help"];
+    for (const route of routes) {
+      await page.goto(`/desk.html?theme=${theme}#${route}`);
+      await expect(page.locator("#workspace h1")).toBeVisible();
+      await expect(page.locator(".desk-loading")).toHaveCount(0);
+      await expect(page.locator('[data-transition-state="exiting"]')).toHaveCount(0);
+      await page.evaluate(() => { window.__motionQuiet = 0; });
+      await page.waitForFunction(() => {
+        if (document.querySelector('[data-reveal="visible"]') || document.getAnimations().some(animation => animation.playState === "running" || animation.pending)) { window.__motionQuiet = 0; return false; }
+        window.__motionQuiet = (window.__motionQuiet || 0) + 1;
+        return window.__motionQuiet >= 5;
+      }, null, { polling: 100 });
+      const state = await page.evaluate(() => ({
+        overflow: document.documentElement.scrollWidth - innerWidth,
+        uncovered: [...document.querySelectorAll("#workspace h1, #workspace h2, #workspace h3, #workspace h4")].filter(element => element.checkVisibility() && !element.closest('.sr-only, [inert], [hidden], [aria-hidden="true"]') && !element.closest("[data-reveal]")).map(element => element.textContent),
+        active: document.querySelectorAll('[data-reveal="visible"]').length,
+      }));
+      expect(state, route).toEqual({ overflow: 0, uncovered: [], active: 0 });
+      if (route === "settings/calendar") {
+        await page.getByRole("button", { name: "More options", exact: true }).click();
+        await page.getByRole("button", { name: "Connection settings", exact: true }).click();
+        await expect.poll(() => page.locator("#calendar-setup .motion-disclosure-clip").evaluate(element => element.clientHeight >= element.firstElementChild.scrollHeight - 1)).toBe(true);
+        const hosting = page.getByRole("heading", { name: "Calendar hosting", exact: true });
+        await hosting.evaluate(element => element.scrollIntoView({ block: "center", behavior: "instant" }));
+        await expect(hosting).toHaveAttribute("data-reveal", "settled");
+      }
+      if (["training", "journal", "pace", "milestones", "settings", "help"].includes(route)) {
+        expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations, route).toEqual([]);
+        await page.screenshot({ path: testInfo.outputPath(`${route}-${theme}-${width}.png`) });
+      }
+    }
+    expect(errors).toEqual([]);
+  });
+
+  for (const width of [390, 1440]) test(`unified counters wait below the fold and replay on retained visits ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.addInitScript(() => {
+      const style = document.createElement("style");
+      style.textContent = ".race-estimates { margin-top: 1100px !important; }";
+      document.addEventListener("DOMContentLoaded", () => document.head.append(style), { once: true });
+    });
+    await page.goto("/desk.html#pace");
+    const counter = page.locator('.race-estimates .motion-number').first();
+    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveAttribute("data-count-state", "settled");
+    await page.getByRole("link", { name: "Activities", exact: true }).click();
+    await expect(page.locator(".activity-row").first()).toBeVisible();
+    await page.getByRole("link", { name: "Pace insights", exact: true }).click();
+    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveAttribute("data-count-state", "settled");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(await counter.locator(".sr-only").textContent());
+  });
+
   test("Motion activity removals retain their DOM until exit completes", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#journal");
     await expect(page.locator(".activity-row")).toHaveCount(9);
-    await expect(page.locator(".activity-row").last()).toHaveCSS("opacity", "1");
+    await expect(page.locator(".activity-row").first()).toHaveAttribute("data-reveal", "settled");
+    await expect(page.locator(".activity-row").nth(1)).toHaveAttribute("data-reveal", "settled");
     const samples = await page.evaluate(async () => {
       const removed = document.querySelector(".activity-row");
       const moving = removed.nextElementSibling;
@@ -1624,11 +2021,9 @@ test('graded performance proposals preview race estimates and only change them a
   await page.evaluate(()=>{window.__deskFail='';});
   await page.getByRole('button',{name:'Apply changes',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('link',{name:'Overview',exact:true}).click();
-  await page.getByRole('button',{name:'Show health details',exact:true}).click();
-  const estimates=page.getByRole('region',{name:'Training race estimates'});
+  const estimates=page.getByRole('region',{name:'Training race estimates',exact:true});
   await expect(estimates).toBeVisible();
-  expect(await estimates.locator('tbody td').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
+  expect(await estimates.locator('tbody td[data-seconds]').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
 });
 
 for (const width of [320,1440]) {
@@ -2570,7 +2965,7 @@ for (const width of [390, 1440]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
 
-    test(`disclosure health details and conversation drafts stay accessible ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
+    test(`disclosure health details and pain logging stay accessible ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ reducedMotion });
       await page.goto("/desk.html#health");
@@ -2579,7 +2974,7 @@ for (const width of [390, 1440]) {
       await expect(details).toBeHidden();
       await expect(details).toHaveAttribute("inert", "");
       await toggle.click();
-      await expect(page.getByRole("heading", { name: "Risk contributors" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Recovery and training" })).toBeVisible();
       await expect.poll(() => details.evaluate(element => element.getAnimations({ subtree: true }).filter(animation => animation.playState === "running").length)).toBe(0);
       await expect(toggle.locator(".disclosure-indicator")).toHaveCSS("rotate", "180deg");
       await page.screenshot({ path: testInfo.outputPath("health-details-open.png") });
@@ -2595,21 +2990,9 @@ for (const width of [390, 1440]) {
       await page.getByRole("combobox", { name: "Body region", exact: true }).selectOption("knee.left");
       await page.getByRole("button", { name: "Save pain entry" }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      const discuss = page.getByRole("button", { name: "Discuss episode" });
-      await expect(discuss).toBeVisible();
+      await expect(page.locator(".pain-episode")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Discuss episode" })).toHaveCount(0);
       await expect(page.locator(".episode-chat")).toHaveCount(0);
-      await discuss.click();
-      const question = page.getByRole("textbox", { name: "Your question" });
-      await question.fill("Keep this unfinished question");
-      await page.getByRole("checkbox", { name: /I agree to send/ }).check();
-      await discuss.click();
-      await expect(page.getByRole("region", { name: "Episode conversation" })).toHaveCount(0);
-      await page.keyboard.press("Tab");
-      await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeFocused();
-      await discuss.click();
-      await expect(question).toHaveValue("Keep this unfinished question");
-      await expect(page.getByRole("checkbox", { name: /I agree to send/ })).toBeChecked();
-      await expect(page.getByRole("button", { name: "Send question" })).toBeEnabled();
       expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "ask_assistant").length)).toBe(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
@@ -2698,7 +3081,7 @@ test("Activities list hides filters until revealed and opens recorded splits", a
   await expect(page.locator(".activity-row").first()).toBeFocused();
 });
 
-test("pain logging retains failure drafts and episode conversations survive refresh", async ({ page }) => {
+test("pain logging retains failure drafts and supports resolving episodes", async ({ page }) => {
   await page.goto("/desk.html#health/journal");
   await page.getByRole("button", { name: "Log pain", exact: true }).first().click();
   await page.getByRole("combobox", { name: "Body region", exact: true }).selectOption("knee.left");
@@ -2711,13 +3094,7 @@ test("pain logging retains failure drafts and episode conversations survive refr
   await page.getByRole("button", { name: "Save pain entry" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".pain-episode")).toContainText("Left knee");
-  await page.getByRole("button", { name: "Discuss episode" }).click();
-  await page.getByRole("textbox", { name: "Your question" }).fill("Should I take a rest day?");
-  await expect(page.getByRole("button", { name: "Send question" })).toBeDisabled();
-  await page.getByRole("checkbox", { name: /I agree to send/ }).check();
-  await page.getByRole("button", { name: "Send question" }).click();
-  await expect(page.locator(".chat-message.assistant")).toContainText("reducing the session");
-  await expect(page.getByRole("textbox", { name: "Your question" })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Discuss episode" })).toHaveCount(0);
   await page.getByRole("button", { name: "Mark resolved" }).click();
   await expect(page.locator(".pain-episode")).toHaveCount(0);
   await page.getByRole("checkbox", { name: "Include resolved" }).check();
@@ -2743,15 +3120,16 @@ for (const width of [320,390,1440]) for (const theme of ["light","dark"]) {
     await page.setViewportSize({width,height:900});
     await page.goto(`/desk.html?theme=${theme}#settings`);
     const group=page.getByRole("region",{name:"Third-party connections",exact:true});
-    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(group.getByRole("link")).toHaveCount(5);
     await expect(page.locator(".settings-group > h2")).toHaveText(["Third-party connections","General"]);
-    await expect(group.getByRole("link").locator("strong")).toHaveText(["Watch connection","Transfer connections","Device sync","Calendar apps","Strava","Injury assistant"]);
-    for(const route of ["watch","strava","calendar","devices","transfer","assistant"]) await expect(group.locator(`a[href="#settings/${route}"]`)).toBeVisible();
+    await expect(group.getByRole("link").locator("strong")).toHaveText(["Watch connection","Transfer connections","Device sync","Calendar apps","Strava"]);
+    for(const route of ["watch","strava","calendar","devices","transfer"]) await expect(group.locator(`a[href="#settings/${route}"]`)).toBeVisible();
+    await expect(group.locator('a[href="#settings/assistant"]')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect((await new AxeBuilder({page}).include(".settings-directory").analyze()).violations).toEqual([]);
     await page.screenshot({path:test.info().outputPath(`settings-groups-${width}-${theme}.png`),fullPage:true});
     await page.getByRole("searchbox",{name:"Search settings"}).fill("third-party");
-    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(group.getByRole("link")).toHaveCount(5);
     await expect(page.getByRole("region",{name:"General",exact:true})).toHaveCount(0);
     await page.getByRole("searchbox",{name:"Search settings"}).fill("no-such-setting");
     await expect(page.getByText("No matching settings",{exact:true})).toBeVisible();
@@ -2839,8 +3217,7 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   await expect(dialog).not.toContainText("synthetic-calendar-secret");
   await expect(dialog).not.toContainText("synthetic-assistant-secret");
   await expect(dialog).toContainText("COROS account matches this device.");
-  await expect(dialog).toContainText("https://assistant.example.test/v1");
-  await expect(dialog).toContainText("transfer-model");
+  await expect(dialog).not.toContainText("Assistant endpoint");
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_configure"))).toBe(false);
   await page.screenshot({path:test.info().outputPath("transfer-import-review.png"),fullPage:true});
   await dialog.getByRole("checkbox",{name:"I trust this QR source and understand the account could not be fully verified."}).check();
@@ -2854,11 +3231,7 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   expect(syncCalls.at(-2).args).toEqual({config:{enabled:false},token:"synthetic-github-token"});
   expect(syncCalls.at(-1).args).toEqual({config:{enabled:true},token:null});
   expect(calls.find(call => call.command === "strava_configure").args).toEqual({clientId:"12345",clientSecret:"synthetic-strava-secret"});
-  expect(calls.find(call => call.command === "set_llm_api_key").args).toEqual({key:"synthetic-assistant-secret"});
-  const importedSettings=calls.find(call=>call.command==="save_settings").args.settings;
-  expect(importedSettings.llmEnabled).toBe(false);
-  expect(importedSettings.llmEndpoint).toBe("https://assistant.example.test/v1");
-  expect(importedSettings.llmModel).toBe("transfer-model");
+  expect(calls.some(call => call.command === "set_llm_api_key" || call.command === "clear_llm_api_key")).toBe(false);
 });
 
 test("connection transfer camera denial retains image upload fallback", async ({page}) => {
@@ -2963,6 +3336,8 @@ test("connection transfer rejects unsupported and tampered encrypted settings", 
     const good=await sealConnections(valid,phrase);
     const legacy=await openConnections(good,phrase);
     if (legacy.strava !== undefined || legacy.calendar.username !== "runner") throw new Error("Legacy transfer changed");
+    const oldAssistant = await openConnections(await sealConnections({...valid,assistant:{endpoint:'https://example.test',model:'old',apiKey:'secret'}},phrase),phrase);
+    if ('assistant' in oldAssistant || oldAssistant.calendar.username !== 'runner') throw new Error('Legacy assistant data was not discarded');
     payloads.push(good.slice(0,-5)+"AAAAA");
     return Promise.all(payloads.map(async code => {try{await openConnections(code,phrase);return false;}catch{return true;}}));
   });

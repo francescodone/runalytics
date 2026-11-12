@@ -1,3 +1,309 @@
+## Rest Day Reveal, 2026-11-12
+
+Week-view rest-day labels participate in the shared viewport reveal stagger.
+The production build and synthetic-IPC Chromium and WebKit regressions passed
+at 1440x1000 with motion enabled. Physical devices and native WebViews were not
+tested; the Prism width/theme matrix was not rerun for this motion-only change.
+
+## Inline Message Alignment, 2026-11-12
+
+Inline errors, alert paragraphs, context notes and the Health disclaimer share
+the same surface, spacing and typography. Errors retain their danger border,
+live announcement and retry actions; notes use the warning border. User-authored
+notes and transient notifications are unchanged.
+
+Verification: the production build passed. Four synthetic-IPC checks each in
+Chromium and WebKit compared a real benchmark note and failed-save error at
+320x844 and 1440x844 in light and dark themes, including retained form values.
+Mobile light and desktop dark screenshots were inspected. The Prism width/theme
+and short-viewport matrix passed 37 of 38 checks; the previously documented
+320px, 200%-text training roadmap overflow remains. The old Health workflow
+redirects to Pace insights and could not verify the disclaimer. Native devices
+and live providers were not tested.
+
+## Difficulty Change Emphasis, 2026-11-12
+
+Difficulty reviews emphasize changed proposed distances, repetition counts,
+paces and recovery values without bolding the original or unchanged values.
+New prescription steps are emphasized and unchanged steps remain comparable.
+
+Verification: the production build, locale catalog check, and seven synthetic-IPC
+review checks each in Chromium and WebKit passed. Reviews were checked at
+320x740 and 1440x740 in light and dark themes; mobile light and desktop dark
+screenshots were inspected. The Prism viewport matrix passed 37 of 38 checks;
+the previously documented 320px, 200%-text plan roadmap overflow remains.
+Native builds, physical devices and live providers were not verified.
+
+## Difficulty Adjustment Review, 2026-11-12
+
+Manual easier and harder adjustments open a read-only comparison of every
+affected prescription, including easy runs that contribute mileage. Applying
+recalculates the proposal and rejects stale or altered previews; dismissing
+does not change the plan. Existing undo and publishing behavior is retained.
+
+Verification: the production build, locale catalog check, 13 Rust difficulty
+tests, and six synthetic-IPC browser checks each in Chromium and WebKit passed.
+The review was checked at 320x740 and 1440x740 in light and dark themes,
+including Escape and focus restoration. Mobile light and desktop dark screenshots
+were inspected. The broader Prism matrix passed 36 of 38 checks; enlarged text at
+1440px passed on retry, while the previously documented 320px, 200%-text plan
+roadmap overflow remains. Native builds, physical devices and live providers were
+not verified.
+
+## Language Settings, 2026-11-12
+
+Language has its own General settings section, separate from Appearance.
+The existing device-local preference, system default and route-preserving reload
+remain unchanged. Settings search resolves Language to the new section.
+
+Verification: synthetic-IPC Chromium checks covered the section, translated
+search, separation from Appearance, selection and persistence at 320x844 and
+1440x844; screenshots at both sizes were inspected. The 35-check Prism route
+and intermediate viewport matrix passed. Native WebView behavior and physical
+devices were not verified.
+
+## Language Preference, 2026-11-12
+
+Appearance includes a device-local language selector with a system default.
+Changing it reloads the current route so module-level translations and locale
+formatting are initialized consistently. Unsupported system languages use
+English; translations remain bundled and offline.
+
+Verification: the production build and catalog check passed. Synthetic-IPC
+Chromium checks covered selection, persistence, invalid preferences and return
+to the French system default at 320x844 and 1440x844. Screenshots at both
+widths were inspected. The Prism viewport matrix passed 37 of 38 checks; the
+previously documented 320px, 200%-text training roadmap overflow remains.
+The full localization suite also failed on older onboarding and retired Health
+route expectations. Native WebView behavior and physical devices were not verified.
+
+## Injury Risk Removal, 2026-11-12
+
+The computed injury-risk score and contributors are removed from readiness,
+pace-progression decisions, dashboard and activity response types, activity
+snapshots, calendar descriptions, Strava description wording, and both React
+and legacy presentation code. Readiness now combines training and recovery at
+56.25% and 43.75%, preserving their previous relative weights. All eight locale
+catalogs and shared browser fixtures use the risk-free contracts.
+
+Opening an existing database removes the retired snapshot columns while
+preserving activity IDs and frozen load values. Reported-pain records remain
+separate: unresolved pain, poor recovery and excessive load still guard faster
+pacing. No live provider records or published descriptions were modified.
+
+Verification: the production build and eight-catalog locale check passed.
+The schema upgrade/reopen test, 10 metrics tests, load formatting and exact
+run-score serialization regressions, and all 24 pacing tests passed. Five
+Chromium and five WebKit synthetic-IPC workflows passed, including activity
+review and context at 320x900 and 1440x900 in light/dark themes, retained pain
+data, and Strava consent behavior. Narrow light and desktop dark review
+screenshots were inspected.
+
+The broader Rust run passed 246 tests, ignored two, and filtered out the two
+previously documented calendar expectation failures. It still fails
+`completed_run_replaces_plan_and_keeps_original_after_plan_deletion` at its
+event-count assertion (33 instead of 32). That auto-matching test and its
+scheduling path were not changed for this removal. The complete backend suite
+is therefore not green. Native binaries, physical devices and live providers
+were not rebuilt or verified.
+
+## Avenir Wordmark, 2026-11-12
+
+Runalytics branding now follows the shoe icon PoC: system Avenir Next, Avenir,
+then the existing local UI font fallback, weight 750 and zero tracking without
+synthetic bold. Navigation and setup wordmarks use 1.0625rem (17px at the default
+root size); the macOS window title retains its 13px size. Other interface text
+continues to use Outfit. No font files or external font requests were added.
+
+Verification: the production build and 45 synthetic-IPC Chromium checks passed.
+Brand typography and all six accents were checked at 320, 375, 390, 820 and
+1440px in light/dark themes; setup at 320 and 1440px; enlarged mobile branding
+at 375 and 390px. The route matrix covered 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in both themes, plus
+537x740, 913x480 and 667x375. Calendar selection and keyboard setup disclosures
+also passed. Desktop light, mobile dark and narrow setup screenshots were
+inspected. The existing brand test now checks the current left-aligned compact
+header rather than its retired centered layout. macOS title CSS was checked in
+the browser; native binaries and physical devices were not rebuilt or verified.
+
+## Unified Viewport Motion, 2026-11-12
+
+Semantic tokens now own arrival, departure, number interpolation, easing,
+vertical distances and viewport thresholds. Reveals batch newly visible units
+in rendered top-to-bottom order, including nested scrollports and responsive
+reordering. Completed and clipped units do not consume delays. Headings, setup
+steps, disclosures and activity arrivals use the same lifecycle. Counters wait
+for their containing reveal and reserve their final width. Layout-projected
+rows retain exclusive ownership of their transforms.
+
+Verification: the production build, 29 WebKit browser checks, 13 native-navigation
+bridge unit checks and eight-catalog locale validation passed. Chromium passed
+68 of 69 acceptance checks, including packaged assets, motion frames, setup
+traversal in both directions, the light/dark width matrix from 320 to 2560px,
+and intermediate/short viewports. Motion-enabled active workspaces and all
+settings sections were exercised at 390 and 1440px in both themes. Long setup
+previews were checked at 320x640 and 1440x640. Screenshots were captured for the
+primary workspaces and setup previews. The repeatable VS Code tasks are
+`Verify unified viewport motion` and `Verify unified motion WebKit`.
+
+The remaining Chromium failure is the 320px, 200%-text plan roadmap: four rows
+have 258px of content in a 248px width. The same overflow persists after removing
+the new counter wrappers and restoring the previous token/interaction styles
+in the browser. It is not repaired or suppressed by this motion change.
+
+Browser checks use synthetic IPC, including Tauri branches, and do not prove
+physical-device frame rate, live providers or native haptics. Installed native
+binaries were not rebuilt or replaced. The shared web assets retain native
+stable-host handoffs and reduced-motion behavior.
+
+## Milestone Celebrations
+
+Successful syncs compare earned milestones with a locally stored baseline and
+present newly earned milestones in sequence. Each uses its catalog icon, name
+and description, with a success haptic where supported. Reduced motion removes
+the spatial celebration. A saved baseline is reconciled on startup; an initial
+sync already underway before the first baseline is captured can be missed.
+
+Verification: four focused synthetic-IPC browser checks passed, including
+weekend activity, multiple unlocks, failed and repeated syncs, startup
+reconciliation, haptic requests and motion. Screenshots at 320x740 and
+1440x740 were inspected. The production build and locale check passed. The
+Prism route matrix did not return a complete result. Physical haptics, native
+devices and live providers were not verified.
+
+## Milestone Grid And Goals
+
+The 12-week consistency grid reveals its week columns through the shared Prism
+motion system. The catalog no longer includes extreme daily streaks, ultra
+distances, unusually high training volumes or fixed heart-rate targets.
+
+Verification: six focused synthetic-IPC browser checks passed, covering the
+catalog, earned-only filter, stagger and reduced motion at 320, 820 and 1440px.
+The grid was inspected at 320x740 and 1440x900 without horizontal overflow.
+Native devices and live activity providers were not verified.
+
+## Injury Assistant Removal
+
+The injury assistant is no longer available in Settings, Help, or pain episode
+actions. Connection transfer no longer exports or imports assistant credentials;
+older bundles remain readable while their assistant data is discarded. Existing
+stored conversations and credentials are not deleted.
+
+Verification: Settings connection groups passed at 320, 390 and 1440 pixels
+in light and dark themes, with 320-pixel light and 1440-pixel dark screenshots
+inspected. The old Settings link, Help search, connection transfer, 35-check
+Prism viewport matrix, production build, TypeScript and locale checks passed.
+Browser checks use synthetic IPC. Pain-journal workflow verification remains
+blocked because its existing route redirects to Pace insights; native devices
+and live providers were not tested.
+
+## Pace Insights Placement
+
+Pacing evidence appears in Pace insights rather than duplicating the section
+in the training plan. The Speed/Long selector is centered in the pace workspace.
+
+Verification: selector alignment, both selections and the pacing proposal link
+were checked at 320x844 and 1440x844, with screenshots inspected at both widths.
+Existing pacing workflows, the 35-check Prism viewport matrix, production build
+and locale check passed. Browser checks used synthetic IPC; native devices and
+live providers were not verified.
+
+## Race Estimate Comparison
+
+Pace insights compares the latest watch prediction and current plan-threshold
+estimate alongside a separate race-day projection. The watch value can predate
+today. The projection is an estimate, available only for the target distance of
+an active future race with a known baseline and remaining planned training.
+It uses planned peak weekly volume, excludes race-day distance and caps the
+legacy model's assumed improvement; it is not a measured or guaranteed result.
+The proposal comparison retains its current-versus-proposed columns.
+
+Verification: synthetic-IPC comparison and missing-watch tests passed at
+320x844 and 1440x844; screenshots were inspected at both widths. Pace
+navigation light/dark checks at 320, 390, 820 and 1440px, the proposal workflow,
+the 35-check Prism viewport matrix, production build and locale checks passed.
+Native devices and live watch predictions were not verified.
+
+## Setup Preview List
+
+The plan preview uses native week disclosures with aligned weekly totals,
+dated session rows and existing Prism surface, spacing and focus tokens.
+Disclosure icons respect reduced motion; the underlying plan data is unchanged.
+
+Verification: keyboard expansion and collapse were checked at 320x740 and
+1440x740 with reduced motion, and screenshots of the expanded list were
+inspected at both sizes. Existing dark-theme preview checks at 320 and 1440px,
+the 35-check Prism route and viewport matrix, the production build and locale
+catalog check passed. Browser checks used synthetic IPC; native devices and
+live providers were not verified.
+
+## Setup Recent Long Run
+
+Setup accepts an optional recent long-run distance, retains it in the existing
+draft and sends it to preview and plan creation. Generated long runs use it as
+a starting limit, subject to the plan's volume and distance constraints. The
+browser fixture shows illustrative progression and is not the training engine.
+
+Verification: the onboarding suite and Prism route and viewport matrix passed
+with synthetic IPC. Input, validation, draft recovery and preview/create
+requests were checked at 320x740 and 1440x740; screenshots were inspected at
+both sizes. The production build, locale catalog check and plan-engine tests
+passed. Native devices and live providers were not verified.
+
+## Setup Rest Days, 2026-11-12
+
+The setup uses the existing weekday selection rows for a single long-run day
+and a multiple-choice set of recurring free days. Conflicts with the long run,
+quality days, weekly frequency and race or time-trial date are rejected. The
+generator excludes selected days, including its race-week shakeout. These
+constraints apply to generation; they do not prevent later manual rescheduling.
+
+Verification: the 24-check onboarding browser suite and the 35-check Prism
+route/viewport matrix passed with synthetic IPC. Rest-day selection, draft
+recovery and requests to preview and create were checked at 320x740 and
+1440x740; screenshots of both weekday selectors were inspected at those sizes.
+All 31 plan-engine tests, the production build and locale catalog check passed.
+Native devices, live providers and later manual scheduling were not verified.
+
+## Setup Interaction And Layout, 2026-11-11
+
+The setup workspace occupies the full shell and scrolls independently, including
+on short mobile viewports. Step content enters and exits with Prism's shared
+opacity timings; departing content is inert. Reduced motion switches immediately.
+The new question receives focus and the workspace returns to the top. QR and
+device-sync watch actions return to the setup watch step instead of a locked
+settings route. Choices, connection summaries, forms and preview rows use the
+existing type, spacing and interaction tokens.
+
+Verification: all 16 combinations of the four optional connection choices and
+all 22 step screens were exercised with synthetic IPC at 320x740/640 and
+1440x740/640. Every step was traversed forward and backward with motion active
+at 320x740 and 1440x740; reduced motion and keyboard focus were checked, as were
+calendar controls at 320x480 and QR dialog Escape/focus return at 320x640.
+Screenshots of name, QR, Strava, calendar, device sync, quality days and preview
+were captured at 320 and 1440px; name, QR, Strava and quality were inspected.
+The 35 Prism route/viewport light/dark checks and 37 shared connection workflow
+checks passed. These are browser checks with synthetic IPC, not native device,
+live provider, or native performance verification.
+
+## Personalized Setup, 2026-11-11
+
+First-run setup owns navigation until the runner confirms a generated or imported
+plan. It reuses existing watch, QR transfer, Strava, calendar and device-sync
+controls, including their credential and confirmation flows. The plan preview
+uses the local training engine without persisting or publishing; changing the
+mileage progression regenerates it. Setup answers and progress are stored on
+this device without connection secrets. Existing users with a plan retain access.
+
+Verification: eight synthetic-IPC onboarding checks passed at 320, 390, 820 and
+1440px in the light theme, including resume, offline watch deferral, a failed
+preview, imported plans and Strava consent. Two additional preview checks passed
+at 320 and 1440px in dark mode; light and dark screenshots were inspected at
+both widths. The 35-check Prism route and short-viewport light/dark matrix,
+27 navigation and Strava browser checks, 13 native-navigation bridge unit tests,
+30 plan-engine unit tests, production build and catalog parity check passed.
+Native devices and live providers were not verified.
+
 ## Complete Reveal Units, 2026-11-11
 
 Nested entrance targets now reveal their outer visual unit, including borders and

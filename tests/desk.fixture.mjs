@@ -22,7 +22,7 @@ export const deskFixture = `(function () {
   if (connectionParams.has('noAccount')) deskSync.accountLinked=false;
   if (connectionParams.has('syncError')) deskSync.config.lastError='Device channel unavailable';
   let deskKey = true;
-  let deskConnected = true;
+  let deskConnected = !connectionParams.has('noWatch');
   let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,lastMessage:null,lastAttemptAt:null};
   // Stands in for the backend's original_json snapshot: what a session was
   // before a benchmark overwrote it ('created' when the plan had a rest day).
@@ -60,6 +60,13 @@ export const deskFixture = `(function () {
       if(!args.dismiss){session.rating=args.rating;session.submitted=true;}session.pending=false;deskFeedback.revision++;
       return {changed,unchanged:0,reason:changed?'Future quality sessions adjusted. Weekly mileage is unchanged.':'Feedback saved.'};
     }
+    if (cmd === 'preview_plan_difficulty') {
+      if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');
+      if (connectionParams.has('difficultyEmpty')) return {planId:args.planId,revision:args.revision,direction:args.direction,outcome:{changed:0,unchanged:2,reason:'No sessions changed: the plan is already at its safe adjustment limits.'},changes:[]};
+      const step = distanceM => ({label:'Tempo',repeats:4,distanceM,paceLoSKm:300,paceHiSKm:310,recoveryM:200,recoveryPaceLoSKm:360,recoveryPaceHiSKm:380,openEnded:false});
+      return {planId:args.planId,revision:args.revision,direction:args.direction,outcome:{changed:1,unchanged:0,reason:'Future quality sessions adjusted. Weekly mileage is unchanged.'},changes:[{workoutId:'preview-tempo',title:'Tempo',date:'2026-11-20',before:{purpose:'',estimatedMin:30,steps:[step(1000)]},after:{purpose:'',estimatedMin:30,steps:[step(args.direction==='easier'?900:1100)]}}]};
+    }
+    if (cmd === 'approve_plan_difficulty') { if(args.preview.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');deskFeedback.revision++;return args.preview.outcome; }
     if (cmd === 'adjust_plan_difficulty') { if(args.revision!==deskFeedback.revision) throw new Error('The plan changed. Refresh before trying again.');deskFeedback.revision++;return {changed:2,unchanged:0,reason:'Future quality sessions adjusted. Weekly mileage is unchanged.'}; }
     if (cmd === 'undo_plan_difficulty') { deskFeedback.revision++; return null; }
     if (cmd === 'plugin:updater|check') return window.__deskNoUpdate ? null : {rid:73,currentVersion:'0.25.0',version:'0.26.0'};
@@ -93,12 +100,38 @@ export const deskFixture = `(function () {
     if (cmd === 'disconnect_provider') { deskConnected=false; return null; }
     if (cmd === 'connect_provider') { deskConnected=true; return 'connected'; }
     if (cmd === 'check_provider_api') return ['synthetic-list-activities'];
-    if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
+    if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:connectionParams.has('noWatchPredictions') ? null : 1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
+    if (cmd === 'preview_plan') {
+      const request = args.request;
+      const start = new Date(request.startDate + 'T12:00:00Z');
+      const end = new Date(request.targetDate + 'T12:00:00Z');
+      const monday = new Date(start);
+      monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+      const qualityDays = (request.qualityDays ?? []).filter(day => day !== request.longrunDay && !(request.restDays ?? []).includes(day)).slice(0, request.weeklyFrequency >= 5 ? 2 : 1);
+      const preferred = [...new Set([request.longrunDay, ...qualityDays, 1, 2, 3, 4, 5, 6, 7])].filter(day => !(request.restDays ?? []).includes(day)).slice(0, request.weeklyFrequency);
+      const workouts = [];
+      for (const week = new Date(monday); week <= end; week.setUTCDate(week.getUTCDate() + 7)) {
+        for (const day of preferred) {
+          const date = new Date(week);
+          date.setUTCDate(date.getUTCDate() + day - 1);
+          if (date < start || date > end) continue;
+          const dateText = date.toISOString().slice(0, 10);
+          const weekIndex = Math.round((week - monday) / 604800000);
+          const progression = request.kind === 'maintenance' ? 0 : Math.floor(weekIndex / 2) * (request.increase === 'ambitious' ? 1 : request.increase === 'conservative' ? 0.5 : 0.75);
+          const baseKm = request.increase === 'ambitious' ? 9 : 7;
+          const easyDays = preferred.filter(value => value !== request.longrunDay && !qualityDays.includes(value));
+          const sampleKm = day === request.longrunDay ? (request.recentLongRunKm ?? baseKm + 3) + progression : baseKm + progression + (qualityDays.includes(day) ? 1 : -(easyDays.indexOf(day) % 2));
+          workouts.push({id:'preview-' + dateText,date:dateText,title:day === request.longrunDay ? 'Long run' : qualityDays.includes(day) ? 'Intervals' : 'Easy run',distanceM:sampleKm * 1000});
+        }
+      }
+      workouts.sort((first, second) => first.date.localeCompare(second.date));
+      return [{id:'preview-plan',...request}, workouts];
+    }
     if (cmd === 'create_plan') {
       deskCurrent = [{id:'synthetic-plan',...args.request,status:'active',createdAt:new Date().toISOString(),pushedId:null,baselineWeeklyKm:args.request.currentWeeklyKm,qualityOffsetSecKm:0,qualityOffsetFrom:null},[]];
       return deskCurrent;
     }
-    if (cmd === 'run_scores') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, workoutId: workout.id, load: 120 + index * 15, risk: 40 + index, riskDelta: index % 2 ? 1.4 : -0.8 })).concat([{ activityId: 4, workoutId: null, load: 96, risk: 38, riskDelta: -1.2 }]); }
+    if (cmd === 'run_scores') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, workoutId: workout.id, load: 120 + index * 15 })).concat([{ activityId: 4, workoutId: null, load: 96 }]); }
     if (cmd === 'matched_sessions') { const done = await deskMatched(); return done.map((workout, index) => ({ activityId: index + 1, title: workout.title, purpose: 'Build endurance at conversational pace so the body adapts without accumulating fatigue.', notes: 'Made with Runalytics - a virtual personal vibecoded coach \\n\\n' + workout.title + '\\n\\nPlan:\\n  2 km easy\\n\\nWhy: Build endurance at conversational pace.' })); }
     if (cmd === 'calendar_events') {
       const pair = await window.__TAURI_INTERNALS__.invoke('current_plan');
@@ -146,7 +179,7 @@ export const deskFixture = `(function () {
     if (cmd === 'plan_sync_push') return deskSync.config;
     if (cmd === 'plan_sync_pull') return {installed:!!args.force,planName:'Synthetic plan',workouts:33,conflict:new URLSearchParams(location.search).has('syncConflict') && !args.force ? 'Different synthetic plan on this device.' : null};
     if (cmd === 'calendar_publishing') return deskPublishing;
-    if (cmd === 'export_connection_settings') return {version:1,created:Math.floor(Date.now()/1000),calendar:{uploadUrl:deskPublishing.uploadUrl,subscriptionUrl:deskPublishing.subscriptionUrl,username:deskPublishing.username,password:'synthetic-calendar-secret'},githubToken:'synthetic-github-token',strava:{clientId:'12345',clientSecret:'synthetic-strava-secret'},identity:{corosCode:'synthetic-account-channel'},assistant:{endpoint:'https://assistant.example.test/v1',model:'transfer-model',apiKey:'synthetic-assistant-secret'}};
+    if (cmd === 'export_connection_settings') return {version:1,created:Math.floor(Date.now()/1000),calendar:{uploadUrl:deskPublishing.uploadUrl,subscriptionUrl:deskPublishing.subscriptionUrl,username:deskPublishing.username,password:'synthetic-calendar-secret'},githubToken:'synthetic-github-token',strava:{clientId:'12345',clientSecret:'synthetic-strava-secret'},identity:{corosCode:'synthetic-account-channel'}};
     if (cmd === 'save_calendar_publishing') { deskPublishing={...deskPublishing,...args.config,hasPassword:args.password===null ? deskPublishing.hasPassword : args.password!==''}; return deskPublishing; }
     if (cmd === 'ics_path') return '/synthetic/calendar.ics';
     if (cmd === 'publish_calendar') { deskPublishing.lastPublished=new Date().toISOString(); deskPublishing.lastError=connectionParams.has('calendarUploadFails') ? 'Calendar upload failed' : null; return 'https://example.test/training.ics'; }

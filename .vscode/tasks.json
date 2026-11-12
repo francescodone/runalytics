@@ -416,6 +416,70 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
+		},
+		{
+			"label": "Verify unified viewport motion",
+			"type": "shell",
+			"command": "npm run build > /tmp/runalytics-unified-build.log 2>&1 && npm run test:ui -- tests/desk.spec.mjs tests/onboarding.spec.mjs tests/prism.spec.mjs --grep 'unified (viewport choreography|counters|motion covers)|setup viewport reveals|packaged motion preserves|Motion Bezier|Motion reveals complete|Motion desktop exits|Motion activity removals|viewport reveals wait|disclosure filters retain|each wizard step transitions|step transitions animate|reduced motion switches|Prism route matrix|Prism intermediate and short viewport|Prism enlarged text' --workers=2 --reporter=dot --output=/tmp/runalytics-unified-acceptance-final && npm run test:native-chrome && node scripts/check-i18n.mjs && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify unified motion WebKit",
+			"type": "shell",
+			"command": "PLAYWRIGHT_WEBKIT=1 npm run test:ui -- tests/desk.spec.mjs tests/onboarding.spec.mjs --browser=webkit --grep 'unified (viewport choreography|counters|motion covers)|setup viewport reveals|packaged motion preserves|Motion Bezier|Motion reveals complete|Motion desktop exits|Motion activity removals|viewport reveals wait|disclosure filters retain|step transitions animate|reduced motion switches' --workers=2 --reporter=dot --output=/tmp/runalytics-unified-webkit && npm run test:native-chrome && node scripts/check-i18n.mjs && git diff --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify risk-free readiness",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib metrics::tests::readiness_uses_only_training_and_recovery --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Check risk removal backend",
+			"type": "shell",
+			"command": "cargo check --manifest-path src-tauri/Cargo.toml --lib --offline --message-format=short",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify risk removal persistence",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib migrate_removes_risk_columns --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib score_lines_show --offline && cargo test --manifest-path src-tauri/Cargo.toml --lib metrics::tests --offline",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify risk-free workflows",
+			"type": "shell",
+			"command": "npm run test:ui -- tests/desk.spec.mjs --grep 'load-only activity review|strava credentials, privacy opt-in' --workers=2 --reporter=dot --output=/tmp/runalytics-risk-removal-ui",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify risk-free WebKit",
+			"type": "shell",
+			"command": "PLAYWRIGHT_WEBKIT=1 npm run test:ui -- tests/desk.spec.mjs --browser=webkit --grep 'load-only activity review|strava credentials, privacy opt-in' --workers=2 --reporter=dot --output=/tmp/runalytics-risk-removal-webkit",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Verify risk-free backend regressions",
+			"type": "shell",
+			"command": "cargo test --manifest-path src-tauri/Cargo.toml --lib --offline -q -- --skip benchmark_replaces_session_and_eases_adjacent_load --skip quality_sessions_are_named_and_easy_steps_have_no_upper_bound",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
 		}
 	]
 }

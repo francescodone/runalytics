@@ -3,11 +3,22 @@ import { useState } from "react";
 import { IconArrowUpRight } from "@tabler/icons-react";
 import { tauri, displayTitle as storedTitle, fmtPace } from "../lib/ipc";
 import { dateValue, navigate, shortDate, today, useRemote } from "./data";
-import { Button, ErrorNotice, InfoDialog, Loading } from "./ui";
+import { Button, CountUp, ErrorNotice, InfoDialog, Loading } from "./ui";
 import { PlanAdjustments } from "./proposals";
+import { RaceEstimates } from "./race-estimates";
 import { Change, SelectionGroup, SelectionMarker } from "./interaction";
 
 export function PaceInsightsView() {
+  const plan = useRemote(tauri.currentPlan);
+  const watch = useRemote(tauri.planDefaults);
+  return <>
+    <ErrorNotice error={plan.error} retry={plan.retry} />
+    {plan.loading ? <Loading /> : plan.data?.[0] ? <RaceEstimates plan={plan.data[0]} workouts={plan.data[1]} watch={watch.data} /> : !plan.error && <p className="context-note">{t("Create a training plan and link completed runs to see pace insights.")}</p>}
+    <PaceHistory />
+  </>;
+}
+
+function PaceHistory() {
   const remote = useRemote(tauri.paceInsights);
   const [mode, setMode] = useState<"speed" | "long">("speed");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -27,7 +38,7 @@ export function PaceInsightsView() {
   return <section className="pace-insights" aria-label={t("Pace insights")}>
     <SelectionGroup><div className="pace-mode" role="group" aria-label={t("Pace workout type")}>{(["speed", "long"] as const).map(value => <button key={value} type="button" aria-pressed={mode === value} onClick={() => { setMode(value); setSelectedId(null); }}>{mode === value && <SelectionMarker />}{value === "speed" ? t("Speed") : t("Long")}</button>)}</div></SelectionGroup>
     {next && <div className="pace-next"><div><strong>{daysUntil === 0 ? t(mode === "speed" ? "Next speed workout today" : "Next long run today") : t(mode === "speed" ? "nextSpeed" : "nextLong", { count: daysUntil })}</strong><p>{fmtDateDMY(next.date)} / {displayTitle(next.title)}{next.distanceM != null ? ` / ${fmtKm(next.distanceM)}` : ""}</p></div><Button onClick={() => navigate("training", "plan")}><IconArrowUpRight size={18} />{t("View plan")}</Button></div>}
-    <div className="section-heading pace-history-heading"><div><h3>{t("Pace on point")}</h3><p className="muted">{sessions.length ? `${shortDate(sessions[0].date)} - ${shortDate(sessions[sessions.length - 1].date)}` : t("No eligible sessions yet")}</p></div>{current.length > 0 && <span className="pace-summary">{t("{{value0}}/{{value1}} sessions within target", { value0: onTarget, value1: current.length })}</span>}</div>
+    <div className="section-heading pace-history-heading"><div><h3>{t("Pace on point")}</h3><p className="muted">{sessions.length ? `${shortDate(sessions[0].date)} - ${shortDate(sessions[sessions.length - 1].date)}` : t("No eligible sessions yet")}</p></div>{current.length > 0 && <span className="pace-summary"><CountUp format={progress => t("{{value0}}/{{value1}} sessions within target", { value0: number(onTarget * progress), value1: current.length })} /></span>}</div>
     {!remote.data ? <p className="context-note">{t("Create a training plan and link completed runs to see pace insights.")}</p> : !sessions.length ? <p className="context-note">{mode === "speed" ? t("Completed tempo and interval sessions with a synced GPS track and measurable work reps will appear here.") : t("Completed long runs with explicitly pace-targeted work segments will appear here. Conversational runs are not graded.")}</p> : <>
       <figure className="pace-insights-figure">
         <div className="pace-chart-frame"><svg viewBox="0 0 600 280" role="img" aria-label={t("{{value0}} pace insights for {{value1}} sessions. Higher means faster relative to each rep's target. Select a dated session below for its values.", { value0: mode === "speed" ? t("Speed") : t("Long run"), value1: sessions.length })}>

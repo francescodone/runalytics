@@ -4,6 +4,32 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
+  test(`inline messages share a surface ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/desk.html?theme=${theme}#training/week`);
+    await page.getByRole("button", { name: "Schedule race or test", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Schedule race or test", exact: true });
+    const note = dialog.locator(".context-note").first();
+    await expect(note).toBeVisible();
+    await page.evaluate(() => { window.__deskFail = "schedule_benchmark"; });
+    await dialog.getByRole("button", { name: "Schedule benchmark", exact: true }).click();
+    const error = dialog.getByRole("alert");
+    await expect(error).toContainText("Unable to save right now");
+    const styles = locator => locator.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { padding: style.padding, radius: style.borderRadius, background: style.backgroundColor, fontSize: style.fontSize, lineHeight: style.lineHeight, border: style.borderColor, fits: element.scrollWidth <= element.clientWidth };
+    });
+    const noteStyle = await styles(note);
+    const errorStyle = await styles(error);
+    expect({ ...errorStyle, border: noteStyle.border }).toEqual(noteStyle);
+    expect(errorStyle.border).not.toBe(noteStyle.border);
+    expect(errorStyle.fits).toBe(true);
+    await expect(dialog.getByLabel("Distance (km)")).toHaveValue("5");
+    await dialog.screenshot({ path: testInfo.outputPath("inline-messages.png") });
+  });
+}
+
 test("mobile touch clicks give one light haptic for buttons and cards", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
   const page = await context.newPage();
@@ -1545,7 +1571,7 @@ for (const theme of ["light", "dark"]) {
       await expect(page.locator("#health-details")).toBeHidden();
       await assertLayout(page, `health ${theme} ${width}`);
       const disclaimer = page.locator(".health-disclaimer");
-      await expect(disclaimer).toHaveCSS("border-left-width", "0px");
+      await expect(disclaimer).toHaveCSS("border-left-width", "1px");
       await expect(disclaimer).toHaveCSS("border-radius", "8px");
       await expect(disclaimer).toHaveCSS("font-size", "14px");
       await expect(disclaimer.locator("svg")).toHaveAttribute("aria-hidden", "true");
@@ -1840,25 +1866,30 @@ test("Prism mobile opaque topbar stays within the shell while scrolling", async 
 });
 
 for (const width of [320, 375, 390, 820, 1440]) {
-  test(`Prism brand stays centered and follows every accent at ${width}px`, async ({ page }, testInfo) => {
+  test(`Prism brand stays aligned and follows every accent at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/desk.html#training");
     const brand = page.getByRole("link", { name: "Runalytics training" });
     const icon = brand.locator(".desk-brand-icon");
     await expect(icon).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-family", '"Avenir Next", Avenir, Outfit, "Avenir Next", sans-serif');
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-size", "17px");
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-weight", "750");
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-synthesis", "none");
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("letter-spacing", /^(normal|0px)$/);
     const geometry = await brand.evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const mark = element.querySelector(".desk-brand-icon").getBoundingClientRect();
       const name = element.querySelector(".desk-brand-name");
       const text = name.getBoundingClientRect();
       const textVisible = getComputedStyle(name).display !== "none";
-      return { width: mark.width, height: mark.height, textVisible, centerOffset: (mark.left + (textVisible ? text.right : mark.right)) / 2 - (bounds.left + bounds.width / 2), verticalOffset: textVisible ? (mark.top + mark.height / 2) - (text.top + text.height / 2) : 0 };
+      return { width: mark.width, height: mark.height, textVisible, leftOffset: mark.left - bounds.left, centerOffset: (mark.left + (textVisible ? text.right : mark.right)) / 2 - (bounds.left + bounds.width / 2), verticalOffset: textVisible ? (mark.top + mark.height / 2) - (text.top + text.height / 2) : 0 };
     });
     expect(geometry.width).toBe(width > 800 ? 44 : 36);
     expect(geometry.height).toBe(geometry.width);
     expect(geometry.textVisible).toBe(width === 375 || width === 390 || width === 1440);
-    expect(Math.abs(geometry.centerOffset)).toBeLessThan(1);
+    expect(Math.abs(width <= 800 ? geometry.leftOffset : geometry.centerOffset)).toBeLessThan(1);
     expect(Math.abs(geometry.verticalOffset)).toBeLessThan(1);
     await assertLayout(page, `brand ${width}`);
     for (const theme of ["light", "dark"]) {
@@ -1945,7 +1976,7 @@ for (const [first, current, label] of [[60, 70, "improving"], [80, 70, "declinin
     await expect(page.locator(".trend-chart:visible")).toHaveCount(1);
     await expect(page.locator("#health-details")).toBeHidden();
     await page.getByRole("button", { name: "Show health details" }).click();
-    await expect(page.getByRole("heading", { name: "Risk contributors" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recovery and training" })).toBeVisible();
     await page.getByRole("button", { name: "Hide health details" }).click();
     await expect(page.locator("#health-details")).toBeHidden();
   });
@@ -1959,14 +1990,49 @@ for (const width of [320, 820, 1440]) {
     const layout = await page.locator(".milestones").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const grid = element.querySelector(".consistency-grid").getBoundingClientRect();
-      const cell = element.querySelector(".consistency-grid > div").getBoundingClientRect();
+      const cell = element.querySelector(".consistency-week > div").getBoundingClientRect();
       return { center: bounds.x + bounds.width / 2, gridCenter: grid.x + grid.width / 2, cellWidth: cell.width, cellHeight: cell.height, overflow: element.scrollWidth - element.clientWidth };
     });
     expect(Math.abs(layout.center - layout.gridCenter)).toBeLessThan(1);
     expect(Math.abs(layout.cellWidth - layout.cellHeight)).toBeLessThan(1);
     expect(layout.overflow).toBeLessThanOrEqual(1);
+    await expect(page.locator(".consistency-week")).toHaveCount(12);
+    await expect(page.locator(".consistency-week > div")).toHaveCount(84);
+    const total = await page.locator(".milestone-list article").count();
+    const earned = await page.locator(".milestone-list article.earned").count();
+    const heading = page.locator(".milestones .section-heading h3");
+    await expect(heading).toHaveText(`${earned} / ${total} milestones reached`);
     await page.getByRole("checkbox", { name: "Earned only" }).check();
     await expect(page.locator(".milestone-list article:not(.earned)")).toHaveCount(0);
+    await expect(heading).toHaveText(`${earned} / ${total} milestones reached`);
+  });
+}
+
+test("milestone catalog excludes extreme goals", async ({ page }) => {
+  await page.goto("/desk.html#milestones");
+  const achievements = await page.evaluate(async () => {
+    const { gamificationStats } = await import("/src/lib/flow.ts");
+    return gamificationStats([], null, false).achievements.map(({ id }) => id);
+  });
+  for (const id of ["km-384400", "streak-3650", "sessions-10000", "hours-8760", "long-50", "week-100", "month-400", "pace-240", "form-90", "redline", "triple-day"]) expect(achievements).not.toContain(id);
+  for (const id of ["first-run", "km-1000", "streak-30", "long-42.2", "week-50", "pace-300"]) expect(achievements).toContain(id);
+});
+
+for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`milestone consistency grid motion ${reducedMotion}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/desk.html#milestones");
+    const weeks = page.locator(".consistency-week");
+    await expect(weeks).toHaveCount(12);
+    await weeks.first().scrollIntoViewIfNeeded();
+    await expect.poll(() => weeks.evaluateAll(elements => elements.every(element => element.dataset.reveal === "settled"))).toBe(true);
+    const delays = await weeks.evaluateAll(elements => elements.map(element => element.style.getPropertyValue("--reveal-delay")));
+    if (reducedMotion === "reduce") expect(delays.every(delay => !delay)).toBe(true);
+    else {
+      expect(delays.every(Boolean)).toBe(true);
+      for (let index = 1; index < delays.length; index++) expect(parseFloat(delays[index])).toBeGreaterThan(parseFloat(delays[index - 1]));
+    }
   });
 }
 

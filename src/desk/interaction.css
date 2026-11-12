@@ -130,9 +130,9 @@ progress { accent-color: var(--desk-action); }
 .motion-disclosure[data-state="open"] { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows var(--motion-change) var(--motion-settle), visibility 0s; }
 .motion-disclosure-clip { min-width: 0; min-height: 0; overflow: clip; }
 .motion-disclosure-content { display: flow-root; min-width: 0; }
-.motion-disclosure-content > * { opacity: 0; transition: opacity var(--motion-exit) var(--motion-leave) var(--disclosure-delay, 0s); }
-.motion-disclosure[data-state="open"] > .motion-disclosure-clip > .motion-disclosure-content > * { opacity: 1; transition: opacity var(--motion-change) var(--motion-settle) var(--disclosure-delay, 0ms); }
-.motion-disclosure[data-state="open"] > .motion-disclosure-clip > .motion-disclosure-content > :focus-within { opacity: 1; transition: none; }
+.motion-number { display: inline-grid; vertical-align: baseline; font-variant-numeric: tabular-nums; }
+.motion-number > [aria-hidden="true"] { grid-area: 1 / 1; }
+.motion-number > [data-count-reserve] { visibility: hidden; pointer-events: none; }
 .disclosure-indicator { flex: none; rotate: 0deg; transition: rotate var(--motion-change) var(--motion-settle); }
 [aria-expanded="true"] .disclosure-indicator { rotate: 180deg; }
 [data-reveal="waiting"] { opacity: 0; }

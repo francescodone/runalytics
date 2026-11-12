@@ -413,7 +413,8 @@ pub fn generate_with_evidence(
     let start_date = req.start_date.unwrap_or(today);
     if !req.threshold_sec_km.is_finite() || !(120.0..=1200.0).contains(&req.threshold_sec_km)
         || !baseline_km.is_finite() || baseline_km < 0.0
-        || req.current_weekly_km.is_some_and(|km| !km.is_finite() || !(0.0..=300.0).contains(&km)) {
+        || req.current_weekly_km.is_some_and(|km| !km.is_finite() || !(0.0..=300.0).contains(&km))
+        || req.recent_long_run_km.is_some_and(|km| !km.is_finite() || !(3.0..=100.0).contains(&km)) {
         return Err(AppError::Other("invalid threshold pace or weekly mileage".into()));
     }
     let threshold_state = super::threshold::athlete_state(evidence, today, req.threshold_sec_km);
@@ -449,6 +450,17 @@ pub fn generate_with_evidence(
     if !(1..=7).contains(&req.longrun_day) {
         return Err(AppError::Other("long-run day must be 1..=7".into()));
     }
+    let mut rest_days = req.rest_days.clone();
+    rest_days.sort_unstable();
+    rest_days.dedup();
+    if rest_days.iter().any(|&day| !(1..=7).contains(&day))
+        || rest_days.contains(&req.longrun_day)
+        || rest_days.iter().any(|day| req.quality_days.contains(day))
+        || 7 - rest_days.len() < req.weekly_frequency as usize
+        || (req.kind != PlanKind::Maintenance && rest_days.contains(&iso_weekday(req.target_date)))
+    {
+        return Err(AppError::Other("rest days conflict with the schedule, frequency or race date".into()));
+    }
     if req.quality_days.iter().any(|&day| {
         if !(1..=7).contains(&day) { return true; }
         let distance = (day as i64 - req.longrun_day as i64).abs();
@@ -475,7 +487,7 @@ pub fn generate_with_evidence(
     let baseline = requested.clamp(10.0, peak);
 
     let taper_weeks = method_taper_weeks(req.kind, req.distance, weeks, req.training_method);
-    let min_run_km = if req.training_method == TrainingMethod::RunnaLike { 3.0 } else { MIN_RUN_KM };
+    let min_run_km = if req.training_method == TrainingMethod::RunnaLike { 3.0 } else { MIN_RUN_KM }.min(req.recent_long_run_km.unwrap_or(MIN_RUN_KM));
     // The geometric ramp only multiplies on *build* weeks — down, taper and
     // race weeks hold or cut volume without applying the ratio. Sizing the
     // ratio over every week undershot the peak: a 16-week marathon plan
@@ -538,7 +550,7 @@ pub fn generate_with_evidence(
     let first_monday = week_start(add_days(req.target_date, -7 * weeks as i64 + 1));
     let mut workouts = Vec::new();
     let mut week_volume = baseline;
-    let mut long_build_km = (baseline * long_run_share(req.distance)).min(peak_long_run_km(req.distance));
+    let mut long_build_km = req.recent_long_run_km.unwrap_or(baseline * long_run_share(req.distance)).min(peak_long_run_km(req.distance));
 
     for w in 0..weeks {
         let monday = add_days(first_monday, 7 * w as i64);
@@ -595,9 +607,16 @@ pub fn generate_with_evidence(
             ceil_km((target * 0.35).min(long_cap * 0.6)).max(min_run_km)
         } else {
             let desired = (target * long_run_share(req.distance)).min(long_cap);
-            ceil_km(if req.training_method == TrainingMethod::RunnaLike { desired.min(long_build_km) } else { desired }).max(min_run_km)
+            if req.recent_long_run_km.is_some() {
+                ceil_km(desired).max(min_run_km).min(long_build_km)
+            } else {
+                ceil_km(if req.training_method == TrainingMethod::RunnaLike { desired.min(long_build_km) } else { desired }).max(min_run_km)
+            }
         };
-        if req.training_method == TrainingMethod::RunnaLike && !down && !tapering && !is_race_week {
+        if req.recent_long_run_km.is_some() {
+            long_km = long_km.min(long_build_km);
+        }
+        if (req.training_method == TrainingMethod::RunnaLike || req.recent_long_run_km.is_some()) && (ramping || req.recent_long_run_km.is_none()) && (req.recent_long_run_km.is_none() || add_days(monday, lr_off as i64) >= start_date) && !down && !tapering && !is_race_week {
             long_build_km = (long_build_km * 1.10).min(long_build_km + 2.0).min(long_cap);
         }
         let long_pattern = super::session::long_pattern_for_plan(&plan, w, weeks);
@@ -616,6 +635,7 @@ pub fn generate_with_evidence(
             gap.min(7 - gap)
         };
         let mut used = [false; 7];
+        for &day in &rest_days { used[day as usize - 1] = true; }
         used[lr_off] = true;
         let mut slots: Vec<usize> = Vec::new();
         for i in 0..req.weekly_frequency as usize - 1 {
@@ -702,11 +722,7 @@ pub fn generate_with_evidence(
             .filter(|&off| quality_open(off))
             .filter(|_| {
                 plan.threshold_state.as_ref().unwrap().allow_second_quality
-                    && (req.weekly_frequency >= 5
-                        || (req.training_method == TrainingMethod::RunnaLike
-                            && req.increase == IncreaseMethod::Ambitious
-                            && req.kind != PlanKind::Maintenance
-                            && req.weekly_frequency == 4))
+                    && req.weekly_frequency >= 5
                     && matches!(phase, Phase::Build | Phase::Peak)
                     && !tapering
                     && !(long_km > 0.0 && long_pattern.is_hard())
@@ -730,7 +746,7 @@ pub fn generate_with_evidence(
                     .max_by_key(|&off| gap(off));
                 pick.or_else(|| {
                     let free = (0..7)
-                        .filter(|&off| !slots.contains(&off) && spaced(off) && before_race(off))
+                        .filter(|&off| !rest_days.contains(&(off as u32 + 1)) && !slots.contains(&off) && spaced(off) && before_race(off))
                         .max_by_key(|&off| gap(off))?;
                     // Give up the easy slot nearest the long run for it.
                     let moved = slots
@@ -789,7 +805,7 @@ pub fn generate_with_evidence(
                 quality_km += extra;
                 rest -= extra;
             }
-            if long_km > 0.0 {
+            if long_km > 0.0 && req.recent_long_run_km.is_none() {
                 long_km += rest;
             }
             rest = 0.0;
@@ -902,7 +918,7 @@ pub fn generate_with_evidence(
                 );
             }
             Some(_) => {}
-            None => {
+            None if !rest_days.contains(&iso_weekday(shake)) => {
                 let pace = easy_pace_s_km(req.threshold_sec_km);
                 workouts.push(PlanWorkout {
                     id: Uuid::new_v4().to_string(),
@@ -921,6 +937,7 @@ pub fn generate_with_evidence(
                     customization: None,
                 });
             }
+            None => {}
         }
         let race_pace = race_pace_s_km(req.threshold_sec_km, req.distance.distance_m());
         workouts.push(PlanWorkout {
@@ -990,6 +1007,8 @@ mod tests {
             weekly_frequency: 4,
             longrun_day: 6,
             quality_days: vec![],
+            rest_days: vec![],
+            recent_long_run_km: None,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
             name: None,
@@ -1025,6 +1044,29 @@ mod tests {
         assert!(generate(&invalid, 30.0).is_err());
         let too_short = PlanRequest { target_date: start_date + chrono::Duration::days(7), ..request };
         assert!(generate(&too_short, 30.0).is_err());
+    }
+
+    #[test]
+    fn rest_days_are_never_scheduled_and_conflicts_are_rejected() {
+        let mut request = req_from_now(RaceDistance::K21, 16);
+        request.longrun_day = 7;
+        request.weekly_frequency = 4;
+        request.quality_days = vec![2, 4];
+        request.rest_days = vec![1, 5];
+        if request.rest_days.contains(&iso_weekday(request.target_date)) {
+            request.target_date += chrono::Duration::days(1);
+        }
+        let (_, workouts) = generate(&request, 40.0).unwrap();
+        assert!(!workouts.is_empty());
+        assert!(workouts.iter().all(|workout| !request.rest_days.contains(&iso_weekday(workout.date))));
+        request.rest_days = vec![7];
+        assert!(generate(&request, 40.0).is_err());
+        request.rest_days = vec![2];
+        assert!(generate(&request, 40.0).is_err());
+        request.rest_days = vec![1, 3, 5, 6];
+        assert!(generate(&request, 40.0).is_err());
+        request.rest_days = vec![iso_weekday(request.target_date)];
+        assert!(generate(&request, 40.0).is_err());
     }
 
     #[test]
@@ -1461,9 +1503,34 @@ mod tests {
             weekly_frequency: 4,
             longrun_day: 6,
             quality_days: vec![],
+            rest_days: vec![],
+            recent_long_run_km: None,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: None,
             name: None,
+        }
+    }
+
+    #[test]
+    fn recent_long_run_caps_and_seeds_both_methods() {
+        let today = Utc::now().date_naive();
+        let start = week_start(today + chrono::Duration::days(14));
+        for method in [TrainingMethod::Norwegian, TrainingMethod::RunnaLike] {
+            let mut request = req_from_now(RaceDistance::K42, 14);
+            request.start_date = Some(start);
+            request.target_date = start + chrono::Duration::days(12 * 7 - 1);
+            request.training_method = method;
+            request.current_weekly_km = Some(40.0);
+            request.recent_long_run_km = Some(8.0);
+            let (_, workouts) = generate(&request, 40.0).unwrap();
+            let runs: Vec<f64> = workouts.iter().filter(|workout| workout.kind == WorkoutKind::LongRun).map(|workout| workout.distance_m.unwrap() / 1000.0).collect();
+            assert_eq!(runs[0], 8.0, "{method:?}");
+            assert!(runs[2] > 8.0, "{method:?}: {runs:?}");
+            request.recent_long_run_km = Some(3.0);
+            let (_, short) = generate(&request, 40.0).unwrap();
+            assert_eq!(short.iter().find(|workout| workout.kind == WorkoutKind::LongRun).unwrap().distance_m, Some(3000.0));
+            request.recent_long_run_km = Some(2.0);
+            assert!(generate(&request, 40.0).is_err());
         }
     }
 
@@ -1839,13 +1906,13 @@ mod tests {
     }
 
     #[test]
-    fn runna_like_four_day_ambitious_plan_uses_two_quality_days_when_supported() {
+    fn runna_like_five_day_ambitious_plan_uses_two_quality_days_when_supported() {
         let evidence = runna_like_capacity_evidence();
         for longrun_day in 1..=7 {
             let request = PlanRequest {
                 training_method: TrainingMethod::RunnaLike,
                 threshold_sec_km: 226.0,
-                weekly_frequency: 4,
+                weekly_frequency: 5,
                 longrun_day,
                 increase: IncreaseMethod::Ambitious,
                 current_weekly_km: Some(40.0),
@@ -1858,7 +1925,7 @@ mod tests {
                 let quality: Vec<_> = week.iter().filter(|workout| is_quality(workout)).collect();
                 if quality.len() != 2 { continue; }
                 two_quality_weeks += 1;
-                assert_eq!(week.len(), 4);
+                assert_eq!(week.len(), 5);
                 assert_ne!(quality[0].kind, quality[1].kind);
                 assert!(!week_is_down(&plan, monday));
                 let week_index = ((monday - first_monday_of(&plan)).num_days() / 7) as usize;
@@ -1899,6 +1966,32 @@ mod tests {
                 }
             }
             assert!(two_quality_weeks > 0, "long-run day {longrun_day}: no supported two-quality weeks");
+        }
+    }
+
+    #[test]
+    fn four_day_plans_prefer_easy_runs_over_a_second_quality_session() {
+        let evidence = runna_like_capacity_evidence();
+        for longrun_day in 1..=7 {
+            let request = PlanRequest {
+                training_method: TrainingMethod::RunnaLike,
+                threshold_sec_km: 226.0,
+                weekly_frequency: 4,
+                longrun_day,
+                increase: IncreaseMethod::Ambitious,
+                current_weekly_km: Some(40.0),
+                ..req_from_now(RaceDistance::K21, 16)
+            };
+            let (_, workouts) = generate_with_evidence(&request, 40.0, &evidence).unwrap();
+            let mut full_training_weeks = 0;
+            for (_, week) in by_week(&workouts) {
+                assert!(week.iter().filter(|workout| is_quality(workout)).count() <= 1);
+                if week.len() == 4 && week.iter().any(|workout| workout.kind == WorkoutKind::LongRun) {
+                    full_training_weeks += 1;
+                    assert!(week.iter().filter(|workout| workout.kind == WorkoutKind::Easy).count() >= 2);
+                }
+            }
+            assert!(full_training_weeks > 0, "long-run day {longrun_day}: no full training weeks");
         }
     }
 

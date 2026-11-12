@@ -56,8 +56,7 @@ pub struct TrackPoint {
 }
 
 /// Everything the activity detail sheet shows: the GPS track, the raw
-/// session data, the recovery signals recorded for that day, and the
-/// injury-risk heuristics evaluated *as of* that day.
+/// session data, and the recovery signals recorded for that day.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDetail {
@@ -66,9 +65,6 @@ pub struct ActivityDetail {
     pub health: Option<HealthDaily>,
     pub load: Option<TrainingLoad>,
     pub fitness: Option<FitnessAssessment>,
-    pub risk_factors: Vec<RiskFactor>,
-    /// 0..=100 headline risk for that day (same formula as the dashboard).
-    pub injury_risk: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -300,11 +296,15 @@ pub struct PlanRequest {
     pub longrun_day: u32,
     #[serde(default)]
     pub quality_days: Vec<u32>,
+    #[serde(default)]
+    pub rest_days: Vec<u32>,
     pub increase: IncreaseMethod,
     /// Runner's current weekly mileage (km). When absent the backend
     /// derives it from the last weeks of synced activities.
     #[serde(default)]
     pub current_weekly_km: Option<f64>,
+    #[serde(default)]
+    pub recent_long_run_km: Option<f64>,
     /// What the runner calls this plan. A local label only: the COROS
     /// library slot keeps its fixed name, and this name rides in the plan's
     /// description there. Absent means Runalytics describes the plan itself.
@@ -691,8 +691,6 @@ pub fn workout_status_from(name: &str) -> WorkoutStatus {
 pub struct DashboardScores {
     /// 0..=100 training-structure score (load balance + consistency).
     pub training_score: u32,
-    /// 0..=100 injury-risk score (higher = riskier).
-    pub injury_risk: u32,
     /// 0..=100 recovery score.
     pub recovery_score: u32,
     /// 0..=100 weighted global score.
@@ -710,8 +708,6 @@ pub struct ScorePoint {
     pub readiness: u32,
     pub training: u32,
     pub recovery: u32,
-    /// 0..=100 injury risk (higher = riskier), same polarity as the headline.
-    pub risk: u32,
 }
 
 /// Where the runner's recovery score currently sits. The four bands and their
@@ -764,8 +760,7 @@ pub struct Thresholds {
     pub ratio_resuming_hi: f64,
     /// Top of the Maintaining band; above it, Optimized.
     pub ratio_maintaining_hi: f64,
-    /// Top of the Optimized band; above it, Excessive. Also the point where
-    /// injury risk starts to climb and the adaptive engine softens hard days.
+    /// Top of the Optimized band; above it, Excessive.
     pub ratio_optimized_hi: f64,
     /// Recovery at or below this is Exhausted (rest recommended).
     pub recovery_exhausted: u32,
@@ -890,17 +885,6 @@ pub struct MileageStats {
     pub weeks_observed: i64,
     /// When the watch last synced, so the UI can date-stamp the number.
     pub last_sync: Option<DateTime<Utc>>,
-}
-
-/// One heuristic contributing to the injury-risk percentage.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RiskFactor {
-    pub label: String,
-    pub detail: String,
-    /// 0..=1 severity of this factor on its own scale — 0 means the signal is
-    /// quiet, 1 means it alone is maxed out. Not a share of the total.
-    pub contribution: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]

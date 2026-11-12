@@ -74,7 +74,7 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
 
     @objc public func attach(_ invoke: Invoke) throws {
         let next = try invoke.parseArgs(Snapshot.self)
-        let ids = ["training", "journal", "health"]
+        let ids = ["training", "journal", "pace", "milestones"]
         guard next.protocolVersion == 1, !next.session.isEmpty, next.revision >= 0,
               next.tabs.map(\.id) == ids, next.tabs.allSatisfy({ !$0.title.isEmpty }),
               next.selected == nil || ids.contains(next.selected!),
@@ -119,7 +119,7 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
                 view.tabBar.scrollEdgeAppearance = appearance
             }
             view.tabBar.delegate = self
-            let symbols = ["calendar", "figure.run", "heart"]
+            let symbols = ["calendar", "figure.run", "chart.line.uptrend.xyaxis", "trophy"]
             view.tabBar.items = next.tabs.enumerated().map { index, tab in
                 let item = UITabBarItem(title: nil, image: UIImage(systemName: symbols[index]), tag: index)
                 item.accessibilityLabel = tab.title

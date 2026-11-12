@@ -11,6 +11,25 @@ Do not add route-specific physics or duplicate these presets. Content, surfaces,
 selection travel and layout projection use `cubic-bezier(.22, 1, .36, 1)`.
 Press and direct-manipulation feedback remain immediate and interruptible.
 
+The Apple-style response is restrained and non-overshooting: one continuous
+Bezier landing, short vertical travel, immediate input, and no animated blur.
+The following semantic tokens are the source of truth. Existing role tokens
+such as `--motion-landing`, `--motion-surface`, `--motion-count`, and
+`--motion-review` are aliases, not independent timings.
+
+| Token | Value | Purpose |
+| --- | --- | --- |
+| `--motion-duration-arrive` | 560ms | Content and surface arrivals |
+| `--motion-duration-depart` | 500ms | Content and surface departures |
+| `--motion-duration-number` | 650ms | Numeric interpolation |
+| `--motion-stagger` | 60ms | Adjacent newly visible units |
+| `--motion-ease-standard` | `cubic-bezier(.22, 1, .36, 1)` | Shared non-overshooting response |
+| `--motion-distance-enter` | 14px | Content entrance travel |
+| `--motion-distance-exit` | -14px | Content departure travel |
+| `--motion-distance-surface` | 16px | Modal preset travel |
+| `--motion-viewport-inset` | 24px | Bottom viewport reveal inset |
+| `--motion-viewport-threshold` | .08 | Minimum visible fraction, bounded by the scrollport |
+
 | Export | Purpose |
 | --- | --- |
 | `springTransition` | Compatibility export for the shared 560ms Bezier tween |
@@ -21,28 +40,37 @@ Press and direct-manipulation feedback remain immediate and interruptible.
 | `pageTransition` | Vertical leaf-level view targets |
 | `modalTransition` | Shared dialog surface targets |
 | `activityTransition` | Full-size 560ms activity-panel arrival and 500ms exit |
-| `entranceFor` | Vertical entrance with exact 60ms DOM-ordered staggering |
+| `entranceFor` | Vertical entrance with exact 60ms visible-batch staggering |
+| `motionVisible`, `motionOrder` | Clipped viewport eligibility and top-to-bottom visual order |
 
 ## Lifecycle
 
 `MotionSystem` provides Motion configuration, one reveal observer and shared
 interaction listeners. Startup reveals use Motion's native mini API with a
 560ms Bezier landing response. Visible leaves begin 14px below their final
-position at full size. Each visible sibling advances the cascade by 60ms in
-DOM order, without jitter or a cap that makes later siblings start together.
-Startup uses one document-wide sequence, so nested view groups cannot restart
-ahead of navigation or the workspace heading. Later arrivals are scoped to their view.
-Offscreen leaves do not consume visible stagger slots. Late arrivals subtract
-elapsed startup time instead of restarting the sequence. Route changes end startup mode.
+position at full size. Each newly visible sibling advances the cascade by 60ms.
+One animation-frame batch collects eligible units across observer callbacks and
+sorts them by rendered top edge, then left edge, with DOM order as a tie-breaker.
+This also handles responsive grids whose visual order differs from their DOM.
+Offscreen, clipped, hidden, inert, settled and already running units do not consume
+new stagger slots. Later scroll entries and asynchronously mounted content start
+a fresh batch at zero; they do not inherit delays from previously revealed content.
+Eligibility intersects the viewport with every clipping or scrolling ancestor.
+Tall content uses the scrollport-sized visibility threshold rather than waiting
+for an impossible percentage of the entire element. Route changes end startup mode.
 There is no animated blur on large surfaces or repeated rows.
 
 Reveals register before paint and wait for viewport entry. Ordinary rerenders
 do not replay them. Each view change gets the same fresh, scoped landing.
-Observer callback entries are sorted by DOM order, independently of delivery order.
+Headings, metric groups, setup controls, lists, tables, forms and opened disclosures
+use the shared registration path. Native details register their contents on opening.
 Nested reveal targets animate as one outer visual unit, including its borders
 and controls, instead of revealing only their innermost content. Elements
 containing dialogs, inspectors or notification viewports are not transformed.
-Pointer-down and keyboard focus settle an entrance immediately. Preference
+Pointer-down and keyboard focus on controls settle an entrance immediately.
+Programmatic heading focus preserves the heading's reveal. Workspace headings
+replay when their persistent host changes route; navigation chrome does not.
+Preference
 changes cancel native playback and restore the original inline styles.
 Observers, listeners and detached-element animations are cleaned up on removal.
 
@@ -74,7 +102,10 @@ exits use the shared departure timing.
 
 Activity rows own Motion layout projection and presence. Their entrances are
 560ms staggered opacity changes rather than a second transform animation.
-Layout shifts and row removals follow the same DOM-order cadence. Activity
+Offscreen rows remain waiting rather than playing index-based entrances before
+they can be seen. Reveal cleanup restores only properties it owns, leaving
+layout transforms to Motion. Layout shifts remain interruptible, and row
+removals retain their opacity departure without an index-based delay. Activity
 reviews stay at full size with 14px vertical travel. Modal calendar inspectors
 instead capture their initiating tile's viewport bounds and use one 560ms native
 transform animation to expand into their final surface. Measurement and playback
@@ -84,16 +115,24 @@ size. Native overlay surfaces use the opaque material fallback instead of moving
 a backdrop-filtered layer; the stationary scrim retains blur. Dialogs enter the
 top layer and establish focus and scroll locks before paint.
 Removed rows remain mounted until
-their opacity exit completes. Disclosure children receive individual 60ms delays;
-collapse waits for the final child's fade. `SelectionGroup` scopes shared selection indicators
+their opacity exit completes. Disclosure contents use the viewport scheduler;
+collapse waits for the visible children's exit cascade. Setup steps retain their
+outgoing inert leaves through the same cascade, while the incoming question is
+available immediately. Their wrappers stay opaque and untransformed.
+`SelectionGroup` scopes shared selection indicators
 without adding DOM wrappers or nested focus targets.
 
 `CountUp` uses the 650ms `--motion-count` duration and the shared
 `cubic-bezier(.22, 1, .36, 1)` curve. Playback waits until the counter enters
-the viewport, including inside owned scroll containers and opened disclosures.
+the clipped viewport, including inside owned scroll containers and opened disclosures,
+and starts with its containing reveal's delay rather than counting behind it.
 It runs once per view visit, not on ordinary data rerenders or scrolling away
 and back. Returning to a retained view rearms its counters for viewport entry.
 Observers and playback are disposed when hidden or unmounted.
+Numeric metrics animate by default. Formatted training, pace, milestone and race
+summaries pass their numeric source to the same counter. A hidden final-value
+reserve and tabular numerals prevent width changes while counting. Dates, editable
+values, identifiers and table indices are not interpolated.
 Screen readers always receive the final value;
 reduced motion displays it immediately. Press, hover and selection feedback
 retain their immediate interaction feedback; selection-marker travel uses the

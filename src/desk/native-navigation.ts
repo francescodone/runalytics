@@ -58,14 +58,14 @@ export function startNativeNavigation() {
     if (stopped) return;
     const suspended = Boolean(blocked());
     const route = readRoute();
-    const selected = route.workspace === "training" || route.workspace === "journal" || route.workspace === "health" ? route.workspace : null;
+    const selected = route.workspace === "training" || route.workspace === "journal" || route.workspace === "pace" || route.workspace === "milestones" ? route.workspace : null;
     const theme = root.dataset.deskTheme === "dark" ? "dark" : "light";
     const appearance = colors();
     const identity = JSON.stringify({ suspended, selected, theme, colors: appearance, width: innerWidth, height: innerHeight });
     if (identity === previous) return;
     previous = identity;
     void bridge.update(suspended ? null : {
-      tabs: [{ id: "training", title: t("training") }, { id: "journal", title: t("journal") }, { id: "health", title: t("health") }],
+      tabs: [{ id: "training", title: t("training") }, { id: "journal", title: t("journal") }, { id: "pace", title: t("Pace insights") }, { id: "milestones", title: t("Milestones") }],
       selected, theme, colors: appearance,
     });
   };

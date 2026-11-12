@@ -1,4 +1,4 @@
-export type NativeWorkspace = "training" | "journal" | "health";
+export type NativeWorkspace = "training" | "journal" | "pace" | "milestones";
 export type NativeChromeColors = {
   surface: readonly [number, number, number, number];
   selected: readonly [number, number, number, number];

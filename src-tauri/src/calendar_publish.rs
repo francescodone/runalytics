@@ -71,14 +71,6 @@ pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Re
         Err(keyring_core::Error::NoEntry) => None,
         Err(_) => return Err(AppError::Other("Could not read the GitHub credential for transfer".into())),
     };
-    let assistant_key = crate::secure_store::entry("com.fradone.runalytics.llm", "api_key")
-        .map_err(|_| AppError::Other("Assistant Keychain entry unavailable".into()))?;
-    let api_key = match assistant_key.get_password() {
-        Ok(key) => Some(key),
-        Err(keyring_core::Error::NoEntry) => None,
-        Err(_) => return Err(AppError::Other("Could not read the assistant credential for transfer".into())),
-    };
-    let settings = state.settings.lock().unwrap().clone();
     let identity = crate::plan_sync::status(&state)?;
     Ok(serde_json::json!({
         "version": 1,
@@ -92,9 +84,6 @@ pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Re
         "githubToken": github_token,
         "strava": crate::strava::transfer_credentials()?,
         "identity": { "corosCode": identity.code },
-        "assistant": settings.llm_endpoint.map(|endpoint| serde_json::json!({
-            "endpoint": endpoint, "model": settings.llm_model, "apiKey": api_key,
-        })),
     }))
 }
 
@@ -410,11 +399,7 @@ pub async fn refresh(state: &AppState) -> Result<String> {
 
 async fn refresh_locked(state: &AppState) -> Result<String> {
     calendar::reconcile(&state.store)?;
-    // Freeze each new run's load and injury risk before rendering, so every
-    // banked session's description carries the numbers the body was carrying
-    // when it landed.
-    let thresholds = state.settings.lock().unwrap().thresholds();
-    calendar::snapshot_scores(&state.store, &thresholds)?;
+    calendar::snapshot_scores(&state.store)?;
     let path = CalendarExport::new(&state.data_dir).regenerate(&state.store)?;
     let mut config = load(&state.data_dir)?;
     if config.enabled {

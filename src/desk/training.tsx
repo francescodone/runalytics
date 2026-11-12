@@ -6,9 +6,7 @@ import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, 
 import { planName as displayPlanName } from "./i18n";
 import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessionTitle, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, CountUp, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
-import { PlanAdjustments } from "./proposals";
 import { EditPlan, SessionFeedback } from "./feedback";
-import { RaceEstimates } from "./race-estimates";
 import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
 
 type Horizon = "week" | "month" | "plan";
@@ -214,7 +212,7 @@ export function Training() {
     <Change identity={horizon}>
     {horizon === "plan" ? <div className="plan-studio">
       <div className="plan-main"><section className="plan-overview"><h3>{t("Training horizon")}</h3>{current.loading ? <Loading /> : !plan ? <Empty title={t("Give your training a direction")} action={<Button tone="primary" disabled={!connected || !synced || Boolean(current.error)} onClick={() => setCreate(true)}>{t("Create plan")}</Button>}>{t("Prepare for a race, build fitness or maintain your routine.")}</Empty> : <>
-        <dl className="metrics-line"><Metric label={t("Training method")} value={plan.trainingMethod === "runna_like" ? "Runna-like" : "Norwegian method"} /><Metric label={t("Sessions complete")} value={`${completed}/${workouts.length}`} /><Metric label={t("Runs per week")} value={plan.weeklyFrequency} /><Metric label={t("Threshold pace")} value={fmtPace(plan.thresholdSecKm)} unit="/km" /></dl>
+        <dl className="metrics-line"><Metric label={t("Training method")} value={plan.trainingMethod === "runna_like" ? "Runna-like" : "Norwegian method"} /><Metric label={t("Sessions complete")} value={<CountUp format={progress => `${number(completed * progress)}/${number(workouts.length)}`} />} /><Metric label={t("Runs per week")} value={plan.weeklyFrequency} /><Metric label={t("Threshold pace")} value={fmtPace(plan.thresholdSecKm)} count={{ value: plan.thresholdSecKm, format: fmtPace }} unit="/km" /></dl>
         <PlanRoadmap identity={weekKeys.join("|")}>{weekKeys.map((week, index) => {
           const sessions = workouts.filter(workout => monday(workout.date) === week);
           const distance = sessions.reduce((sum, workout) => sum + (workout.distanceM ?? 0), 0);
@@ -231,12 +229,10 @@ export function Training() {
           return <button key={week} className={`roadmap-row is-${state}`} aria-current={state === "current" ? "date" : undefined} onClick={() => { setCursor(week); setSelectedDay(state === "current" ? today() : week); navigate("training", "week"); }}><span><span className="roadmap-week">{t("Week {{value0}}", { value0: index + 1 })}<em>{state === "past" ? t("Done") : state === "current" ? t("This week") : t("Upcoming")}</em></span><small><time dateTime={week}>{weekDate(week)}</time> - <time dateTime={shiftDate(week, 6)}>{weekDate(shiftDate(week, 6))}</time>{downWeeks.data?.includes(week) ? t(" / Recovery") : ""}</small></span><span className="roadmap-track" role="img" aria-label={t("{{value0}} run of {{value1}} planned", { value0: fmtKm(ran), value1: fmtKm(planned) })}><i style={{ width: `${planned > 0 ? Math.min(100, ran / planned * 100) : 0}%` }} /></span><strong>{fmtKm(planned)}<small>{t("planned")}</small></strong><strong>{fmtKm(ran)}<small>{t("done")}</small></strong><IconArrowRight size={18} /></button>;
         })}</PlanRoadmap>
       </>}</section>
-      {plan && <><EditPlan key={plan.id} planId={plan.id} /><PlanAdjustments source="pacing" /></>}</div>
+      {plan && <EditPlan key={plan.id} planId={plan.id} />}</div>
       <section className="plan-basis" aria-labelledby="plan-details-heading"><header className="plan-basis-heading"><h3 id="plan-details-heading">{t("Plan details")}</h3>{compact && <Button aria-expanded={detailsOpen} aria-controls="plan-details" onClick={() => setDetailsOpen(open => !open)}>{detailsOpen ? t("Hide details") : t("Show details")}<IconChevronDown className="disclosure-indicator" size={18} aria-hidden="true" /></Button>}</header><Disclosure id="plan-details" className="plan-basis-content" open={!compact || detailsOpen}><h3>{t("Plan basis")}</h3>{plan ? <>
         <div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Plan basis")}><table><caption className="sr-only">{t("What the plan was built from")}</caption><tbody><tr><th scope="row">{t("Target date")}</th><td>{fmtDateDMY(plan.targetDate)}</td></tr><tr><th scope="row">{t("Starting volume")}</th><td>{plan.baselineWeeklyKm == null ? t("From training history") : t("{{value0}} km/week", { value0: number(plan.baselineWeeklyKm, 1) })}</td></tr><tr><th scope="row">{t("Progression")}</th><td>{capitalizeFirst(plan.increase)}</td></tr><tr><th scope="row">{t("Watch")}</th><td>{plan.pushedId ? t("Published") : t("Not sent yet")}</td></tr></tbody></table></div>
         {receipt.data?.length ? <div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Plan receipt")}><table><caption className="sr-only">{t("How your answers shaped the plan")}</caption><thead><tr><th>{t("Your input")}</th><th>{t("What it did")}</th></tr></thead><tbody>{receipt.data.map((line, index) => <tr key={index}><th scope="row">{text(line.input)}</th><td>{text(line.sentence)}</td></tr>)}</tbody></table></div> : null}
-        {defaults.data && <Predictions defaults={defaults.data} />}
-        <RaceEstimates plan={plan} />
         {remotePlan.data && <><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Device plan")}><table><caption className="sr-only">{t("The plan on your other device")}</caption><tbody><tr><th scope="row">{t("Device plan")}</th><td>{capitalizeFirst(({upToDate:t("up to date"),unpublished:t("not yet published"),updateAvailable:t("update available"),otherPlan:t("different plan on the other device"),importAvailable:t("ready to import")})[remotePlan.data.status])}</td></tr></tbody></table></div><a className="desk-button normal context-link" href="#settings/devices">{t("Manage device sync")}</a></>}
         <Button tone="danger" onClick={() => { cancelPlanId.current = plan.id; setCancel(true); }}>{t("End current plan")}</Button>
       </> : <p className="muted">{t("Your recent mileage and threshold pace establish the starting load. Plan generation remains local.")}</p>}</Disclosure></section>
@@ -250,7 +246,7 @@ export function Training() {
             <div className="week-board">{days.map(date => <section className={`day-lane ${date === today() ? "is-today" : ""}`} data-drop-day={date} key={date} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`}>
               <header><span>{dayName(date)}</span><strong>{dateValue(date).getDate()}</strong>{date === today() && <small>{t("Today")}</small>}</header>
               <div className="day-sessions">{(events.data ?? []).filter(event => event.date === date).map(event => <SessionTile key={event.id} event={event} active={event.id === selected?.id} onSelect={origin => { sessionOrigin.current = origin; setSelected(event); setSelectedDay(event.date); }} />)}
-              {!(events.data ?? []).some(event => event.date === date) && <p className="rest-label">{t("Rest day")}</p>}</div>
+              {!(events.data ?? []).some(event => event.date === date) && <p className="rest-label" data-entrance>{t("Rest day")}</p>}</div>
             </section>)}</div>
           </> : <div className="month-board" role="region" tabIndex={0} aria-label={t("Month dates")}><div className="month-labels">{[t("Mon"), t("Tue"), t("Wed"), t("Thu"), t("Fri"), t("Sat"), t("Sun")].map(day => <span key={day}>{day}</span>)}</div><div className="month-dates">{days.map(date => <div className={`month-day ${date.slice(0, 7) !== cursor.slice(0, 7) ? "outside-month" : ""}`} data-drop-day={date} key={date}>
             {compact ? <button type="button" className="desk-button month-number" data-date={date} onClick={() => selectDate(date)} aria-label={`${dayName(date)} ${fmtDateDMY(date)}`} aria-pressed={date === selectedDay} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}<i aria-hidden="true">{(events.data ?? []).filter(event => event.date === date).length || ""}</i></button> : <time className="month-number" data-date={date} dateTime={date} aria-current={date === today() ? "date" : undefined}>{dateValue(date).getDate()}</time>}
@@ -330,7 +326,7 @@ export function SessionDetail({ event, plan, proposedDate, stale = false, onDone
   return <div className="session-detail"><span className="session-type">{kindName(event.kind)}</span><h2>{sessionTitle(event.title)}</h2><p className="muted">{fmtDateDMY(event.date)}{event.moved && event.plannedDate ? t(" / Originally {{value0}}", { value0: fmtDateDMY(event.plannedDate) }) : ""}</p>
     {stale && <p role="alert">{t("This session is no longer in the latest plan. Your draft is kept, but this session cannot be changed.")}</p>}
     {event.adjusted && <p className="context-note">{t("Adjusted for you: {{value0}}", { value0: text(event.adjusted) })}</p>}
-    <dl className="metrics-line"><Metric label={t("Distance")} value={event.distanceM != null ? number((event.distanceM / 1000), 1) : "Not specified"} unit={event.distanceM != null ? "km" : undefined} />{event.activityId != null ? event.durationMin != null && <Metric label={t("Duration")} value={Math.round(event.durationMin)} unit="min" /> : fmtTimeRange(estimatedTimeRange(event)) && <Metric label={t("Estimated time")} value={fmtTimeRange(estimatedTimeRange(event))} />}</dl>
+    <dl className="metrics-line"><Metric label={t("Distance")} value={event.distanceM != null ? number((event.distanceM / 1000), 1) : "Not specified"} count={event.distanceM != null ? { value: event.distanceM / 1000, format: value => number(value, 1) } : undefined} unit={event.distanceM != null ? "km" : undefined} />{event.activityId != null ? event.durationMin != null && <Metric label={t("Duration")} value={Math.round(event.durationMin)} unit="min" /> : fmtTimeRange(estimatedTimeRange(event)) && <Metric label={t("Estimated time")} value={fmtTimeRange(estimatedTimeRange(event))} />}</dl>
     <div className="prescription">{event.notes.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{text(paragraph)}</p>)}</div>
     {event.workoutId && <SessionFeedback workoutId={event.workoutId} />}
     <Button onClick={() => void command.run(() => navigator.clipboard.writeText(event.notes), t("Session copied."))}><IconCopy size={18} />{t("Copy prescription")}</Button>
@@ -427,10 +423,6 @@ function ResetWeek({ weekStart, planId, onClose }: { weekStart: string; planId?:
       </Button>
     </div>
   </Dialog>;
-}
-
-function Predictions({ defaults }: { defaults: PlanDefaults }) {
-  return <section className="watch-predictions"><h3>{t("Watch predictions")}</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Watch predictions")}><table><caption className="sr-only">{t("Predicted race times from your current fitness")}</caption><tbody>{[["5 km", defaults.predict5kS], ["10 km", defaults.predict10kS], [t("Half marathon"), defaults.predictHalfS], [t("Marathon"), defaults.predictMarathonS]].map(([label, seconds]) => <tr key={label as string}><th scope="row">{label}</th><td>{typeof seconds === "number" ? fmtDuration(seconds, label === t("5 km") || label === t("10 km")) : t("Not available")}</td></tr>)}</tbody></table></div></section>;
 }
 
 function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: () => void }) {

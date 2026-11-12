@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   FeedbackContext,
   DifficultyOutcome,
+  DifficultyPreview,
   Activity,
   ActivityDetail,
   ActivityReview,
@@ -78,6 +79,9 @@ export const tauri = {
     invoke<DifficultyOutcome>("save_session_feedback", { planId, revision, workoutId, rating, dismiss }),
   adjustPlanDifficulty: (planId: string, revision: number, direction: "easier" | "harder") =>
     invoke<DifficultyOutcome>("adjust_plan_difficulty", { planId, revision, direction }),
+  previewPlanDifficulty: (planId: string, revision: number, direction: "easier" | "harder") =>
+    invoke<DifficultyPreview>("preview_plan_difficulty", { planId, revision, direction }),
+  approvePlanDifficulty: (preview: DifficultyPreview) => invoke<DifficultyOutcome>("approve_plan_difficulty", { preview }),
   stravaStatus: () => call<import("./types").StravaStatus>("strava_status"),
   stravaConfigure: (clientId: string, clientSecret: string | null) => call<import("./types").StravaStatus>("strava_configure", { clientId, clientSecret }),
   stravaConnect: () => call<import("./types").StravaStatus>("strava_connect"),
@@ -112,6 +116,8 @@ export const tauri = {
   matchedSessions: () => call<MatchedSession[]>("matched_sessions"),
   createPlan: (request: PlanRequest) =>
     call<[TrainingPlan, PlanWorkout[]]>("create_plan", { request }),
+  previewPlan: (request: PlanRequest) =>
+    call<[TrainingPlan, PlanWorkout[]]>("preview_plan", { request }),
   planDefaults: () => call<PlanDefaults>("plan_defaults"),
   currentPlan: () =>
     call<[TrainingPlan, PlanWorkout[]] | null>("current_plan"),

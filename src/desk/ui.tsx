@@ -6,6 +6,7 @@ import { animate as animateNative } from "motion/mini";
 import { isTauri } from "@tauri-apps/api/core";
 import { actionOrigin, markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
+import { motionVisible } from "./motion";
 
 export function Button({ children, tone = "normal", busy, className = "", onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean }) {
   const button = useRef<HTMLButtonElement>(null);
@@ -165,29 +166,41 @@ export function CountUp({ format }: { format: (progress: number) => string }) {
     if (!element) return;
     let animation: ReturnType<typeof animate> | undefined;
     let started = false;
+    let frame = 0;
     const start = () => {
-      if (started) return;
+      frame = 0;
+      if (started || !motionVisible(element)) return;
+      const reveal = element.closest<HTMLElement>('[data-reveal]:not([data-reveal="container"])');
+      if (reveal?.dataset.reveal === "waiting") return;
       started = true;
       observer.unobserve(element);
-      animation = animate(0, 1, { duration: tempo.count, ease: tempo.countEase, onUpdate: setProgress });
+      const delay = reveal?.dataset.reveal === "visible" ? parseFloat(reveal.style.getPropertyValue("--reveal-delay")) || 0 : 0;
+      element.dataset.countState = "counting";
+      animation = animate(0, 1, { duration: tempo.count, delay, ease: tempo.countEase, onUpdate: setProgress, onComplete: () => { element.dataset.countState = "settled"; } });
     };
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting && entry.intersectionRatio >= .08) && !element.closest("[inert]")) start();
-    }, { threshold: .08 });
+    const schedule = () => { if (!started && !frame) frame = requestAnimationFrame(start); };
+    const observer = new IntersectionObserver(schedule, { threshold: [0, tempo.viewportThreshold] });
     const watch = () => {
       animation?.stop();
+      cancelAnimationFrame(frame);
+      frame = 0;
       started = false;
       setProgress(0);
+      element.dataset.countState = "waiting";
       observer.unobserve(element);
       observer.observe(element);
     };
     const arrive = (event: Event) => { if (event.target instanceof HTMLElement && event.target.contains(element)) watch(); };
+    const reveal = (event: Event) => { if (event.target instanceof HTMLElement && event.target.contains(element)) schedule(); };
     watch();
     document.addEventListener("desk:view-arrive", arrive);
-    return () => { observer.disconnect(); animation?.stop(); document.removeEventListener("desk:view-arrive", arrive); };
+    document.addEventListener("desk:reveal", reveal);
+    document.addEventListener("scroll", schedule, { capture: true, passive: true });
+    window.addEventListener("resize", schedule);
+    return () => { observer.disconnect(); animation?.stop(); cancelAnimationFrame(frame); document.removeEventListener("desk:view-arrive", arrive); document.removeEventListener("desk:reveal", reveal); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
   }, [reduced]);
-  return <span ref={host} style={{ fontVariantNumeric: "tabular-nums" }}><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(reduced ? 1 : progress)}</span></span>;
+  return <span ref={host} className="motion-number"><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(reduced ? 1 : progress)}</span><span aria-hidden="true" data-count-reserve>{format(1)}</span></span>;
 }
 export function Metric({ label, value, unit, count }: { label: string; value: ReactNode; unit?: string; count?: { value: number; format?: (value: number) => string } }) {
-  return <div className="desk-metric"><dt>{label}</dt><dd>{count && Number.isFinite(count.value) ? <CountUp format={progress => count.format ? count.format(count.value * progress) : number(count.value * progress)} /> : typeof value === "number" ? number(value) : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;
+  return <div className="desk-metric"><dt>{label}</dt><dd>{count && Number.isFinite(count.value) ? <CountUp format={progress => count.format ? count.format(count.value * progress) : number(count.value * progress)} /> : typeof value === "number" && Number.isFinite(value) ? <CountUp format={progress => number(value * progress)} /> : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;
 }

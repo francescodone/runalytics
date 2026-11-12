@@ -4,6 +4,46 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 const catalog = language => JSON.parse(readFileSync(new URL(`../src/desk/locales/${language}.json`, import.meta.url), "utf8"));
 
+for (const width of [320, 1440]) {
+  test(`language preference persists and follows system default at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installDeskFixture(page);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "language", { configurable: true, value: "fr-FR" });
+    });
+    await page.goto("/desk.html#settings");
+    await page.getByRole("searchbox", { name: catalog("fr")["Search settings"] }).fill("Langue");
+    await expect(page.locator('.settings-task-list a[href="#settings/appearance"]')).toHaveCount(0);
+    await page.locator('.settings-task-list a[href="#settings/language"]').click();
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await expect(page.locator(".settings-editor h2")).toHaveText("Langue");
+    await expect(page.getByRole("combobox", { name: "Langue" })).toHaveValue("system");
+    await page.getByRole("combobox", { name: "Langue" }).selectOption("it");
+    await expect(page.locator("html")).toHaveAttribute("lang", "it");
+    await expect(page.getByRole("combobox", { name: "Lingua" })).toHaveValue("it");
+    expect(await page.evaluate(async () => (await import("/src/desk/i18n.ts")).number(12.5, 1))).toBe("12,5");
+    expect(await page.evaluate(() => localStorage.getItem("runalytics.language"))).toBe("it");
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("lang", "it");
+    await page.getByRole("combobox", { name: "Lingua" }).selectOption("en");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    expect(await page.evaluate(async () => (await import("/src/desk/i18n.ts")).number(12.5, 1))).toBe("12.5");
+    await expect(page.getByRole("combobox", { name: "Language" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath(`language-${width}.png`), fullPage: true });
+    await page.getByRole("combobox", { name: "Language" }).selectOption("system");
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await expect(page.getByRole("combobox", { name: "Langue" })).toHaveValue("system");
+    expect(await page.evaluate(() => localStorage.getItem("runalytics.language"))).toBeNull();
+    await page.evaluate(() => localStorage.setItem("runalytics.language", "invalid"));
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await expect(page.getByRole("combobox", { name: "Langue" })).toHaveValue("system");
+    await page.goto("/desk.html#settings/appearance");
+    await expect(page.getByRole("combobox", { name: "Langue" })).toHaveCount(0);
+  });
+}
+
 for (const [language, training, settings, expectedLocale] of [
   ["en-US", "Training", "Settings", "en"],
   ["es-MX", "Entrenamiento", "Ajustes", "es"],
@@ -74,7 +114,7 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
       ["settings/calendar", "Calendar apps"],
       ["settings/devices", "Device sync"],
       ["settings/transfer", "Transfer connections"],
-      ["settings/assistant", "Injury assistant"],
+      ["settings/assistant", "Third-party connections"],
       ["settings/maps", "Offline maps"],
       ["settings/about", "About and updates"],
       ["help", "A recent workout is missing"],

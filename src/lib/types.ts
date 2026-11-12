@@ -19,6 +19,32 @@ export interface DifficultyOutcome {
   unchanged: number;
   reason: string;
 }
+
+export interface DifficultyStep {
+  label: string;
+  repeats: number;
+  distanceM: number;
+  paceLoSKm: number | null;
+  paceHiSKm: number | null;
+  recoveryM: number;
+  recoveryPaceLoSKm: number | null;
+  recoveryPaceHiSKm: number | null;
+  openEnded: boolean;
+}
+
+export interface DifficultyDetails {
+  purpose: string;
+  estimatedMin: number | null;
+  steps: DifficultyStep[];
+}
+
+export interface DifficultyPreview {
+  planId: string;
+  revision: number;
+  direction: "easier" | "harder";
+  outcome: DifficultyOutcome;
+  changes: { workoutId: string; title: string; date: string; before: DifficultyDetails; after: DifficultyDetails }[];
+}
 // Mirrors the camelCase serde types in src-tauri/src/types.rs.
 
 export type ProviderKind = "coros" | "garmin";
@@ -83,9 +109,6 @@ export interface ActivityDetail {
   health: HealthDaily | null;
   load: TrainingLoad | null;
   fitness: FitnessAssessment | null;
-  riskFactors: RiskFactor[];
-  /// 0..100 headline injury risk evaluated as of that day.
-  injuryRisk: number;
 }
 
 export interface FitnessAssessment {
@@ -141,8 +164,7 @@ export interface Thresholds {
   ratioResumingHi: number;
   /// Top of the Maintaining band; above it, Optimized.
   ratioMaintainingHi: number;
-  /// Top of the Optimized band; above it reads as Excessive. Also the point
-  /// where injury risk starts to climb.
+  /// Top of the Optimized band; above it reads as Excessive.
   ratioOptimizedHi: number;
   /// Recovery score at or below this reads as Exhausted.
   recoveryExhausted: number;
@@ -215,9 +237,11 @@ export interface PlanRequest {
   weeklyFrequency: number;
   longrunDay: number;
   qualityDays?: number[];
+  restDays?: number[];
   increase: IncreaseMethod;
   /// Current weekly mileage (km); null lets the backend derive it from syncs.
   currentWeeklyKm: number | null;
+  recentLongRunKm?: number | null;
   /// What the runner calls this plan. A local label only — the COROS slot
   /// keeps its fixed name and carries this in the plan description. Null or
   /// blank means Runalytics describes the plan instead of naming it.
@@ -346,15 +370,11 @@ export interface WeekProgress {
   ranM: number;
 }
 
-/// A banked run's frozen score snapshot (see the backend's `run_scores`).
-/// `riskDelta` is the run's own impact on injury risk: risk with the session
-/// minus risk without it. Every run has one.
+/// A banked run's frozen training-load snapshot (see the backend's `run_scores`).
 export interface RunScore {
   activityId: number;
   workoutId: string | null;
   load: number | null;
-  risk: number;
-  riskDelta: number;
 }
 
 /// A banked run that matched a plan session (see the backend's
@@ -465,7 +485,6 @@ export interface RemotePlan {
 
 export interface DashboardScores {
   trainingScore: number;
-  injuryRisk: number;
   recoveryScore: number;
   globalScore: number;
   notes: string[];
@@ -478,8 +497,6 @@ export interface ScorePoint {
   readiness?: number;
   training: number;
   recovery: number;
-  /// Higher = riskier, same polarity as the headline injury risk.
-  risk: number;
 }
 
 export type TimeRange = "1d" | "7d" | "1mo";
@@ -507,14 +524,6 @@ export interface RangeStats {
   avgHr: number | null;
 }
 
-/// One heuristic contributing to the injury-risk percentage.
-export interface RiskFactor {
-  label: string;
-  detail: string;
-  /// 0..1 severity of this factor on its own scale — 0 = quiet, 1 = maxed out.
-  contribution: number;
-}
-
 export interface DashboardPayload {
   scores: DashboardScores;
   /// Per-day sub-score trend for the readiness cards, spanning the range.
@@ -536,7 +545,6 @@ export interface DashboardPayload {
   range: TimeRange;
   stats: RangeStats;
   health: HealthDaily[];
-  riskFactors: RiskFactor[];
   /// Most recent unresolved pain entry, for the Today-tab banner.
   activePain: PainEntry | null;
   /// An unanswered plan-change offer, surfaced with Accept right there.

@@ -2,26 +2,32 @@ import { t, text, formatLocale, date as fmtDateDMY } from "./i18n";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type DependencyList, type ReactNode } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle } from "../lib/ipc";
+import { gamificationStats, type Achievement } from "../lib/flow";
 import type { PlanSyncProgress, Settings } from "../lib/types";
 import { IconLoader2, IconCheck, IconX } from "@tabler/icons-react";
-import { actionOrigin, Change, Presence } from "./interaction";
+import { actionOrigin, Change, Presence, tempo } from "./interaction";
 import { Notification, NotificationViewport } from "./overlays";
+import { Button, Dialog } from "./ui";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { motion, useReducedMotion } from "motion/react";
 
-export type Workspace = "training" | "journal" | "health" | "settings" | "help";
+export type Workspace = "training" | "journal" | "health" | "pace" | "milestones" | "settings" | "help";
 /// `detail` is the third hash segment (`#journal/1/splits`): the open tab of a
 /// selected record. It is only ever read by the record itself, so every other
 /// route leaves it empty.
 export type Route = { workspace: Workspace; section: string; detail: string };
 export function readRoute(): Route {
   const [workspace, section = "", detail = ""] = location.hash.slice(1).split("/");
+  if (workspace === "health") return { workspace: section === "milestones" ? "milestones" : "pace", section: "", detail: "" };
+  if (workspace === "pace" || workspace === "milestones") return { workspace, section, detail };
   if (["training", "journal", "health", "settings", "help"].includes(workspace)) return { workspace: workspace as Workspace, section, detail };
   const file = location.pathname.split("/").pop();
   if (file === "settings.html") return { workspace: "settings", section: workspace || "", detail: "" };
   if (file === "support.html") return { workspace: "help", section: "", detail: "" };
-  if (file === "injury.html") return { workspace: "health", section: "journal", detail: "" };
+  if (file === "injury.html") return { workspace: "pace", section: "", detail: "" };
   if (file === "achievements.html") {
-    if (workspace === "milestones") return { workspace: "health", section: "milestones", detail: "" };
-    if (["performance", "recovery", "risk"].includes(workspace)) return { workspace: "health", section: "", detail: "" };
+    if (workspace === "milestones") return { workspace: "milestones", section: "", detail: "" };
+    if (["performance", "recovery", "risk"].includes(workspace)) return { workspace: "pace", section: "", detail: "" };
     return { workspace: "journal", section: "", detail: "" };
   }
   return { workspace: "training", section: file === "plan.html" ? "plan" : file === "calendar.html" ? "month" : "week", detail: "" };
@@ -98,6 +104,30 @@ function stageText(line: StageLine): string {
 type WorkspaceContext = { revision: number; planCheck: number; syncing: boolean; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void };
 const Context = createContext<WorkspaceContext>({ revision: 0, planCheck: 0, syncing: false, planProgress: null, refresh() {}, notify() {} });
 export const useWorkspace = () => useContext(Context);
+
+function AchievementCelebrations() {
+  const [queue, setQueue] = useState<Achievement[]>([]);
+  const reduced = useReducedMotion();
+  const badge = queue[0];
+  useEffect(() => {
+    const unlocked = (event: Event) => setQueue(previous => [...previous, ...(event as CustomEvent<Achievement[]>).detail]);
+    window.addEventListener("runalytics:achievements-unlocked", unlocked);
+    return () => window.removeEventListener("runalytics:achievements-unlocked", unlocked);
+  }, []);
+  useEffect(() => {
+    if (!badge) return;
+    if (isTauri()) void invoke("plugin:haptics|notification_feedback", { type: "success" }).catch(() => {});
+    else try { navigator.vibrate?.([35, 60, 70]); } catch {}
+  }, [badge]);
+  if (!badge) return null;
+  return <Dialog title={t("Earned")} onClose={() => setQueue(previous => previous.slice(1))}>
+    <div className="achievement-celebration" key={badge.id}>
+      <motion.div className="achievement-celebration-icon" aria-hidden="true" initial={reduced ? false : { opacity: 0, scale: .6, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={tempo.spring} dangerouslySetInnerHTML={{ __html: badge.icon }} />
+      <div data-entrance><h3>{text(badge.name)}</h3><p>{text(badge.desc)}</p></div>
+      <Button tone="primary" onClick={() => setQueue(previous => previous.slice(1))}>{t("Continue")}</Button>
+    </div>
+  </Dialog>;
+}
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [planCheck, setPlanCheck] = useState(0);
@@ -120,6 +150,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!inTauri) return;
     let disposed = false;
     let receivedEvent = false;
+    let earned: Set<string> | null = null;
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem("runalytics.earned-achievements") ?? "null");
+      if (Array.isArray(saved) && saved.every(id => typeof id === "string")) earned = new Set(saved);
+    } catch {}
+    let snapshots = Promise.resolve();
+    const snapshot = (celebrate: boolean) => {
+      snapshots = snapshots.then(async () => {
+        const [activities, plan] = await Promise.all([tauri.allActivities(), tauri.currentPlan()]);
+        const achievements = gamificationStats(activities, plan?.[0] ?? null, Boolean(plan?.[0]?.pushedId)).achievements.filter(badge => badge.earned);
+        if (disposed) return;
+        if (celebrate && earned) {
+          const unlocked = achievements.filter(badge => !earned!.has(badge.id));
+          if (unlocked.length) window.dispatchEvent(new CustomEvent("runalytics:achievements-unlocked", { detail: unlocked }));
+        }
+        earned = new Set([...(earned ?? []), ...achievements.map(badge => badge.id)]);
+        try { localStorage.setItem("runalytics.earned-achievements", JSON.stringify([...earned])); } catch {}
+      }).catch(() => undefined);
+    };
+    void tauri.syncStatus().then(syncing => { if (!disposed && (!syncing || !earned)) snapshot(Boolean(earned)); }).catch(() => { if (!disposed && !earned) snapshot(false); });
     const stops: UnlistenFn[] = [];
     const register = <Payload,>(name: string, callback: (payload: Payload) => void) => {
       void listen<Payload>(name, event => { if (!disposed) callback(event.payload); }).then(stop => { if (disposed) stop(); else stops.push(stop); }).catch(() => undefined);
@@ -127,6 +177,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     register("sync://started", () => { receivedEvent = true; setSyncing(true); });
     register<{ok:boolean}>("sync://completed", result => {
       receivedEvent = true; setSyncing(false); setRevision(value => value + 1);
+      if (result.ok) snapshot(true);
       if (!result.ok) setNotice({text:t("Background sync failed. Check your watch connection and try again.")});
     });
     register<PlanSyncProgress>("plan://sync", progress => setPlanProgress(progress));
@@ -232,6 +283,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [stagesQuiet, stageOps]);
   return <Context.Provider value={{ revision, planCheck, syncing, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true) }}>
     {children}
+    <AchievementCelebrations />
     <NotificationViewport>
     <Presence>{notice && <Notification key="notice" elementRef={noticeRef} onDismiss={() => setNotice(null)} dismissDisabled={acting} countdown={!acting} countdownKey={text(notice.text)} actions={notice.action && <button type="button" className="desk-button" disabled={acting} onClick={async () => {
         setActing(true);
