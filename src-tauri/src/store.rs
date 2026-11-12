@@ -3883,6 +3883,8 @@ mod tests {
             weekly_frequency: 4,
             longrun_day: 6,
             quality_days: vec![],
+            rest_days: vec![],
+            recent_long_run_km: None,
             increase: crate::types::IncreaseMethod::Moderate,
             current_weekly_km: None,
             name: None,

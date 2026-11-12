@@ -112,6 +112,8 @@ export const tauri = {
   matchedSessions: () => call<MatchedSession[]>("matched_sessions"),
   createPlan: (request: PlanRequest) =>
     call<[TrainingPlan, PlanWorkout[]]>("create_plan", { request }),
+  previewPlan: (request: PlanRequest) =>
+    call<[TrainingPlan, PlanWorkout[]]>("preview_plan", { request }),
   planDefaults: () => call<PlanDefaults>("plan_defaults"),
   currentPlan: () =>
     call<[TrainingPlan, PlanWorkout[]] | null>("current_plan"),

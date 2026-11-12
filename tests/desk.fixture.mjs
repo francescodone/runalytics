@@ -22,7 +22,7 @@ export const deskFixture = `(function () {
   if (connectionParams.has('noAccount')) deskSync.accountLinked=false;
   if (connectionParams.has('syncError')) deskSync.config.lastError='Device channel unavailable';
   let deskKey = true;
-  let deskConnected = true;
+  let deskConnected = !connectionParams.has('noWatch');
   let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,lastMessage:null,lastAttemptAt:null};
   // Stands in for the backend's original_json snapshot: what a session was
   // before a benchmark overwrote it ('created' when the plan had a rest day).
@@ -93,7 +93,33 @@ export const deskFixture = `(function () {
     if (cmd === 'disconnect_provider') { deskConnected=false; return null; }
     if (cmd === 'connect_provider') { deskConnected=true; return 'connected'; }
     if (cmd === 'check_provider_api') return ['synthetic-list-activities'];
-    if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
+    if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:connectionParams.has('noWatchPredictions') ? null : 1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
+    if (cmd === 'preview_plan') {
+      const request = args.request;
+      const start = new Date(request.startDate + 'T12:00:00Z');
+      const end = new Date(request.targetDate + 'T12:00:00Z');
+      const monday = new Date(start);
+      monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+      const qualityDays = (request.qualityDays ?? []).filter(day => day !== request.longrunDay && !(request.restDays ?? []).includes(day)).slice(0, request.weeklyFrequency >= 5 ? 2 : 1);
+      const preferred = [...new Set([request.longrunDay, ...qualityDays, 1, 2, 3, 4, 5, 6, 7])].filter(day => !(request.restDays ?? []).includes(day)).slice(0, request.weeklyFrequency);
+      const workouts = [];
+      for (const week = new Date(monday); week <= end; week.setUTCDate(week.getUTCDate() + 7)) {
+        for (const day of preferred) {
+          const date = new Date(week);
+          date.setUTCDate(date.getUTCDate() + day - 1);
+          if (date < start || date > end) continue;
+          const dateText = date.toISOString().slice(0, 10);
+          const weekIndex = Math.round((week - monday) / 604800000);
+          const progression = request.kind === 'maintenance' ? 0 : Math.floor(weekIndex / 2) * (request.increase === 'ambitious' ? 1 : request.increase === 'conservative' ? 0.5 : 0.75);
+          const baseKm = request.increase === 'ambitious' ? 9 : 7;
+          const easyDays = preferred.filter(value => value !== request.longrunDay && !qualityDays.includes(value));
+          const sampleKm = day === request.longrunDay ? (request.recentLongRunKm ?? baseKm + 3) + progression : baseKm + progression + (qualityDays.includes(day) ? 1 : -(easyDays.indexOf(day) % 2));
+          workouts.push({id:'preview-' + dateText,date:dateText,title:day === request.longrunDay ? 'Long run' : qualityDays.includes(day) ? 'Intervals' : 'Easy run',distanceM:sampleKm * 1000});
+        }
+      }
+      workouts.sort((first, second) => first.date.localeCompare(second.date));
+      return [{id:'preview-plan',...request}, workouts];
+    }
     if (cmd === 'create_plan') {
       deskCurrent = [{id:'synthetic-plan',...args.request,status:'active',createdAt:new Date().toISOString(),pushedId:null,baselineWeeklyKm:args.request.currentWeeklyKm,qualityOffsetSecKm:0,qualityOffsetFrom:null},[]];
       return deskCurrent;
@@ -146,7 +172,7 @@ export const deskFixture = `(function () {
     if (cmd === 'plan_sync_push') return deskSync.config;
     if (cmd === 'plan_sync_pull') return {installed:!!args.force,planName:'Synthetic plan',workouts:33,conflict:new URLSearchParams(location.search).has('syncConflict') && !args.force ? 'Different synthetic plan on this device.' : null};
     if (cmd === 'calendar_publishing') return deskPublishing;
-    if (cmd === 'export_connection_settings') return {version:1,created:Math.floor(Date.now()/1000),calendar:{uploadUrl:deskPublishing.uploadUrl,subscriptionUrl:deskPublishing.subscriptionUrl,username:deskPublishing.username,password:'synthetic-calendar-secret'},githubToken:'synthetic-github-token',strava:{clientId:'12345',clientSecret:'synthetic-strava-secret'},identity:{corosCode:'synthetic-account-channel'},assistant:{endpoint:'https://assistant.example.test/v1',model:'transfer-model',apiKey:'synthetic-assistant-secret'}};
+    if (cmd === 'export_connection_settings') return {version:1,created:Math.floor(Date.now()/1000),calendar:{uploadUrl:deskPublishing.uploadUrl,subscriptionUrl:deskPublishing.subscriptionUrl,username:deskPublishing.username,password:'synthetic-calendar-secret'},githubToken:'synthetic-github-token',strava:{clientId:'12345',clientSecret:'synthetic-strava-secret'},identity:{corosCode:'synthetic-account-channel'}};
     if (cmd === 'save_calendar_publishing') { deskPublishing={...deskPublishing,...args.config,hasPassword:args.password===null ? deskPublishing.hasPassword : args.password!==''}; return deskPublishing; }
     if (cmd === 'ics_path') return '/synthetic/calendar.ics';
     if (cmd === 'publish_calendar') { deskPublishing.lastPublished=new Date().toISOString(); deskPublishing.lastError=connectionParams.has('calendarUploadFails') ? 'Calendar upload failed' : null; return 'https://example.test/training.ics'; }

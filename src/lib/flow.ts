@@ -167,24 +167,6 @@ function activeMonths(activities: Activity[]): number {
   return new Set(activities.map((a) => a.startTime.slice(0, 7))).size;
 }
 
-/// Average pace (s/km) over the window ]now - fromDays, now - toDays], or
-/// null when nothing was run (or a run has no pace recorded). Runs only — a
-/// bike's speed would otherwise read as extraordinary running form.
-function avgPaceBetween(activities: Activity[], fromDays: number, toDays: number): number | null {
-  const now = new Date();
-  const lo = new Date(now);
-  lo.setDate(lo.getDate() - fromDays);
-  const hi = new Date(now);
-  hi.setDate(hi.getDate() - toDays);
-  const loKey = ymdLocal(lo);
-  const hiKey = ymdLocal(hi);
-  const recent = activities.filter(
-    (a) => isRun(a) && a.startTime.slice(0, 10) > loKey && a.startTime.slice(0, 10) <= hiKey && a.avgPaceSKm != null && a.distanceM > 0,
-  );
-  if (recent.length === 0) return null;
-  return recent.reduce((s, a) => s + a.distanceM * (a.avgPaceSKm as number), 0) / recent.reduce((s, a) => s + a.distanceM, 0);
-}
-
 /// Whether a run started on the Nth-to-last day of its calendar month.
 function ranMonthEnd(activities: Activity[]): boolean {
   return activities.some((a) => {
@@ -270,10 +252,6 @@ export function gamificationStats(
   // Best distance-weighted average pace among real runs (>= 5 km), s/km.
   const paced = runs.filter((a) => a.avgPaceSKm != null && a.distanceM >= 5_000);
   const bestPaceSKm = paced.length ? Math.min(...paced.map((a) => a.avgPaceSKm as number)) : Infinity;
-  const maxHr = Math.max(0, ...runs.map((a) => a.maxHr ?? 0));
-  const zone2Run = runs.some(
-    (a) => a.distanceM >= 10_000 && a.avgHr != null && a.avgHr > 0 && a.avgHr <= 140,
-  );
   const trackedRuns = runs.filter((a) => a.hasTrack).length;
   const runsPerDay = new Map<string, number>();
   for (const a of runs) {
@@ -300,8 +278,6 @@ export function gamificationStats(
     const d = new Date(a.startTime);
     return d.getMonth() === 11 && d.getDate() === 25;
   });
-  const form30 = avgPaceBetween(activities, 30, 0);
-  const form90 = avgPaceBetween(activities, 90, 0);
   const months = activeMonths(activities);
   const breakDays = longestBreakDays(activities);
 
@@ -353,24 +329,11 @@ export function gamificationStats(
     [4000, "Endurance legend"],
     [5000, "Runalytics hall of fame"],
     [10000, "Ten-thousand club"],
-    [20000, "Twice around Britain"],
-    [40075, "Earth's circumference"],
-    [100000, "Three laps of the globe"],
-    [384400, "To the moon"],
   ];
   const streakLadder: [number, string][] = [
     [3, "Hat-trick"],
     [14, "Fortnight on fire"],
     [21, "Three weeks strong"],
-    [50, "Half-century streak"],
-    [60, "Sixty days solid"],
-    [100, "Hundred days on"],
-    [150, "Streak marathoner"],
-    [200, "Streak ultra"],
-    [365, "A full lap of the sun"],
-    [730, "Two years unbroken"],
-    [1000, "One thousand days"],
-    [3650, "A decade every day"],
   ];
   const sessionLadder: [number, string][] = [
     [10, "Double digits"],
@@ -381,8 +344,6 @@ export function gamificationStats(
     [500, "Five hundred strong"],
     [1000, "Thousand sessions"],
     [2000, "Two thousand outs"],
-    [5000, "Five thousand outs"],
-    [10000, "Ten thousand mornings"],
   ];
   const hourLadder: [number, string][] = [
     [10, "Ten hours logged"],
@@ -392,8 +353,6 @@ export function gamificationStats(
     [250, "Quarter thousand hours"],
     [500, "Five hundred hours"],
     [1000, "Millennium runner"],
-    [8760, "A whole year moving"],
-    [17520, "Two years of daylight"],
   ];
   const longLadder: [number, string][] = [
     [5, "First five"],
@@ -402,22 +361,17 @@ export function gamificationStats(
     [25, "Twenty-five deep"],
     [30, "Thirty-klick wall"],
     [42.2, "Full distance"],
-    [50, "Ultra distance"],
   ];
   const weekLadder: [number, string][] = [
     [10, "Ten in a week"],
     [21.1, "Half per week"],
     [42.2, "Marathon week"],
     [50, "Fifty-a-week"],
-    [75, "Seventy-five a week"],
-    [100, "One-hundred-k week"],
   ];
   const monthLadder: [number, string][] = [
     [100, "Hundred-a-month"],
     [150, "Month of miles"],
     [200, "Two-hundred month"],
-    [300, "Monster month"],
-    [400, "God-tier month"],
   ];
   const elevLadder: [number, string][] = [
     [100, "Hill curious"],
@@ -426,15 +380,11 @@ export function gamificationStats(
     [2500, "Four Everests"],
     [5000, "Two Everests… twice"],
     [10000, "Everest xii"],
-    [88490, "Summit Everest in climbing"],
   ];
   const paceLadder: [number, string][] = [
     [360, "Sub 6:00"],
     [330, "Sub 5:30"],
     [300, "Sub 5:00"],
-    [285, "Sub 4:45"],
-    [270, "Sub 4:30"],
-    [240, "Sub 4:00"],
   ];
 
   const badgeList: Achievement[] = [
@@ -557,23 +507,6 @@ export function gamificationStats(
         bestPaceSKm <= sec,
       ),
     ),
-    // Recent form — distance-weighted average pace over the window. A rising
-    // line: this is the one badge family that measures a trend, so it gets the
-    // trend glyph rather than the bar chart it used to borrow.
-    done(
-      "form-30",
-      "Sharp month",
-      `Average under ${paceLabel(330)} /km over the last 30 days`,
-      icons.trend,
-      form30 != null && form30 < 330,
-    ),
-    done(
-      "form-90",
-      "Season of speed",
-      `Average under ${paceLabel(300)} /km over the last 90 days`,
-      icons.trend,
-      form90 != null && form90 < 300,
-    ),
     // Elevation (gained on foot — a ride's altitude is not climbing for a
     // runner's legs).
     ...elevLadder.map(([m, name]) =>
@@ -582,7 +515,6 @@ export function gamificationStats(
     count("climb-100", "Tough ascent", "100 m climbed in one run", icons.mountain, maxElevM, 100, "m"),
     count("climb-250", "Mountain goat", "250 m climbed in one run", icons.mountain, maxElevM, 250, "m"),
     count("climb-500", "Peak bagger", "500 m climbed in one run", icons.mountain, maxElevM, 500, "m"),
-    count("climb-1000", "Alpinist", "1,000 m climbed in one run", icons.mountain, maxElevM, 1000, "m"),
     // Time of day.
     done("early-bird", "Early bird", "A run before 7:00", icons.sunrise, earlyRuns > 0),
     count("early-x25", "Dawn patrol", "25 runs before 7:00", icons.sunrise, earlyRuns, 25, "runs"),
@@ -623,12 +555,7 @@ export function gamificationStats(
     // A bed, not a moon: the moon already means "night run", and a fortnight
     // off is rest rather than night-time.
     done("rest-day", "Even legends rest", "A break of 14+ days somewhere", icons.bed, breakDays >= 14),
-    // Doubles and triples — two or three sessions stacked into one day.
     done("double-day", "Double day", "Two runs in one day", icons.stack, doubleDay >= 2),
-    done("triple-day", "Triple threat", "Three runs in one day", icons.stack, doubleDay >= 3),
-    // Heart-rate flavour.
-    done("redline", "Redline", "A run that touched 180 bpm", icons.heart, maxHr >= 180),
-    done("zone-two", "Zone two hero", "A 10 km+ run averaging under 140 bpm", icons.heart, zone2Run),
     // GPS.
     count("tracked-100", "Breadcrumb trail", "100 runs with a GPS track", icons.map, trackedRuns, 100, "runs"),
     // Cross-training earns its own badges. Without these the honest split

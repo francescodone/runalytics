@@ -1,3 +1,151 @@
+## Milestone Celebrations
+
+Successful syncs compare earned milestones with a locally stored baseline and
+present newly earned milestones in sequence. Each uses its catalog icon, name
+and description, with a success haptic where supported. Reduced motion removes
+the spatial celebration. A saved baseline is reconciled on startup; an initial
+sync already underway before the first baseline is captured can be missed.
+
+Verification: four focused synthetic-IPC browser checks passed, including
+weekend activity, multiple unlocks, failed and repeated syncs, startup
+reconciliation, haptic requests and motion. Screenshots at 320x740 and
+1440x740 were inspected. The production build and locale check passed. The
+Prism route matrix did not return a complete result. Physical haptics, native
+devices and live providers were not verified.
+
+## Milestone Grid And Goals
+
+The 12-week consistency grid reveals its week columns through the shared Prism
+motion system. The catalog no longer includes extreme daily streaks, ultra
+distances, unusually high training volumes or fixed heart-rate targets.
+
+Verification: six focused synthetic-IPC browser checks passed, covering the
+catalog, earned-only filter, stagger and reduced motion at 320, 820 and 1440px.
+The grid was inspected at 320x740 and 1440x900 without horizontal overflow.
+Native devices and live activity providers were not verified.
+
+## Injury Assistant Removal
+
+The injury assistant is no longer available in Settings, Help, or pain episode
+actions. Connection transfer no longer exports or imports assistant credentials;
+older bundles remain readable while their assistant data is discarded. Existing
+stored conversations and credentials are not deleted.
+
+Verification: Settings connection groups passed at 320, 390 and 1440 pixels
+in light and dark themes, with 320-pixel light and 1440-pixel dark screenshots
+inspected. The old Settings link, Help search, connection transfer, 35-check
+Prism viewport matrix, production build, TypeScript and locale checks passed.
+Browser checks use synthetic IPC. Pain-journal workflow verification remains
+blocked because its existing route redirects to Pace insights; native devices
+and live providers were not tested.
+
+## Pace Insights Placement
+
+Pacing evidence appears in Pace insights rather than duplicating the section
+in the training plan. The Speed/Long selector is centered in the pace workspace.
+
+Verification: selector alignment, both selections and the pacing proposal link
+were checked at 320x844 and 1440x844, with screenshots inspected at both widths.
+Existing pacing workflows, the 35-check Prism viewport matrix, production build
+and locale check passed. Browser checks used synthetic IPC; native devices and
+live providers were not verified.
+
+## Race Estimate Comparison
+
+Pace insights compares the latest watch prediction and current plan-threshold
+estimate alongside a separate race-day projection. The watch value can predate
+today. The projection is an estimate, available only for the target distance of
+an active future race with a known baseline and remaining planned training.
+It uses planned peak weekly volume, excludes race-day distance and caps the
+legacy model's assumed improvement; it is not a measured or guaranteed result.
+The proposal comparison retains its current-versus-proposed columns.
+
+Verification: synthetic-IPC comparison and missing-watch tests passed at
+320x844 and 1440x844; screenshots were inspected at both widths. Pace
+navigation light/dark checks at 320, 390, 820 and 1440px, the proposal workflow,
+the 35-check Prism viewport matrix, production build and locale checks passed.
+Native devices and live watch predictions were not verified.
+
+## Setup Preview List
+
+The plan preview uses native week disclosures with aligned weekly totals,
+dated session rows and existing Prism surface, spacing and focus tokens.
+Disclosure icons respect reduced motion; the underlying plan data is unchanged.
+
+Verification: keyboard expansion and collapse were checked at 320x740 and
+1440x740 with reduced motion, and screenshots of the expanded list were
+inspected at both sizes. Existing dark-theme preview checks at 320 and 1440px,
+the 35-check Prism route and viewport matrix, the production build and locale
+catalog check passed. Browser checks used synthetic IPC; native devices and
+live providers were not verified.
+
+## Setup Recent Long Run
+
+Setup accepts an optional recent long-run distance, retains it in the existing
+draft and sends it to preview and plan creation. Generated long runs use it as
+a starting limit, subject to the plan's volume and distance constraints. The
+browser fixture shows illustrative progression and is not the training engine.
+
+Verification: the onboarding suite and Prism route and viewport matrix passed
+with synthetic IPC. Input, validation, draft recovery and preview/create
+requests were checked at 320x740 and 1440x740; screenshots were inspected at
+both sizes. The production build, locale catalog check and plan-engine tests
+passed. Native devices and live providers were not verified.
+
+## Setup Rest Days, 2026-11-12
+
+The setup uses the existing weekday selection rows for a single long-run day
+and a multiple-choice set of recurring free days. Conflicts with the long run,
+quality days, weekly frequency and race or time-trial date are rejected. The
+generator excludes selected days, including its race-week shakeout. These
+constraints apply to generation; they do not prevent later manual rescheduling.
+
+Verification: the 24-check onboarding browser suite and the 35-check Prism
+route/viewport matrix passed with synthetic IPC. Rest-day selection, draft
+recovery and requests to preview and create were checked at 320x740 and
+1440x740; screenshots of both weekday selectors were inspected at those sizes.
+All 31 plan-engine tests, the production build and locale catalog check passed.
+Native devices, live providers and later manual scheduling were not verified.
+
+## Setup Interaction And Layout, 2026-11-11
+
+The setup workspace occupies the full shell and scrolls independently, including
+on short mobile viewports. Step content enters and exits with Prism's shared
+opacity timings; departing content is inert. Reduced motion switches immediately.
+The new question receives focus and the workspace returns to the top. QR and
+device-sync watch actions return to the setup watch step instead of a locked
+settings route. Choices, connection summaries, forms and preview rows use the
+existing type, spacing and interaction tokens.
+
+Verification: all 16 combinations of the four optional connection choices and
+all 22 step screens were exercised with synthetic IPC at 320x740/640 and
+1440x740/640. Every step was traversed forward and backward with motion active
+at 320x740 and 1440x740; reduced motion and keyboard focus were checked, as were
+calendar controls at 320x480 and QR dialog Escape/focus return at 320x640.
+Screenshots of name, QR, Strava, calendar, device sync, quality days and preview
+were captured at 320 and 1440px; name, QR, Strava and quality were inspected.
+The 35 Prism route/viewport light/dark checks and 37 shared connection workflow
+checks passed. These are browser checks with synthetic IPC, not native device,
+live provider, or native performance verification.
+
+## Personalized Setup, 2026-11-11
+
+First-run setup owns navigation until the runner confirms a generated or imported
+plan. It reuses existing watch, QR transfer, Strava, calendar and device-sync
+controls, including their credential and confirmation flows. The plan preview
+uses the local training engine without persisting or publishing; changing the
+mileage progression regenerates it. Setup answers and progress are stored on
+this device without connection secrets. Existing users with a plan retain access.
+
+Verification: eight synthetic-IPC onboarding checks passed at 320, 390, 820 and
+1440px in the light theme, including resume, offline watch deferral, a failed
+preview, imported plans and Strava consent. Two additional preview checks passed
+at 320 and 1440px in dark mode; light and dark screenshots were inspected at
+both widths. The 35-check Prism route and short-viewport light/dark matrix,
+27 navigation and Strava browser checks, 13 native-navigation bridge unit tests,
+30 plan-engine unit tests, production build and catalog parity check passed.
+Native devices and live providers were not verified.
+
 ## Complete Reveal Units, 2026-11-11
 
 Nested entrance targets now reveal their outer visual unit, including borders and

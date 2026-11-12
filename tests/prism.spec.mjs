@@ -1959,14 +1959,44 @@ for (const width of [320, 820, 1440]) {
     const layout = await page.locator(".milestones").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const grid = element.querySelector(".consistency-grid").getBoundingClientRect();
-      const cell = element.querySelector(".consistency-grid > div").getBoundingClientRect();
+      const cell = element.querySelector(".consistency-week > div").getBoundingClientRect();
       return { center: bounds.x + bounds.width / 2, gridCenter: grid.x + grid.width / 2, cellWidth: cell.width, cellHeight: cell.height, overflow: element.scrollWidth - element.clientWidth };
     });
     expect(Math.abs(layout.center - layout.gridCenter)).toBeLessThan(1);
     expect(Math.abs(layout.cellWidth - layout.cellHeight)).toBeLessThan(1);
     expect(layout.overflow).toBeLessThanOrEqual(1);
+    await expect(page.locator(".consistency-week")).toHaveCount(12);
+    await expect(page.locator(".consistency-week > div")).toHaveCount(84);
     await page.getByRole("checkbox", { name: "Earned only" }).check();
     await expect(page.locator(".milestone-list article:not(.earned)")).toHaveCount(0);
+  });
+}
+
+test("milestone catalog excludes extreme goals", async ({ page }) => {
+  await page.goto("/desk.html#milestones");
+  const achievements = await page.evaluate(async () => {
+    const { gamificationStats } = await import("/src/lib/flow.ts");
+    return gamificationStats([], null, false).achievements.map(({ id }) => id);
+  });
+  for (const id of ["km-384400", "streak-3650", "sessions-10000", "hours-8760", "long-50", "week-100", "month-400", "pace-240", "form-90", "redline", "triple-day"]) expect(achievements).not.toContain(id);
+  for (const id of ["first-run", "km-1000", "streak-30", "long-42.2", "week-50", "pace-300"]) expect(achievements).toContain(id);
+});
+
+for (const reducedMotion of ["reduce", "no-preference"]) {
+  test(`milestone consistency grid motion ${reducedMotion}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/desk.html#milestones");
+    const weeks = page.locator(".consistency-week");
+    await expect(weeks).toHaveCount(12);
+    await weeks.first().scrollIntoViewIfNeeded();
+    await expect.poll(() => weeks.evaluateAll(elements => elements.every(element => element.dataset.reveal === "settled"))).toBe(true);
+    const delays = await weeks.evaluateAll(elements => elements.map(element => element.style.getPropertyValue("--reveal-delay")));
+    if (reducedMotion === "reduce") expect(delays.every(delay => !delay)).toBe(true);
+    else {
+      expect(delays.every(Boolean)).toBe(true);
+      for (let index = 1; index < delays.length; index++) expect(parseFloat(delays[index])).toBeGreaterThan(parseFloat(delays[index - 1]));
+    }
   });
 }
 

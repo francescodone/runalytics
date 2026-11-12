@@ -215,9 +215,11 @@ export interface PlanRequest {
   weeklyFrequency: number;
   longrunDay: number;
   qualityDays?: number[];
+  restDays?: number[];
   increase: IncreaseMethod;
   /// Current weekly mileage (km); null lets the backend derive it from syncs.
   currentWeeklyKm: number | null;
+  recentLongRunKm?: number | null;
   /// What the runner calls this plan. A local label only — the COROS slot
   /// keeps its fixed name and carries this in the plan description. Null or
   /// blank means Runalytics describes the plan instead of naming it.

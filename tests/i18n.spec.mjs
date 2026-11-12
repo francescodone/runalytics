@@ -74,7 +74,7 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
       ["settings/calendar", "Calendar apps"],
       ["settings/devices", "Device sync"],
       ["settings/transfer", "Transfer connections"],
-      ["settings/assistant", "Injury assistant"],
+      ["settings/assistant", "Third-party connections"],
       ["settings/maps", "Offline maps"],
       ["settings/about", "About and updates"],
       ["help", "A recent workout is missing"],

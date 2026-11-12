@@ -1,4 +1,3 @@
-mod assistant;
 mod calendar;
 mod calendar_publish;
 mod commands;
@@ -167,6 +166,7 @@ pub fn run() {
             commands::run_scores,
             commands::matched_sessions,
             commands::create_plan,
+            commands::preview_plan,
             commands::plan_defaults,
             commands::threshold_report,
             commands::current_plan,
@@ -215,13 +215,7 @@ pub fn run() {
             commands::proposals,
             commands::apply_proposal,
             commands::dismiss_proposal,
-            commands::llm_status,
             calendar_publish::export_connection_settings,
-            commands::set_llm_api_key,
-            commands::clear_llm_api_key,
-            commands::ask_assistant,
-            commands::pain_messages,
-            commands::clear_pain_messages,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Runalytics")

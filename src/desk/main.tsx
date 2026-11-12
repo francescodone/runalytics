@@ -3,7 +3,7 @@ import { Activity, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
-import { IconCalendarWeek, IconRun, IconHeart, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
+import { IconCalendarWeek, IconRun, IconChartLine, IconTrophy, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
@@ -12,8 +12,10 @@ import { ErrorNotice, IconButton } from "./ui";
 import "./desk.css";
 import { Training } from "./training";
 import { Journal } from "./journal";
-import { Health } from "./health";
+import { Milestones } from "./health";
+import { PaceInsightsView } from "./pace-insights";
 import { SettingsWorkspace, Help } from "./settings";
+import { Onboarding, hasOnboardingDraft } from "./onboarding";
 import { Change, MotionSystem, SelectionGroup, SelectionMarker, tempo, useCompactLayout } from "./interaction";
 import { locale, t } from "./i18n";
 import "./interaction.css";
@@ -21,7 +23,8 @@ import "./interaction.css";
 const workspaces = [
   { id: "training", title: t("training"), Icon: IconCalendarWeek },
   { id: "journal", title: t("journal"), Icon: IconRun },
-  { id: "health", title: t("health"), Icon: IconHeart },
+  { id: "pace", title: t("Pace insights"), Icon: IconChartLine },
+  { id: "milestones", title: t("Milestones"), Icon: IconTrophy },
 ] as const;
 
 function App() {
@@ -29,7 +32,7 @@ function App() {
   const compact = useCompactLayout();
   const reduced = useReducedMotion();
   const previousWorkspace = useRef(route.workspace);
-  const workspaceOrder: Workspace[] = ["training", "journal", "health", "settings", "help"];
+  const workspaceOrder: Workspace[] = ["training", "journal", "pace", "milestones", "settings", "help"];
   const direction = Math.sign(workspaceOrder.indexOf(route.workspace) - workspaceOrder.indexOf(previousWorkspace.current)) || 1;
   useEffect(() => { previousWorkspace.current = route.workspace; }, [route.workspace]);
   const [visitedWorkspaces, setVisitedWorkspaces] = useState<Workspace[]>([route.workspace]);
@@ -40,9 +43,19 @@ function App() {
   const appearanceVersion = useRef(0);
   const settings = useRemote(tauri.getSettings);
   const providers = useRemote(tauri.providerStatus);
+  const currentPlan = useRemote(tauri.currentPlan);
+  const [setupCompleted, setSetupCompleted] = useState(() => { try { return localStorage.getItem("runalytics.onboarding.complete") === "1"; } catch { return false; } });
+  const [runnerName, setRunnerName] = useState(() => { try { return localStorage.getItem("runalytics.runnerName") ?? ""; } catch { return ""; } });
+  const setupPending = !setupCompleted && (currentPlan.loading || currentPlan.error !== null || hasOnboardingDraft() || !currentPlan.data);
   const command = useCommand();
   const { syncing, notify } = useWorkspace();
   useEffect(() => {
+    if (setupCompleted || !currentPlan.data || hasOnboardingDraft()) return;
+    try { localStorage.setItem("runalytics.onboarding.complete", "1"); } catch {}
+    setSetupCompleted(true);
+  }, [setupCompleted, currentPlan.data]);
+  useEffect(() => {
+    if (setupPending) return;
     const probe = import.meta.env.DEV && new URLSearchParams(location.search).has("nativeChromeProbe");
     if (!probe && !(isTauri() && /iPhone|iPod/.test(navigator.userAgent))) return;
     let disposed = false;
@@ -51,7 +64,7 @@ function App() {
       if (!disposed) stop = module.startNativeNavigation();
     }).catch(() => {});
     return () => { disposed = true; stop?.(); };
-  }, []);
+  }, [setupPending]);
   useEffect(() => {
     const dragBackground = (event: MouseEvent) => {
       if (document.documentElement.dataset.nativeWindow !== "macos" || event.button !== 0 || event.defaultPrevented) return;
@@ -109,6 +122,11 @@ function App() {
     paint(); media.addEventListener("change", paint);
     return () => media.removeEventListener("change", paint);
   }, [settings.data]);
+  if (setupPending) {
+    if (currentPlan.loading && !hasOnboardingDraft()) return <main id="workspace" className="desk-workspace"><span role="status">{t("Loading")}</span></main>;
+    if (currentPlan.error && !hasOnboardingDraft()) return <main id="workspace" className="desk-workspace"><ErrorNotice error={currentPlan.error} retry={currentPlan.retry} /></main>;
+    return <Onboarding onComplete={() => { try { setRunnerName(localStorage.getItem("runalytics.runnerName") ?? ""); } catch {} setSetupCompleted(true); navigate("training", "plan"); }} />;
+  }
   const title = workspaces.find(entry => entry.id === route.workspace)?.title ?? t(route.workspace === "settings" ? "settings" : "help");
   return <>
     <span className="native-window-title" aria-hidden="true">Runalytics</span>
@@ -133,10 +151,10 @@ function App() {
       </div>
     </header>
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
-      <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1><span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span></div>
+      <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1>{runnerName ? <span className="runner-greeting">{t("Hello, {{value0}}", { value0: runnerName })}</span> : <span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span>}</div>
       <ErrorNotice error={command.error} />
       <FeedbackReminder />
-      <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "health" ? <Health /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
+      <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "pace" ? <PaceInsightsView /> : workspace === "milestones" ? <Milestones /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
     </main>
   </>;
 }

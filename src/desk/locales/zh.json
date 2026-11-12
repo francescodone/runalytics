@@ -1,4 +1,12 @@
 {
+  "Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.": "账户登录信息、OAuth 令牌、训练计划和活动历史不包含在内。",
+  "Watch predictions reflect the latest sync and may not be from today.": "手表预测来自上次同步，可能不是今天的数据。",
+  "Race day projection": "比赛日预测", "Race day is an estimate based on the plan's peak weekly distance and remaining time, not a guarantee. It is shown only for an active race plan with a known starting volume.": "比赛日预测根据计划的最高周跑量和剩余时间估算，并非保证。仅在已知初始跑量且比赛计划有效时显示。",
+  "Optional": "选填",
+  "What is your longest recent long run (km)?": "最近最长的一次长跑是多少公里？", "Enter a distance between 3 and 100 km, or leave it empty.": "请输入3至100公里之间的距离，或留空。",
+  "Which days must stay free?": "哪些日子必须休息？", "Choose days without training, or leave all unselected.": "选择不训练的日子，或全部不选。", "Rest days must leave enough running days and cannot include race day.": "休息日必须留出足够的跑步日，且不能包含比赛日。", "Choose a long run day that is not a rest day.": "请选择非休息日作为长跑日。",
+  "Connect a calendar or GitHub Gist?": "连接日历或 GitHub Gist？",
+  "Enter your name.": "请输入姓名。", "Connect your watch to continue.": "请连接手表后继续。", "Choose an option to continue.": "请选择一个选项后继续。", "Choose an option": "选择一个选项", "Yes": "是", "What should we call you?": "我们该如何称呼你？", "Import connections with a QR code?": "使用二维码导入连接？", "Import your connections": "导入连接", "Connect Strava?": "连接 Strava？", "Update your Strava activities?": "更新你的 Strava 活动？", "Sync across devices?": "在多个设备间同步？", "When does your plan start and end?": "计划何时开始和结束？", "Your plan preview": "计划预览", "Setup": "设置", "Step {{value0}} of {{value1}}": "第 {{value0}} 步，共 {{value1}} 步", "Setup progress": "设置进度", "Name": "姓名", "Adjust the progression before creating your plan.": "创建计划前调整训练进度。", "{{value0}} sessions": "{{value0}} 次训练", "Loading": "正在加载", "Hello, {{value0}}": "你好，{{value0}}", "Your imported plan is ready.": "导入的计划已准备就绪。",
   "Tempo and interval days": "节奏跑和间歇跑日期",
   "Choose at least one quality day.": "请至少选择一天进行质量训练。",
   "Choose available days at least two days from your long run. Some weeks may have fewer quality sessions.": "请选择与长距离跑至少间隔两天的日期。某些周的质量训练可能较少。",

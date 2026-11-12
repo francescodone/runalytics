@@ -6,7 +6,6 @@ use std::sync::Arc;
 use chrono::{DateTime, NaiveDate, Utc};
 use tauri::{Emitter, State};
 
-use crate::assistant;
 use crate::calendar;
 use crate::calendar_publish::{self, Publishing};
 use crate::error::{AppError, Result};
@@ -716,6 +715,17 @@ pub(crate) fn matched_sessions_for_store(store: &crate::store::Store) -> Result<
             })
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn preview_plan(
+    state: State<'_, AppState>,
+    request: PlanRequest,
+) -> Result<(TrainingPlan, Vec<PlanWorkout>)> {
+    let mileage = state.store.mileage_stats()?;
+    let baseline = mileage.weekly_avg_m.map(|meters| meters / 1000.0).unwrap_or(15.0).max(10.0);
+    let evidence = combined_threshold_evidence(&state.store, None)?;
+    engine::generate_with_evidence(&request, baseline, &evidence)
 }
 
 #[tauri::command]
@@ -1935,145 +1945,4 @@ pub async fn plan_receipt(state: State<'_, AppState>) -> Result<Option<Vec<Recei
     };
     let workouts = state.store.plan_workouts(&plan.id)?;
     Ok(Some(receipt::receipt(&plan, &workouts)))
-}
-
-// ---- injury assistant -----------------------------------------------------------
-
-/// Keyring slot for the assistant API key — separate service from COROS OAuth.
-const LLM_KEYRING_SERVICE: &str = "com.fradone.runalytics.llm";
-const LLM_KEYRING_USER: &str = "api_key";
-
-fn llm_key_entry() -> Result<keyring_core::Entry> {
-    crate::secure_store::entry(LLM_KEYRING_SERVICE, LLM_KEYRING_USER)
-        .map_err(|e| AppError::Other(format!("keyring unavailable: {e}")))
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmStatus {
-    /// Endpoint + model configured and the toggle on.
-    pub configured: bool,
-    /// A key is stored (never the key itself).
-    pub has_key: bool,
-    pub endpoint: Option<String>,
-    pub model: Option<String>,
-}
-
-#[tauri::command]
-pub async fn llm_status(state: State<'_, AppState>) -> Result<LlmStatus> {
-    let s = state.settings.lock().unwrap().clone();
-    let has_key = llm_key_entry()?
-        .get_password()
-        .map(|k| !k.is_empty())
-        .unwrap_or(false);
-    Ok(LlmStatus {
-        configured: s.llm_enabled
-            && s.llm_endpoint
-                .as_deref()
-                .is_some_and(|e| !e.trim().is_empty()),
-        has_key,
-        endpoint: s.llm_endpoint,
-        model: s.llm_model,
-    })
-}
-
-#[tauri::command]
-pub async fn set_llm_api_key(key: String) -> Result<()> {
-    if key.trim().is_empty() {
-        return Err(AppError::Other("the key is empty".into()));
-    }
-    llm_key_entry()?
-        .set_password(key.trim())
-        .map_err(|e| AppError::Other(format!("could not store the key: {e}")))
-}
-
-#[tauri::command]
-pub async fn clear_llm_api_key() -> Result<()> {
-    match llm_key_entry()?.delete_credential() {
-        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::Other(format!("could not remove the key: {e}"))),
-    }
-}
-
-/// One turn of the assistant chat for one journal entry. The user message and
-/// the reply are both persisted so the thread survives reloads. With no
-/// endpoint configured the turn is answered locally — the journal stays usable.
-#[tauri::command]
-pub async fn ask_assistant(
-    state: State<'_, AppState>,
-    entry_id: String,
-    question: String,
-) -> Result<PainMessage> {
-    let entry = state
-        .store
-        .pain_entry_by_id(&entry_id)?
-        .ok_or_else(|| AppError::Other("this pain entry no longer exists".into()))?;
-    let now = Utc::now();
-    let user_msg = PainMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        body_part: entry.body_part.clone(),
-        entry_id: Some(entry_id.clone()),
-        role: "user".into(),
-        content: question.clone(),
-        ts: now,
-    };
-    state.store.insert_pain_message(&user_msg)?;
-
-    let history = state.store.list_pain_messages(&entry_id)?;
-    let settings = state.settings.lock().unwrap().clone();
-    let reply_text = if settings.llm_enabled {
-        let endpoint = settings
-            .llm_endpoint
-            .as_deref()
-            .filter(|e| !e.trim().is_empty())
-            .ok_or_else(|| {
-                AppError::Other("no assistant endpoint configured — set one in Settings".into())
-            })?;
-        let endpoint = assistant::validate_endpoint(endpoint)?;
-        let model = settings
-            .llm_model
-            .as_deref()
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or("gpt-4o-mini")
-            .to_string();
-        let key = llm_key_entry().ok().and_then(|e| e.get_password().ok());
-        let ctx = assistant::build_context(&state.store, &entry.body_part, &settings.thresholds())?;
-        // Drop the message we just stored from the history replay.
-        let prior: Vec<PainMessage> = history
-            .into_iter()
-            .filter(|m| m.id != user_msg.id)
-            .collect();
-        assistant::chat(&endpoint, &model, key.as_deref(), &ctx, &prior, &question).await?
-    } else {
-        assistant::offline_note(
-            settings
-                .llm_endpoint
-                .as_deref()
-                .is_some_and(|e| !e.trim().is_empty()),
-        )
-    };
-
-    let reply = PainMessage {
-        id: uuid::Uuid::new_v4().to_string(),
-        body_part: entry.body_part,
-        entry_id: Some(entry_id),
-        role: "assistant".into(),
-        content: reply_text,
-        ts: Utc::now(),
-    };
-    state.store.insert_pain_message(&reply)?;
-    Ok(reply)
-}
-
-#[tauri::command]
-pub async fn pain_messages(
-    state: State<'_, AppState>,
-    entry_id: String,
-) -> Result<Vec<PainMessage>> {
-    state.store.list_pain_messages(&entry_id)
-}
-
-#[tauri::command]
-pub async fn clear_pain_messages(state: State<'_, AppState>, entry_id: String) -> Result<()> {
-    state.store.clear_pain_messages(&entry_id)
 }

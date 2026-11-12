@@ -5,9 +5,20 @@ import { tauri, displayTitle as storedTitle, fmtPace } from "../lib/ipc";
 import { dateValue, navigate, shortDate, today, useRemote } from "./data";
 import { Button, ErrorNotice, InfoDialog, Loading } from "./ui";
 import { PlanAdjustments } from "./proposals";
+import { RaceEstimates } from "./race-estimates";
 import { Change, SelectionGroup, SelectionMarker } from "./interaction";
 
 export function PaceInsightsView() {
+  const plan = useRemote(tauri.currentPlan);
+  const watch = useRemote(tauri.planDefaults);
+  return <>
+    <ErrorNotice error={plan.error} retry={plan.retry} />
+    {plan.loading ? <Loading /> : plan.data?.[0] ? <RaceEstimates plan={plan.data[0]} workouts={plan.data[1]} watch={watch.data} /> : !plan.error && <p className="context-note">{t("Create a training plan and link completed runs to see pace insights.")}</p>}
+    <PaceHistory />
+  </>;
+}
+
+function PaceHistory() {
   const remote = useRemote(tauri.paceInsights);
   const [mode, setMode] = useState<"speed" | "long">("speed");
   const [selectedId, setSelectedId] = useState<string | null>(null);

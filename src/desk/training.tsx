@@ -6,9 +6,7 @@ import type { CalendarEvent, PlanDefaults, PlanKind, PlanRequest, TrainingPlan, 
 import { planName as displayPlanName } from "./i18n";
 import { capitalizeFirst, dateValue, dayName, kindName, monday, navigate, sessionTitle, shiftDate, shortDate, today, useCommand, useRemote, useRoute, useWorkspace } from "./data";
 import { Button, CountUp, Dialog, Empty, ErrorNotice, IconButton, Inspector, Loading, Metric } from "./ui";
-import { PlanAdjustments } from "./proposals";
 import { EditPlan, SessionFeedback } from "./feedback";
-import { RaceEstimates } from "./race-estimates";
 import { Change, Disclosure, Presence, SelectionGroup, SelectionMarker, useCompactLayout } from "./interaction";
 
 type Horizon = "week" | "month" | "plan";
@@ -231,12 +229,10 @@ export function Training() {
           return <button key={week} className={`roadmap-row is-${state}`} aria-current={state === "current" ? "date" : undefined} onClick={() => { setCursor(week); setSelectedDay(state === "current" ? today() : week); navigate("training", "week"); }}><span><span className="roadmap-week">{t("Week {{value0}}", { value0: index + 1 })}<em>{state === "past" ? t("Done") : state === "current" ? t("This week") : t("Upcoming")}</em></span><small><time dateTime={week}>{weekDate(week)}</time> - <time dateTime={shiftDate(week, 6)}>{weekDate(shiftDate(week, 6))}</time>{downWeeks.data?.includes(week) ? t(" / Recovery") : ""}</small></span><span className="roadmap-track" role="img" aria-label={t("{{value0}} run of {{value1}} planned", { value0: fmtKm(ran), value1: fmtKm(planned) })}><i style={{ width: `${planned > 0 ? Math.min(100, ran / planned * 100) : 0}%` }} /></span><strong>{fmtKm(planned)}<small>{t("planned")}</small></strong><strong>{fmtKm(ran)}<small>{t("done")}</small></strong><IconArrowRight size={18} /></button>;
         })}</PlanRoadmap>
       </>}</section>
-      {plan && <><EditPlan key={plan.id} planId={plan.id} /><PlanAdjustments source="pacing" /></>}</div>
+      {plan && <EditPlan key={plan.id} planId={plan.id} />}</div>
       <section className="plan-basis" aria-labelledby="plan-details-heading"><header className="plan-basis-heading"><h3 id="plan-details-heading">{t("Plan details")}</h3>{compact && <Button aria-expanded={detailsOpen} aria-controls="plan-details" onClick={() => setDetailsOpen(open => !open)}>{detailsOpen ? t("Hide details") : t("Show details")}<IconChevronDown className="disclosure-indicator" size={18} aria-hidden="true" /></Button>}</header><Disclosure id="plan-details" className="plan-basis-content" open={!compact || detailsOpen}><h3>{t("Plan basis")}</h3>{plan ? <>
         <div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Plan basis")}><table><caption className="sr-only">{t("What the plan was built from")}</caption><tbody><tr><th scope="row">{t("Target date")}</th><td>{fmtDateDMY(plan.targetDate)}</td></tr><tr><th scope="row">{t("Starting volume")}</th><td>{plan.baselineWeeklyKm == null ? t("From training history") : t("{{value0}} km/week", { value0: number(plan.baselineWeeklyKm, 1) })}</td></tr><tr><th scope="row">{t("Progression")}</th><td>{capitalizeFirst(plan.increase)}</td></tr><tr><th scope="row">{t("Watch")}</th><td>{plan.pushedId ? t("Published") : t("Not sent yet")}</td></tr></tbody></table></div>
         {receipt.data?.length ? <div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Plan receipt")}><table><caption className="sr-only">{t("How your answers shaped the plan")}</caption><thead><tr><th>{t("Your input")}</th><th>{t("What it did")}</th></tr></thead><tbody>{receipt.data.map((line, index) => <tr key={index}><th scope="row">{text(line.input)}</th><td>{text(line.sentence)}</td></tr>)}</tbody></table></div> : null}
-        {defaults.data && <Predictions defaults={defaults.data} />}
-        <RaceEstimates plan={plan} />
         {remotePlan.data && <><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Device plan")}><table><caption className="sr-only">{t("The plan on your other device")}</caption><tbody><tr><th scope="row">{t("Device plan")}</th><td>{capitalizeFirst(({upToDate:t("up to date"),unpublished:t("not yet published"),updateAvailable:t("update available"),otherPlan:t("different plan on the other device"),importAvailable:t("ready to import")})[remotePlan.data.status])}</td></tr></tbody></table></div><a className="desk-button normal context-link" href="#settings/devices">{t("Manage device sync")}</a></>}
         <Button tone="danger" onClick={() => { cancelPlanId.current = plan.id; setCancel(true); }}>{t("End current plan")}</Button>
       </> : <p className="muted">{t("Your recent mileage and threshold pace establish the starting load. Plan generation remains local.")}</p>}</Disclosure></section>
@@ -427,10 +423,6 @@ function ResetWeek({ weekStart, planId, onClose }: { weekStart: string; planId?:
       </Button>
     </div>
   </Dialog>;
-}
-
-function Predictions({ defaults }: { defaults: PlanDefaults }) {
-  return <section className="watch-predictions"><h3>{t("Watch predictions")}</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Watch predictions")}><table><caption className="sr-only">{t("Predicted race times from your current fitness")}</caption><tbody>{[["5 km", defaults.predict5kS], ["10 km", defaults.predict10kS], [t("Half marathon"), defaults.predictHalfS], [t("Marathon"), defaults.predictMarathonS]].map(([label, seconds]) => <tr key={label as string}><th scope="row">{label}</th><td>{typeof seconds === "number" ? fmtDuration(seconds, label === t("5 km") || label === t("10 km")) : t("Not available")}</td></tr>)}</tbody></table></div></section>;
 }
 
 function CreatePlan({ defaults, onClose }: { defaults?: PlanDefaults; onClose: () => void }) {

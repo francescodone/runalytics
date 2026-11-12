@@ -5,6 +5,152 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const width of [320, 1440]) test(`new synced achievements celebrate once in order at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 740 });
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__achievementVibrations = [];
+    navigator.vibrate = pattern => { window.__achievementVibrations.push(pattern); return true; };
+    window.__achievementActivities = [];
+    window.__achievementReads = 0;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => { if (command === 'all_activities') { window.__achievementReads++; return window.__achievementActivities; } return invoke(command, args); };
+    window.__originalActivities = () => invoke('all_activities', {});
+  });
+  await page.goto('/desk.html#milestones');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('runalytics.earned-achievements'))).not.toBeNull();
+  await page.evaluate(async () => {
+    const [sample] = await window.__originalActivities();
+    window.__achievementActivities = [
+      {...sample, id: 501, startTime: '2026-11-07T10:00:00', distanceM: 1000},
+      {...sample, id: 502, startTime: '2026-11-08T10:00:00', distanceM: 1000},
+    ];
+    window.__deskEmit('sync://completed', {ok: false});
+  });
+  await expect(page.getByRole('dialog', {name:'Earned'})).toHaveCount(0);
+  await page.evaluate(() => window.__deskEmit('sync://completed', {ok: true}));
+  const dialog = page.getByRole('dialog', {name:'Earned'});
+  await expect(dialog).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath(`achievement-${width}.png`)});
+  const names = [];
+  while (await dialog.count()) {
+    names.push(await dialog.locator('h3').innerText());
+    await dialog.getByRole('button', {name:'Continue'}).click();
+  }
+  expect(names).toContain('Weekend warrior');
+  expect(new Set(names).size).toBe(names.length);
+  expect(await page.evaluate(() => window.__achievementVibrations.length)).toBe(names.length);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  const reads = await page.evaluate(() => { const count = window.__achievementReads; window.__deskEmit('sync://completed', {ok: true}); return count; });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads);
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() => { window.__achievementActivities = []; window.__deskEmit('sync://completed', {ok:true}); });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads + 1);
+  await page.evaluate(async () => {
+    const [sample] = await window.__originalActivities();
+    window.__achievementActivities = [{...sample, id:501, startTime:'2026-11-07T10:00:00', distanceM:1000}, {...sample, id:502, startTime:'2026-11-08T10:00:00', distanceM:1000}];
+    window.__deskEmit('sync://completed', {ok:true});
+  });
+  await expect.poll(() => page.evaluate(() => window.__achievementReads)).toBeGreaterThan(reads + 2);
+  await expect(dialog).toHaveCount(0);
+});
+
+test('achievement celebration requests native haptics and animates when motion is enabled', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion:'no-preference' });
+  await page.addInitScript(() => { window.isTauri = true; });
+  await page.goto('/desk.html#milestones');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('runalytics.earned-achievements'))).not.toBeNull();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('runalytics:achievements-unlocked', {detail:[{id:'test',name:'First mile',desc:'Log your first run',icon:'<svg viewBox="0 0 24 24"></svg>',earned:true}]})));
+  await expect(page.getByRole('dialog', {name:'Earned'})).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === 'plugin:haptics|notification_feedback').map(call => call.args))).toEqual([{type:'success'}]);
+  await expect.poll(() => page.locator('.achievement-celebration-icon').evaluate(element => element.getAnimations().length)).toBeGreaterThan(0);
+});
+
+test('startup reconciles achievements against a saved baseline', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('runalytics.earned-achievements', '[]'));
+  await page.goto('/desk.html#milestones');
+  await expect(page.getByRole('dialog', {name:'Earned'})).toBeVisible();
+  await expect(page.locator('.achievement-celebration h3')).not.toBeEmpty();
+});
+
+test('retired assistant settings and help are unavailable', async ({ page }) => {
+  await page.goto('/desk.html#settings/assistant');
+  await expect(page.getByRole('region', { name: 'Third-party connections' })).toBeVisible();
+  await expect(page.getByText('Injury assistant', { exact: true })).toHaveCount(0);
+  await page.goto('/desk.html#help');
+  await page.getByRole('searchbox', { name: 'Search help' }).fill('assistant');
+  await expect(page.getByText('No matching topics')).toBeVisible();
+  expect(await page.evaluate(() => window.__deskCalls.some(call => ['llm_status', 'ask_assistant', 'set_llm_api_key'].includes(call.command)))).toBe(false);
+});
+
+for (const width of [320, 1440]) test(`pacing evidence appears in pace insights instead of the plan at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/desk.html?pacingProposal=1#training/plan');
+  await expect(page.getByRole('heading', { name: 'Training horizon' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pacing evidence' })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath(`plan-${width}.png`), fullPage: true });
+  await page.getByRole('link', { name: 'Pace insights' }).click();
+  await expect(page.getByRole('heading', { name: 'Pacing evidence' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review changes', exact: true })).toBeVisible();
+  const alignment = await page.locator('.pace-insights').evaluate(section => {
+    const parent = section.getBoundingClientRect();
+    const selector = section.querySelector('.pace-mode').getBoundingClientRect();
+    return Math.abs((parent.left + parent.right - selector.left - selector.right) / 2);
+  });
+  expect(alignment).toBeLessThanOrEqual(1);
+  const mode = page.getByRole('group', { name: 'Pace workout type' });
+  await mode.getByRole('button', { name: 'Long', exact: true }).click();
+  await expect(mode.getByRole('button', { name: 'Long', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await mode.screenshot({ path: testInfo.outputPath(`pace-mode-${width}.png`) });
+  await mode.getByRole('button', { name: 'Speed', exact: true }).click();
+  await expect(mode.getByRole('button', { name: 'Speed', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+for (const width of [320, 1440]) test(`race estimates compare watch and plan with race day at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/desk.html#pace');
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  await expect(estimates.getByRole('columnheader', { name: 'Watch · Today' })).toBeVisible();
+  await expect(estimates.getByRole('columnheader', { name: 'Plan · Today' })).toBeVisible();
+  await expect(estimates.getByRole('columnheader', { name: 'Race day projection' })).toBeAttached();
+  await expect(estimates.getByRole('row', { name: /5 km/ }).locator('td').first()).toHaveText('20m 00s');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await estimates.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath(`race-estimates-${width}.png`), fullPage: true });
+  expect(await page.evaluate(async () => {
+    const { raceDayThreshold, trainingRaceTime } = await import('/src/desk/race-estimates.tsx');
+    const plan = {kind:'race',status:'active',targetDate:'2027-03-15',distance:'21K',baselineWeeklyKm:40,thresholdSecKm:300,qualityOffsetSecKm:0};
+    const workouts = [{date:'2027-02-15',kind:'easy',distanceM:20000},{date:'2027-02-17',kind:'long_run',distanceM:24000},{date:'2027-03-15',kind:'race',distanceM:100000}];
+    const threshold = raceDayThreshold(plan, workouts, '2027-02-15');
+    return [threshold, trainingRaceTime(threshold, 0, 21.0975), raceDayThreshold({...plan,kind:'maintenance'},workouts,'2027-02-15'), raceDayThreshold({...plan,baselineWeeklyKm:null},workouts,'2027-02-15'), raceDayThreshold(plan,workouts,'2027-03-15'), raceDayThreshold(plan,[workouts[2]],'2027-02-15')];
+  })).toEqual([294, 6408, null, null, null, null]);
+});
+
+test('missing watch prediction does not hide plan estimates', async ({ page }) => {
+  await page.goto('/desk.html?noWatchPredictions#pace');
+  const row = page.getByRole('region', { name: 'Training race estimates', exact: true }).getByRole('row', { name: /5 km/ });
+  await expect(row.locator('td').first()).toHaveText('Not available');
+  await expect(row.locator('td[data-seconds]')).not.toHaveText('Not available');
+  await expect(page.getByText('Watch predictions reflect the latest sync and may not be from today.')).toBeVisible();
+});
+
+for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`pace and milestones navigation ${theme} ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto(`/desk.html?theme=${theme}#health/pace`);
+  const navigation = page.locator(".desk-navigation");
+  await expect(navigation.locator("a")).toHaveCount(4);
+  await expect(navigation.getByRole("link", { name: "Pace insights" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("region", { name: "Training race estimates" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Pace workout type" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await navigation.getByRole("link", { name: "Milestones" }).click();
+  await expect(page.getByRole("heading", { name: "Last 12 weeks" })).toBeVisible();
+  await page.goto(`/desk.html?theme=${theme}#health/milestones`);
+  await expect(page.getByRole("heading", { name: "Last 12 weeks" })).toBeVisible();
+  await page.goto(`/desk.html?theme=${theme}#training/plan`);
+  await expect(page.getByRole("region", { name: "Training race estimates" })).toHaveCount(0);
+});
+
 test("optional session feedback keeps failed drafts and never defaults to a rating", async ({ page }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -1624,11 +1770,9 @@ test('graded performance proposals preview race estimates and only change them a
   await page.evaluate(()=>{window.__deskFail='';});
   await page.getByRole('button',{name:'Apply changes',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('link',{name:'Overview',exact:true}).click();
-  await page.getByRole('button',{name:'Show health details',exact:true}).click();
-  const estimates=page.getByRole('region',{name:'Training race estimates'});
+  const estimates=page.getByRole('region',{name:'Training race estimates',exact:true});
   await expect(estimates).toBeVisible();
-  expect(await estimates.locator('tbody td').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
+  expect(await estimates.locator('tbody td[data-seconds]').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
 });
 
 for (const width of [320,1440]) {
@@ -2570,7 +2714,7 @@ for (const width of [390, 1440]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
 
-    test(`disclosure health details and conversation drafts stay accessible ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
+    test(`disclosure health details and pain logging stay accessible ${reducedMotion} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ reducedMotion });
       await page.goto("/desk.html#health");
@@ -2595,21 +2739,9 @@ for (const width of [390, 1440]) {
       await page.getByRole("combobox", { name: "Body region", exact: true }).selectOption("knee.left");
       await page.getByRole("button", { name: "Save pain entry" }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      const discuss = page.getByRole("button", { name: "Discuss episode" });
-      await expect(discuss).toBeVisible();
+      await expect(page.locator(".pain-episode")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Discuss episode" })).toHaveCount(0);
       await expect(page.locator(".episode-chat")).toHaveCount(0);
-      await discuss.click();
-      const question = page.getByRole("textbox", { name: "Your question" });
-      await question.fill("Keep this unfinished question");
-      await page.getByRole("checkbox", { name: /I agree to send/ }).check();
-      await discuss.click();
-      await expect(page.getByRole("region", { name: "Episode conversation" })).toHaveCount(0);
-      await page.keyboard.press("Tab");
-      await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeFocused();
-      await discuss.click();
-      await expect(question).toHaveValue("Keep this unfinished question");
-      await expect(page.getByRole("checkbox", { name: /I agree to send/ })).toBeChecked();
-      await expect(page.getByRole("button", { name: "Send question" })).toBeEnabled();
       expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "ask_assistant").length)).toBe(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
@@ -2698,7 +2830,7 @@ test("Activities list hides filters until revealed and opens recorded splits", a
   await expect(page.locator(".activity-row").first()).toBeFocused();
 });
 
-test("pain logging retains failure drafts and episode conversations survive refresh", async ({ page }) => {
+test("pain logging retains failure drafts and supports resolving episodes", async ({ page }) => {
   await page.goto("/desk.html#health/journal");
   await page.getByRole("button", { name: "Log pain", exact: true }).first().click();
   await page.getByRole("combobox", { name: "Body region", exact: true }).selectOption("knee.left");
@@ -2711,13 +2843,7 @@ test("pain logging retains failure drafts and episode conversations survive refr
   await page.getByRole("button", { name: "Save pain entry" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator(".pain-episode")).toContainText("Left knee");
-  await page.getByRole("button", { name: "Discuss episode" }).click();
-  await page.getByRole("textbox", { name: "Your question" }).fill("Should I take a rest day?");
-  await expect(page.getByRole("button", { name: "Send question" })).toBeDisabled();
-  await page.getByRole("checkbox", { name: /I agree to send/ }).check();
-  await page.getByRole("button", { name: "Send question" }).click();
-  await expect(page.locator(".chat-message.assistant")).toContainText("reducing the session");
-  await expect(page.getByRole("textbox", { name: "Your question" })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Discuss episode" })).toHaveCount(0);
   await page.getByRole("button", { name: "Mark resolved" }).click();
   await expect(page.locator(".pain-episode")).toHaveCount(0);
   await page.getByRole("checkbox", { name: "Include resolved" }).check();
@@ -2743,15 +2869,16 @@ for (const width of [320,390,1440]) for (const theme of ["light","dark"]) {
     await page.setViewportSize({width,height:900});
     await page.goto(`/desk.html?theme=${theme}#settings`);
     const group=page.getByRole("region",{name:"Third-party connections",exact:true});
-    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(group.getByRole("link")).toHaveCount(5);
     await expect(page.locator(".settings-group > h2")).toHaveText(["Third-party connections","General"]);
-    await expect(group.getByRole("link").locator("strong")).toHaveText(["Watch connection","Transfer connections","Device sync","Calendar apps","Strava","Injury assistant"]);
-    for(const route of ["watch","strava","calendar","devices","transfer","assistant"]) await expect(group.locator(`a[href="#settings/${route}"]`)).toBeVisible();
+    await expect(group.getByRole("link").locator("strong")).toHaveText(["Watch connection","Transfer connections","Device sync","Calendar apps","Strava"]);
+    for(const route of ["watch","strava","calendar","devices","transfer"]) await expect(group.locator(`a[href="#settings/${route}"]`)).toBeVisible();
+    await expect(group.locator('a[href="#settings/assistant"]')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect((await new AxeBuilder({page}).include(".settings-directory").analyze()).violations).toEqual([]);
     await page.screenshot({path:test.info().outputPath(`settings-groups-${width}-${theme}.png`),fullPage:true});
     await page.getByRole("searchbox",{name:"Search settings"}).fill("third-party");
-    await expect(group.getByRole("link")).toHaveCount(6);
+    await expect(group.getByRole("link")).toHaveCount(5);
     await expect(page.getByRole("region",{name:"General",exact:true})).toHaveCount(0);
     await page.getByRole("searchbox",{name:"Search settings"}).fill("no-such-setting");
     await expect(page.getByText("No matching settings",{exact:true})).toBeVisible();
@@ -2839,8 +2966,7 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   await expect(dialog).not.toContainText("synthetic-calendar-secret");
   await expect(dialog).not.toContainText("synthetic-assistant-secret");
   await expect(dialog).toContainText("COROS account matches this device.");
-  await expect(dialog).toContainText("https://assistant.example.test/v1");
-  await expect(dialog).toContainText("transfer-model");
+  await expect(dialog).not.toContainText("Assistant endpoint");
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_configure"))).toBe(false);
   await page.screenshot({path:test.info().outputPath("transfer-import-review.png"),fullPage:true});
   await dialog.getByRole("checkbox",{name:"I trust this QR source and understand the account could not be fully verified."}).check();
@@ -2854,11 +2980,7 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   expect(syncCalls.at(-2).args).toEqual({config:{enabled:false},token:"synthetic-github-token"});
   expect(syncCalls.at(-1).args).toEqual({config:{enabled:true},token:null});
   expect(calls.find(call => call.command === "strava_configure").args).toEqual({clientId:"12345",clientSecret:"synthetic-strava-secret"});
-  expect(calls.find(call => call.command === "set_llm_api_key").args).toEqual({key:"synthetic-assistant-secret"});
-  const importedSettings=calls.find(call=>call.command==="save_settings").args.settings;
-  expect(importedSettings.llmEnabled).toBe(false);
-  expect(importedSettings.llmEndpoint).toBe("https://assistant.example.test/v1");
-  expect(importedSettings.llmModel).toBe("transfer-model");
+  expect(calls.some(call => call.command === "set_llm_api_key" || call.command === "clear_llm_api_key")).toBe(false);
 });
 
 test("connection transfer camera denial retains image upload fallback", async ({page}) => {
@@ -2963,6 +3085,8 @@ test("connection transfer rejects unsupported and tampered encrypted settings", 
     const good=await sealConnections(valid,phrase);
     const legacy=await openConnections(good,phrase);
     if (legacy.strava !== undefined || legacy.calendar.username !== "runner") throw new Error("Legacy transfer changed");
+    const oldAssistant = await openConnections(await sealConnections({...valid,assistant:{endpoint:'https://example.test',model:'old',apiKey:'secret'}},phrase),phrase);
+    if ('assistant' in oldAssistant || oldAssistant.calendar.username !== 'runner') throw new Error('Legacy assistant data was not discarded');
     payloads.push(good.slice(0,-5)+"AAAAA");
     return Promise.all(payloads.map(async code => {try{await openConnections(code,phrase);return false;}catch{return true;}}));
   });

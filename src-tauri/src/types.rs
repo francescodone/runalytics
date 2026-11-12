@@ -300,11 +300,15 @@ pub struct PlanRequest {
     pub longrun_day: u32,
     #[serde(default)]
     pub quality_days: Vec<u32>,
+    #[serde(default)]
+    pub rest_days: Vec<u32>,
     pub increase: IncreaseMethod,
     /// Runner's current weekly mileage (km). When absent the backend
     /// derives it from the last weeks of synced activities.
     #[serde(default)]
     pub current_weekly_km: Option<f64>,
+    #[serde(default)]
+    pub recent_long_run_km: Option<f64>,
     /// What the runner calls this plan. A local label only: the COROS
     /// library slot keeps its fixed name, and this name rides in the plan's
     /// description there. Absent means Runalytics describes the plan itself.

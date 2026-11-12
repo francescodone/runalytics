@@ -6,7 +6,8 @@ const input = {
   tabs: [
     { id: "training", title: "Training" },
     { id: "journal", title: "Activities" },
-    { id: "health", title: "Health" },
+    { id: "pace", title: "Pace insights" },
+    { id: "milestones", title: "Milestones" },
   ],
   selected: "training",
   theme: "light",
@@ -73,10 +74,10 @@ test("native chrome rejects stale, malformed, cross-session and duplicate intent
   assert.deepEqual(host.routes, ["journal"]);
   assert.deepEqual(host.states.at(-1), { ready: true, bottomInset: 83 });
   await host.bridge.update({ ...input, selected: "journal" });
-  host.send({ workspace: "health" });
+  host.send({ workspace: "milestones" });
   assert.deepEqual(host.routes, ["journal"]);
-  host.send({ eventId: "tap-3", workspace: "health" });
-  assert.deepEqual(host.routes, ["journal", "health"]);
+  host.send({ eventId: "tap-3", workspace: "milestones" });
+  assert.deepEqual(host.routes, ["journal", "milestones"]);
   await host.bridge.close();
 });
 

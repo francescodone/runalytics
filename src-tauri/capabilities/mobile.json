@@ -4,5 +4,5 @@
   "description": "Light tap feedback for mobile controls",
   "windows": ["main"],
   "platforms": ["iOS", "android"],
-  "permissions": ["haptics:allow-impact-feedback"]
+  "permissions": ["haptics:allow-impact-feedback", "haptics:allow-notification-feedback"]
 }

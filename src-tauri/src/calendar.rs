@@ -889,16 +889,22 @@ pub fn events(store: &Store) -> Result<Vec<CalendarEvent>> {
                 .estimated_min
                 .or(workout.duration_min)
                 .unwrap_or(45.0);
+            let skipped = workout.status == WorkoutStatus::Skipped;
+            let emoji = if skipped { "❌" } else { RUN_EMOJI };
+            let mut notes = workout_notes(&workout, &plan);
+            if skipped {
+                notes.push_str("\n\nSkipped");
+            }
             output.push(CalendarEvent {
                 id: workout.id.clone(),
                 workout_id: Some(workout.id.clone()),
                 activity_id: None,
                 date: workout.date,
                 kind: event_kind(workout.kind),
-                title: format!("{RUN_EMOJI} {}", workout.title),
+                title: format!("{emoji} {}", workout.title),
                 distance_m: workout.distance_m,
                 duration_min: Some(duration),
-                notes: workout_notes(&workout, &plan),
+                notes,
                 // All-day until matched: the plan says *what* to run that
                 // day, not *when*. Matching a run swaps in the real slot.
                 start: workout.date.format("%Y%m%d").to_string(),
@@ -1018,6 +1024,8 @@ mod tests {
             weekly_frequency: 4,
             longrun_day: 7,
             quality_days: vec![],
+            rest_days: vec![],
+            recent_long_run_km: None,
             increase: IncreaseMethod::Moderate,
             current_weekly_km: Some(30.0),
             name: None,
@@ -1376,6 +1384,15 @@ mod tests {
             .find(|e| e.workout_id.as_deref() == Some(workout.id.as_str()))
             .unwrap();
         assert_eq!(event.status, "skipped");
+        assert_eq!(event.title, format!("❌ {}", workout.title));
+        assert!(event.notes.contains("\n\nSkipped"));
+        assert!(event.all_day);
+        assert_eq!(event.start, workout.date.format("%Y%m%d").to_string());
+        assert_eq!(event.end, (workout.date + Duration::days(1)).format("%Y%m%d").to_string());
+        let ics = render(&store, &[event]).unwrap().replace("\r\n ", "");
+        assert!(ics.contains(&format!("SUMMARY:❌ {}", escape(&workout.title))));
+        assert!(ics.contains("\\n\\nSkipped"));
+        assert!(ics.contains(&format!("DTSTART;VALUE=DATE:{}", workout.date.format("%Y%m%d"))));
         // A skipped session is a decision, so it is never a lapse — which is
         // what stops a deliberate rest from dragging adherence down.
         assert!(!skipped.is_missed(today + Duration::days(1)));
@@ -1386,6 +1403,14 @@ mod tests {
             stored.iter().find(|w| w.id == workout.id).unwrap().status,
             WorkoutStatus::Planned
         );
+        let restored = events(&store)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.workout_id.as_deref() == Some(workout.id.as_str()))
+            .unwrap();
+        assert_eq!(restored.title, format!("{RUN_EMOJI} {}", workout.title));
+        assert!(!restored.notes.contains("\n\nSkipped"));
+        assert!(restored.all_day);
 
         // Race day belongs to the event, and a finished run is history.
         let race = workouts.iter().find(|w| w.kind == WorkoutKind::Race).unwrap();

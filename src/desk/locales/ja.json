@@ -1,4 +1,12 @@
 {
+  "Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.": "アカウントのログイン情報、OAuthトークン、トレーニングプラン、アクティビティ履歴は含まれません。",
+  "Watch predictions reflect the latest sync and may not be from today.": "時計の予測は最終同期時のもので、今日のデータとは限りません。",
+  "Race day projection": "レース当日の予測", "Race day is an estimate based on the plan's peak weekly distance and remaining time, not a guarantee. It is shown only for an active race plan with a known starting volume.": "レース当日の数値は、プランの最大週間距離と残り時間に基づく推定であり、保証ではありません。開始時の走行距離が分かる有効なレースプランにのみ表示されます。",
+  "Optional": "任意",
+  "What is your longest recent long run (km)?": "最近の最長ロングランは何kmですか？", "Enter a distance between 3 and 100 km, or leave it empty.": "3〜100 kmの距離を入力するか、空欄のままにしてください。",
+  "Which days must stay free?": "必ず休みにする曜日は？", "Choose days without training, or leave all unselected.": "練習しない曜日を選ぶか、すべて未選択のままにしてください。", "Rest days must leave enough running days and cannot include race day.": "十分な練習日を確保し、レース当日を休養日に含めないでください。", "Choose a long run day that is not a rest day.": "休養日以外からロングランの日を選んでください。",
+  "Connect a calendar or GitHub Gist?": "カレンダーまたはGitHub Gistを接続しますか？",
+  "Enter your name.": "名前を入力してください。", "Connect your watch to continue.": "続行するにはウォッチを接続してください。", "Choose an option to continue.": "続行するには選択してください。", "Choose an option": "選択してください", "Yes": "はい", "What should we call you?": "お名前を教えてください", "Import connections with a QR code?": "QRコードで接続情報を読み込みますか？", "Import your connections": "接続情報を読み込む", "Connect Strava?": "Stravaを接続しますか？", "Update your Strava activities?": "Stravaのアクティビティを更新しますか？", "Sync across devices?": "複数のデバイスで同期しますか？", "When does your plan start and end?": "プランの開始日と終了日は？", "Your plan preview": "プランのプレビュー", "Setup": "セットアップ", "Step {{value0}} of {{value1}}": "ステップ {{value0}} / {{value1}}", "Setup progress": "セットアップの進行状況", "Name": "名前", "Adjust the progression before creating your plan.": "プランを作成する前に進行度を調整してください。", "{{value0}} sessions": "{{value0}}セッション", "Loading": "読み込み中", "Hello, {{value0}}": "こんにちは、{{value0}}さん", "Your imported plan is ready.": "インポートしたプランの準備ができました。",
   "Tempo and interval days": "テンポ走とインターバルの日",
   "Choose at least one quality day.": "質の高い練習の日を1日以上選択してください。",
   "Choose available days at least two days from your long run. Some weeks may have fewer quality sessions.": "ロング走から2日以上離れた日を選択してください。週によってはポイント練習が少なくなります。",
