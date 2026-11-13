@@ -60,7 +60,7 @@ function scheduleNoticeDismissal(node: HTMLElement | null, dismiss: () => void) 
   let disposed = false;
   const update = () => {
     if (disposed) return;
-    const held = node.matches(":hover") || node.contains(document.activeElement);
+    const held = document.documentElement.hasAttribute("data-brand-launch") || node.matches(":hover") || node.contains(document.activeElement);
     if (held && timer) {
       window.clearTimeout(timer);
       timer = 0;
@@ -75,9 +75,12 @@ function scheduleNoticeDismissal(node: HTMLElement | null, dismiss: () => void) 
   node.addEventListener("pointerleave", update);
   node.addEventListener("focusin", update);
   node.addEventListener("focusout", focusOut);
+  const launchObserver = new MutationObserver(update);
+  launchObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-brand-launch"] });
   update();
   return () => {
     disposed = true;
+    launchObserver.disconnect();
     window.clearTimeout(timer);
     node.removeEventListener("pointerenter", update);
     node.removeEventListener("pointerleave", update);

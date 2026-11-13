@@ -1,3 +1,26 @@
+## Unified Action Buttons, 2026-11-13
+
+Primary actions use the same neutral pill surface as the training-plan link;
+selected controls retain their selection treatment and destructive actions retain
+warning colors. Disabled and reduced-transparency primary actions use the same
+neutral fallback as other actions.
+
+Verification: the production build and eight synthetic-IPC control checks passed
+at 320, 390, 768 and 1440px in light and dark themes, including hover and
+increased-contrast states. A 320px light settings screenshot was inspected.
+Native WebViews, physical devices and live providers were not tested.
+
+## Splash Notification Ordering, 2026-11-13
+
+Notifications stay hidden during the opening splash, including when their
+viewport uses the browser top layer. Their dismissal timers and countdown rings
+pause until the splash finishes or is interrupted.
+
+Verification: the production build and 11 synthetic-IPC Chromium checks passed.
+Splash handoff was checked at 320, 390, 820 and 1440px; notification appearance
+was checked at 390 and 1440px in light and dark themes. Native WebViews, physical
+devices and live providers were not tested.
+
 ## Drifting Material Aura, 2026-11-13
 
 Existing aura-backed toolbars, route controls, choice tracks, pace modes, setup

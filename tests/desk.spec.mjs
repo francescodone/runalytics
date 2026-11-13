@@ -96,6 +96,31 @@ test("brand splash skips reduced motion and cancels live preference, input and r
   }
 });
 
+test("brand splash defers notifications without consuming their countdown", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+  });
+  await page.goto("/desk.html#training");
+  await expect(page.locator(".brand-splash")).toHaveAttribute("data-phase", "intro");
+  await expect(page.locator(".desk-appbar")).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty("--notice-duration", "1s");
+    window.__deskEmit("sync://completed", { ok: false });
+  });
+  const notice = page.locator(".desk-notice");
+  await expect(notice).toHaveCount(1);
+  await expect(notice).toBeHidden();
+  await expect(notice.locator(".stage-ring circle")).toHaveCSS("animation-play-state", "paused");
+  await page.waitForTimeout(1200);
+  await expect(notice).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".brand-splash")).toHaveCount(0);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Background sync failed.");
+  await expect(notice).toHaveCount(0, { timeout: 3000 });
+});
+
 test("brand splash survives a viewport resize during launch", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/desk.html#training");

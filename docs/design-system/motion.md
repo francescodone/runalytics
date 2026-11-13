@@ -164,7 +164,9 @@ preference changes cancel it immediately without blocking the initiating action.
 Viewport resizes during the intro are accommodated before measuring the destination;
 resizes during docking cancel the handoff.
 A bounded startup deadline exposes loading or errors if no header becomes ready;
-fonts, delayed data and setup do not create an indefinite splash.
+fonts, delayed data and setup do not create an indefinite splash. Notifications
+are hidden during the handoff, including when their viewport is in the browser
+top layer. Their dismissal timers and countdown rings pause until the splash ends.
 
 ## Accessibility And Performance
 

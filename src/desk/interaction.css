@@ -69,7 +69,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 }
 :is(.desk-button:not(.primary), .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { background: var(--control-surface); border: var(--control-border) solid var(--control-edge); color: var(--desk-ink); }
 .desk-button.danger { color: var(--desk-danger); }
-.desk-button.primary { background: var(--button-primary-surface); color: var(--button-primary-ink); border-color: color-mix(in srgb, var(--desk-action) 65%, var(--control-edge)); }
+.desk-button.primary { background: var(--control-surface); color: var(--desk-ink); border-color: var(--control-edge); }
 :is(.session-tile, .activity-row, .roadmap-row, .text-button) { background-color: color-mix(in srgb, var(--session-color, var(--desk-action)) 4%, var(--control-surface)); }
 :is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current, .mobile-date-ribbon button[aria-pressed="true"], .lap-row-button[aria-pressed="true"], .choice-row label:has(:checked), .palette-options label:has(:checked)) { background-color: var(--state-selected); }
 .mobile-date-ribbon button[aria-pressed="true"] { color: var(--button-primary-ink); border-color: var(--desk-action); }
@@ -99,7 +99,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .notification-viewport:not([popover]) { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport:popover-open { display: flex; flex-direction: column; gap: var(--space-3); }
 .notification-viewport::backdrop { display: none; }
-.notification-viewport:empty { visibility: hidden; }
+.notification-viewport:empty, :root[data-brand-launch] .notification-viewport { visibility: hidden; }
 .notification-viewport .desk-notice { position: relative; inset: auto; width: 100%; max-width: none; margin: 0; translate: none; transform: none; pointer-events: auto; flex-wrap: nowrap; }
 .desk-notice button { --state-hover: color-mix(in srgb, currentColor 10%, transparent); --state-pressed: color-mix(in srgb, currentColor 18%, transparent); }
 .notice-content { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: var(--text-detail); line-height: var(--leading-control); }
@@ -113,7 +113,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .stage-error > span { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--desk-danger) 80%, var(--desk-canvas)); text-underline-offset: 3px; }
 .stage-ring { position: absolute; inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); rotate: -90deg; pointer-events: none; }
 .stage-ring circle { fill: none; stroke: currentColor; stroke-width: 2; opacity: .6; stroke-dasharray: 119.4; stroke-dashoffset: 0; animation: stage-ring-drain var(--notice-duration) linear forwards; }
-.desk-notice:hover .stage-ring circle, .desk-notice:focus-within .stage-ring circle { animation-play-state: paused; }
+.desk-notice:hover .stage-ring circle, .desk-notice:focus-within .stage-ring circle, :root[data-brand-launch] .stage-ring circle { animation-play-state: paused; }
 @keyframes stage-ring-drain { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 119.4; } }
 .notice-close:active { background: color-mix(in srgb, currentColor 15%, transparent); }
 .desk-notice:focus-within { outline: 2px solid var(--desk-action); outline-offset: 4px; }
@@ -274,7 +274,7 @@ progress { accent-color: var(--desk-action); }
   color: var(--desk-muted);
   box-shadow: var(--shadow-button);
 }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(.primary, [aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)) {
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)) {
   background-color: var(--button-selected-surface);
   background-image: none;
   color: var(--button-accent, var(--desk-action));
@@ -356,7 +356,7 @@ progress { accent-color: var(--desk-action); }
   :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)):not(:hover):not(:active) { background-color: var(--desk-surface); }
   .desk-button, .desk-button:is(:hover, :focus-visible, :active):not(:disabled) { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .desk-button:not(.primary) { background-color: var(--desk-surface); }
-  .desk-button.primary { background-color: var(--button-primary-surface); }
+  .desk-button.primary { background-color: var(--desk-surface); }
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) { --material-aura: none; }
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):is(:hover, :focus-visible, :active), .choice-row label:has(:focus-visible), .palette-options label:has(:focus-visible) { background-image: none; box-shadow: none; }
   .desk-dialog::backdrop, .inspector-backdrop { animation: none; -webkit-backdrop-filter: none; backdrop-filter: none; }

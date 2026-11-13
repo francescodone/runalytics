@@ -767,7 +767,7 @@ for (const theme of ["light", "dark"]) {
       await expect(controls.first()).toBeVisible();
       for (const control of await controls.all()) {
         if (await control.isDisabled()) continue;
-        const selected = await control.evaluate(element => element.matches('.primary, [aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)'));
+        const selected = await control.evaluate(element => element.matches('[aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)'));
         await expect(control).toHaveCSS("box-shadow", selected ? selectedShadow : inactiveShadow);
         await expect(control).toHaveCSS("border-radius", "999px");
         await expect(control).toHaveCSS("backdrop-filter", "none");
