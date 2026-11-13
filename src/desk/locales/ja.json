@@ -1,4 +1,8 @@
 {
+  "COROS account fingerprint": "COROSアカウントのフィンガープリント",
+  "Calendar settings": "カレンダー設定",
+  "Included": "含まれる",
+  "Not included": "含まれない",
   "Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.": "アカウントのログイン情報、OAuthトークン、トレーニングプラン、アクティビティ履歴は含まれません。",
   "Watch predictions reflect the latest sync and may not be from today.": "時計の予測は最終同期時のもので、今日のデータとは限りません。",
   "Race day projection": "レース当日の予測",
@@ -547,6 +551,8 @@
   "Cancel sign-in": "サインインをキャンセルする",
   "Remove API credentials": "API認証情報を削除してください",
   "Activity descriptions": "活動内容の説明",
+  "Discard": "破棄",
+  "These runs could not be updated. Try again or discard the pending description; discarding does not change Strava.": "これらのランを更新できませんでした。再試行するか、保留中の説明を破棄してください。破棄してもStravaは変更されません。",
   "Strava description updates paused.": "Stravaの説明更新が一時停止しました。",
   "Update paired activity descriptions": "ペア活動の説明を更新",
   "Eligible runs: recorded from {{value0}}.": "対象ラン:{{value0}}から記録。",

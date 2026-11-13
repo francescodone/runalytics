@@ -878,6 +878,12 @@ impl Store {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT (provider, provider_record_id) DO UPDATE SET
                 provider_sport_code = COALESCE(excluded.provider_sport_code, provider_sport_code),
+                distance_m = CASE WHEN excluded.distance_m > 0 AND excluded.duration_s > 0
+                    THEN excluded.distance_m ELSE distance_m END,
+                duration_s = CASE WHEN excluded.distance_m > 0 AND excluded.duration_s > 0
+                    THEN excluded.duration_s ELSE duration_s END,
+                avg_pace_s_km = CASE WHEN excluded.distance_m > 0 AND excluded.duration_s > 0
+                    THEN excluded.avg_pace_s_km ELSE avg_pace_s_km END,
                 -- The FIT file is the only pass that carries ascent and max HR
                 -- (the COROS text report has neither) and it always arrives
                 -- *after* the summary row, so without these the decoded values
@@ -3678,6 +3684,95 @@ mod tests {
         }
         let missing = s.activities_missing_track(10).expect("missing");
         assert_eq!(missing[0].2, Some(200), "COALESCE keeps the known code");
+    }
+
+    #[test]
+    fn resync_repairs_distance_and_pace_without_replacing_activity() {
+        let database = std::env::temp_dir()
+            .join(format!("runalytics-distance-{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&database).expect("open store");
+        let start_ts = NaiveDate::from_ymd_opt(2026, 11, 13)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let original = crate::fit::DecodedActivity {
+            record_id: "distance-repair".into(),
+            sport: "run".into(),
+            provider_sport_code: Some(100),
+            start_ts,
+            duration_s: 177.0,
+            distance_m: 590_000.0,
+            avg_hr: Some(150),
+            max_hr: Some(171),
+            elevation_gain_m: Some(45.0),
+            points: vec![crate::fit::TrackPoint {
+                ts: start_ts,
+                lat: 52.5,
+                lon: 13.4,
+                hr: Some(150),
+                alt: Some(30.0),
+            }],
+        };
+        let original_id = store
+            .upsert_activity(ProviderKind::Coros, &original)
+            .expect("insert incorrect distance")
+            .expect("new activity");
+        store
+            .mark_fit_downloaded(ProviderKind::Coros, &original.record_id)
+            .expect("track download recorded");
+        let corrected = crate::fit::DecodedActivity {
+            distance_m: 590.0,
+            provider_sport_code: None,
+            max_hr: None,
+            elevation_gain_m: None,
+            points: Vec::new(),
+            ..original
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                store
+                    .upsert_activity(ProviderKind::Coros, &corrected)
+                    .expect("resync corrected distance"),
+                None,
+                "a correction is not a new activity"
+            );
+        }
+        for (distance_m, duration_s) in [(0.0, 177.0), (590.0, 0.0)] {
+            store
+                .upsert_activity(
+                    ProviderKind::Coros,
+                    &crate::fit::DecodedActivity {
+                        distance_m,
+                        duration_s,
+                        ..corrected.clone()
+                    },
+                )
+                .expect("incomplete resync preserves measurements");
+        }
+        let activities = store.list_activities(10).expect("read activities");
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0].id, original_id);
+        assert_eq!(activities[0].distance_m, 590.0);
+        assert_eq!(activities[0].duration_s, 177.0);
+        assert_eq!(activities[0].avg_pace_s_km, Some(300.0));
+        assert_eq!(activities[0].avg_hr, Some(150));
+        assert_eq!(activities[0].max_hr, Some(171));
+        assert_eq!(activities[0].elevation_gain_m, Some(45.0));
+        assert!(activities[0].has_track);
+        assert_eq!(store.track_points(original_id, 100).unwrap().len(), 1);
+        assert!(store.activities_missing_track(10).unwrap().is_empty());
+        drop(store);
+
+        let reopened = Store::open(&database).expect("reopen store");
+        let activity = reopened
+            .activity_by_id(original_id)
+            .unwrap()
+            .expect("same activity after restart");
+        assert_eq!(activity.distance_m, 590.0);
+        assert_eq!(activity.avg_pace_s_km, Some(300.0));
+        assert!(activity.has_track);
     }
 
     /// The COROS text report carries no elevation, so the summary row is

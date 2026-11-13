@@ -322,16 +322,10 @@ pub async fn run_full_sync(
             eprintln!("[calendar] {message}");
         }
     }
-    let strava_configured = crate::strava::is_configured().unwrap_or(true);
-    if strava_configured {
-        stage(app, "sync", Stage::Strava, "working", None);
-    }
     match crate::strava::sync(&state.store).await {
         Ok(message) => {
-            if strava_configured {
-                stage(app, "sync", Stage::Strava, "done", (!message.is_empty()).then(|| message.clone()));
-            }
             if !message.is_empty() {
+                stage(app, "sync", Stage::Strava, "done", Some(message.clone()));
                 if let Ok(report) = &mut out { report.messages.push(message); }
             }
         }

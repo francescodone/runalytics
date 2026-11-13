@@ -1,8 +1,8 @@
 import { t } from "./i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import QRCode from "qrcode";
 import jsQR from "jsqr";
-import { IconCamera, IconDownload, IconQrcode, IconUpload } from "@tabler/icons-react";
+import { IconCamera, IconCheck, IconDownload, IconQrcode, IconUpload, IconX } from "@tabler/icons-react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri, tauri } from "../lib/ipc";
 import { Button, Dialog, ErrorNotice } from "./ui";
@@ -15,6 +15,19 @@ async function requireWatchConnection() {
 }
 
 type Connections = { version: 1; created: number; calendar: { uploadUrl: string; subscriptionUrl: string; username: string; password: string | null }; githubToken: string | null; strava?: {clientId:string; clientSecret:string; athleteId?:number | null} | null; identity?: {corosCode:string | null}; assistant?: {endpoint:string; model:string | null; apiKey:string | null} | null };
+export type TransferContents = { coros: boolean; strava: boolean; calendar: boolean; devices: boolean };
+function transferContents(value: Connections): TransferContents {
+  return { coros: Boolean(value.identity?.corosCode), strava: Boolean(value.strava), calendar: Boolean(value.calendar.uploadUrl || value.calendar.subscriptionUrl || value.calendar.username || value.calendar.password), devices: Boolean(value.githubToken) };
+}
+export function TransferContentsSummary({ contents }: { contents: TransferContents }) {
+  const items = [
+    { label: t("COROS account fingerprint"), included: contents.coros },
+    { label: t("Strava application Client ID and Client Secret"), included: contents.strava },
+    { label: t("Calendar settings"), included: contents.calendar },
+    { label: t("GitHub token for device sync"), included: contents.devices },
+  ];
+  return <section className="transfer-contents" aria-label={t("Transfer contents")}><h3>{t("Transfer contents")}</h3><ul className="plain-list">{items.map(({ label, included }) => <li key={label}>{included ? <IconCheck size={18} aria-hidden="true" /> : <IconX size={18} aria-hidden="true" />}<span>{label}: {included ? t("Included") : t("Not included")}</span></li>)}</ul><p className="muted">{t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.")}</p></section>;
+}
 type IdentityCheck = { mismatch: boolean; unverified: boolean; details: string[] };
 async function checkIdentity(value: Connections): Promise<IdentityCheck> {
   const [coros, strava] = await Promise.all([tauri.planSyncStatus(), tauri.stravaStatus()]);
@@ -31,6 +44,7 @@ async function checkIdentity(value: Connections): Promise<IdentityCheck> {
   };
 }
 const prefix = "runalytics:connections:1:";
+const setupTransferKey = "runalytics.onboarding.encrypted-transfer";
 const encode = (bytes: Uint8Array) => btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(""));
 const decode = (value: string) => Uint8Array.from(atob(value), character => character.charCodeAt(0));
 async function transferKey(passphrase: string, salt: Uint8Array<ArrayBuffer>) {
@@ -71,25 +85,37 @@ export async function openConnections(text: string, passphrase: string): Promise
   return value;
 }
 
-export function ConnectionTransfer({ onRequestWatch }: { onRequestWatch?: () => void } = {}) {
-  const [mode, setMode] = useState<"export" | "import" | null>(null);
+export function ConnectionTransfer({ onRequestWatch, setupWatch, onImported }: { onRequestWatch?: () => void; setupWatch?: ReactNode; onImported?: (hasToken: boolean, contents: TransferContents) => void } = {}) {
+  const [mode, setMode] = useState<"export" | "import" | null>(() => {
+    try { return setupWatch && sessionStorage.getItem(setupTransferKey) ? "import" : null; } catch { return null; }
+  });
   const providers = useRemote(tauri.providerStatus);
   const watchConnected = !providers.loading && !providers.error && providers.data?.some(provider => provider.provider === "coros" && provider.connected);
-  return <section><p className="muted">{t("Move saved connection settings to another Runalytics device using a passphrase-encrypted QR image.")}</p><p id="transfer-watch-disclaimer">{t("Before importing or exporting connections, sign in to your watch account. Use the same COROS account on both devices.")}</p><ErrorNotice error={providers.error} /><div className="form-actions"><Button disabled={!watchConnected} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("export")}><IconQrcode size={18} />{t("Create transfer QR")}</Button><Button disabled={!watchConnected} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("import")}><IconUpload size={18} />{t("Import transfer QR")}</Button>{!watchConnected && (onRequestWatch ? <Button onClick={onRequestWatch}>{t("Connect your watch")}</Button> : <a className="desk-button normal" href="#settings/watch">{t("Connect your watch")}</a>)}</div><Presence>{mode && watchConnected && <TransferDialog key={mode} mode={mode} onClose={() => setMode(null)} />}</Presence></section>;
+  return <section><p className="muted">{t("Move saved connection settings to another Runalytics device using a passphrase-encrypted QR image.")}</p><p id="transfer-watch-disclaimer">{setupWatch ? t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.") : t("Before importing or exporting connections, sign in to your watch account. Use the same COROS account on both devices.")}</p><ErrorNotice error={providers.error} /><div className="form-actions">{!setupWatch && <Button disabled={!watchConnected} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("export")}><IconQrcode size={18} />{t("Create transfer QR")}</Button>}<Button disabled={!watchConnected && !setupWatch} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("import")}><IconUpload size={18} />{t("Import transfer QR")}</Button>{!watchConnected && !setupWatch && (onRequestWatch ? <Button onClick={onRequestWatch}>{t("Connect your watch")}</Button> : <a className="desk-button normal" href="#settings/watch">{t("Connect your watch")}</a>)}</div><Presence>{mode && (watchConnected || setupWatch) && <TransferDialog key={mode} mode={mode} onClose={() => { try { sessionStorage.removeItem(setupTransferKey); } catch {} setMode(null); }} setupWatch={setupWatch} watchConnected={Boolean(watchConnected)} onImported={onImported} />}</Presence></section>;
 }
 
-function TransferDialog({mode, onClose}: {mode:"export" | "import"; onClose:() => void}) {
+function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}: {mode:"export" | "import"; onClose:() => void; setupWatch?: ReactNode; watchConnected: boolean; onImported?: (hasToken: boolean, contents: TransferContents) => void}) {
   const command = useCommand();
   const [passphrase, setPassphrase] = useState("");
   const [image, setImage] = useState("");
   const [encryptedCode, setEncryptedCode] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => { try { return setupWatch ? sessionStorage.getItem(setupTransferKey) ?? "" : ""; } catch { return ""; } });
   const [preview, setPreview] = useState<Connections | null>(null);
   const [identity, setIdentity] = useState<IdentityCheck | null>(null);
   const [acceptUnverified, setAcceptUnverified] = useState(false);
   const [camera, setCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!preview || !watchConnected) return;
+    let active = true;
+    void checkIdentity(preview).then(result => { if (active) { setIdentity(result); setAcceptUnverified(false); } }).catch(() => undefined);
+    return () => { active = false; };
+  }, [preview, watchConnected]);
   const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (!setupWatch) return;
+    try { if (code) sessionStorage.setItem(setupTransferKey, code); else sessionStorage.removeItem(setupTransferKey); } catch {}
+  }, [code, setupWatch]);
   const nativeDesktop = inTauri && !/iPhone|iPad|iPod/.test(navigator.userAgent);
   const cameraAvailable = !nativeDesktop && Boolean(navigator.mediaDevices?.getUserMedia) && !cameraError;
   useEffect(() => {
@@ -164,7 +190,8 @@ function TransferDialog({mode, onClose}: {mode:"export" | "import"; onClose:() =
       setCode(found.data);
     } finally { bitmap.close(); }
   };
-  return <Dialog title={mode === "export" ? t("Create connection transfer") : t("Import connection transfer")} onClose={onClose}>
+  const title = mode === "export" ? t("Create connection transfer") : t("Import connection transfer");
+  const content = <>
     <div className="connection-transfer-content">
     {!preview && <section className="transfer-summary" aria-label={t("Transfer contents")}><h3>{mode === "export" ? t("Transferred when configured") : t("Supported connection settings")}</h3><ul><li>{t("Calendar upload and subscription URLs")}</li><li>{t("Calendar hosting username and password or token")}</li><li>{t("GitHub token for device sync")}</li><li>{t("Strava application Client ID and Client Secret")}</li><li>{t("COROS account fingerprint and Strava athlete ID for account comparison")}</li></ul><p className="muted">{t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.")}</p></section>}
     <p className="transfer-privacy">{t("Keep the QR image and passphrase private. Anyone with both can access these connections.")}</p>
@@ -172,7 +199,7 @@ function TransferDialog({mode, onClose}: {mode:"export" | "import"; onClose:() =
     {!preview && !image && <form onSubmit={async event => {
       event.preventDefault();
       await command.run(async () => {
-        await requireWatchConnection();
+        if (mode === "export" || !setupWatch) await requireWatchConnection();
         if (mode === "export") {
           const connections = await invoke<Connections>("export_connection_settings");
           const encrypted = await sealConnections(connections, passphrase);
@@ -186,9 +213,11 @@ function TransferDialog({mode, onClose}: {mode:"export" | "import"; onClose:() =
     }}>
       <label>{t("Transfer passphrase")}<input type="password" autoComplete="new-password" required minLength={12} value={passphrase} onChange={event => setPassphrase(event.target.value)} /></label>
       {mode === "import" && <><label>{t("QR image")}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={command.busy} onChange={event => { const file = event.target.files?.[0]; if (file) { setCode(""); void command.run(() => loadImage(file)); } event.target.value=""; }} /></label>{cameraAvailable && <div className="form-actions"><Button disabled={command.busy} onClick={() => setCamera(!camera)}><IconCamera size={18} />{camera ? t("Stop camera") : t("Scan with camera")}</Button></div>}{camera && <video ref={video} className="transfer-camera" muted playsInline aria-label={t("QR camera preview")} />}{code && <p role="status">{t("QR code loaded.")}</p>}</>}
-      <div className="form-actions"><Button type="submit" tone="primary" busy={command.busy} disabled={mode === "import" && !code}><IconQrcode size={18} />{mode === "export" ? t("Generate encrypted QR") : t("Review settings")}</Button></div>
+      <div className="form-actions"><Button type="submit" tone="primary" busy={command.busy} disabled={passphrase.length < 12 || (mode === "import" && !code)}><IconQrcode size={18} />{mode === "export" ? t("Generate encrypted QR") : t("Review settings")}</Button></div>
     </form>}
     {image && <div className="transfer-export"><img className="transfer-qr" src={image} alt={t("Encrypted connection transfer QR code")} /><div className="transfer-export-footer"><a className="desk-button normal" download="runalytics-connections.png" href={image}><IconDownload size={18} />{t("Download QR image")}</a><p className="muted">{t("Enter the same passphrase on the receiving device. Delete the image after importing.")}</p></div></div>}
+    {preview && <TransferContentsSummary contents={transferContents(preview)} />}
+    {preview && setupWatch && !watchConnected && <section><h3>{t("Connect your watch")}</h3>{setupWatch}</section>}
     {preview && <><h3>{t("Replace connection settings?")}</h3><section aria-label={t("Account comparison")}><h3>{t("Source account check")}</h3>{identity?.details.map(detail => <p key={detail}>{detail}</p>)}{identity?.mismatch && <p role="alert">{t("Import blocked: the connected accounts do not match.")}</p>}{identity?.unverified && !identity.mismatch && <label className="toggle-setting"><input type="checkbox" checked={acceptUnverified} onChange={event => setAcceptUnverified(event.target.checked)} />{t("I trust this QR source and understand the account could not be fully verified.")}</label>}</section><dl className="definition-list"><div><dt>{t("Calendar upload")}</dt><dd className="file-path">{preview.calendar.uploadUrl || t("Not configured; existing value will be cleared")}</dd></div><div><dt>{t("Subscription")}</dt><dd className="file-path">{preview.calendar.subscriptionUrl || t("Not configured; existing value will be cleared")}</dd></div><div><dt>{t("Calendar username")}</dt><dd>{preview.calendar.username || t("None; existing value will be cleared")}</dd></div><div><dt>{t("Calendar credential")}</dt><dd>{preview.calendar.password ? t("Included (hidden); replaces saved credential") : t("None; saved credential will be removed")}</dd></div><div><dt>{t("Device sync token")}</dt><dd>{preview.githubToken ? t("Included (hidden); replaces saved token") : t("None; saved token will be removed")}</dd></div><div><dt>{t("Strava Client ID")}</dt><dd>{preview.strava?.clientId ?? t("Not included; existing Strava setup stays")}</dd></div>{preview.strava && <div><dt>{t("Strava Client Secret")}</dt><dd>{t("Included (hidden); replaces saved application credentials")}</dd></div>}</dl><p>{t("Calendar publishing will remain paused. {{value0}} {{value1}} Plans are not included in the QR; existing plan conflict protections still apply.", { value0: preview.githubToken ? t("Device sync will be enabled with the imported token.") : t("Device sync will remain paused without a token."), value1: preview.strava ? t("Strava application credentials will be replaced; reconnect Strava and enable description updates separately.") : t("Strava settings will not change.") })}</p><div className="form-actions"><Button onClick={() => { setPreview(null); setCode(""); }}>{t("Choose another QR")}</Button><Button tone="primary" busy={command.busy} disabled={!identity || identity.mismatch || (identity.unverified && !acceptUnverified)} onClick={() => void command.run(async () => {
       await requireWatchConnection();
       const latestIdentity = await checkIdentity(preview);
@@ -203,8 +232,9 @@ function TransferDialog({mode, onClose}: {mode:"export" | "import"; onClose:() =
         await tauri.planSyncConfigure({enabled:true}, null);
         window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
       }
-      setPreview(null); setCode(""); onClose();
+      setPreview(null); setCode(""); onClose(); onImported?.(Boolean(preview.githubToken), transferContents(preview));
     }, preview.githubToken ? t("Connections imported. Device sync is enabled; calendar publishing remains paused.") : t("Connections imported. Device sync and calendar publishing remain paused."))}>{t("Replace connections")}</Button></div></>}
     </div>
-  </Dialog>;
+  </>;
+  return setupWatch ? <section aria-label={title}><h2>{title}</h2>{content}<Button onClick={onClose}>{t("Cancel")}</Button></section> : <Dialog title={title} onClose={onClose}>{content}</Dialog>;
 }

@@ -5,6 +5,139 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const width of [320, 390, 820, 1440]) for (const setup of [false, true]) {
+  test(`brand splash morphs into ${setup ? "setup" : "workspace"} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${width === 390 || width === 1440 ? "dark" : "light"}${setup ? "&noPlan" : ""}#training`);
+    const splash = page.locator(".brand-splash");
+    await expect(splash).toHaveAttribute("data-phase", "intro");
+    await expect(splash.locator(".brand-splash-wordmark > span")).toHaveCount(10);
+    await expect(splash.locator(".brand-splash-wordmark")).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
+    expect(await splash.locator("svg").innerHTML()).toBe(await page.locator("#desk-root .desk-brand-icon svg").innerHTML());
+    await page.waitForFunction(() => {
+      const letter = document.querySelector(".brand-splash-wordmark > span:nth-child(6)");
+      if (!letter) return false;
+      const opacity = Number(getComputedStyle(letter).opacity);
+      return opacity > .1 && opacity < .95;
+    }, null, { polling: "raf" });
+    await page.screenshot({ path: testInfo.outputPath("wordmark-resolve.png") });
+    const openingBounds = await splash.locator(".desk-brand-icon").boundingBox();
+    await page.evaluate(() => {
+      window.__brandDockFrames = [];
+      const sample = () => {
+        const splash = document.querySelector(".brand-splash");
+        if (!splash || splash.hidden) return;
+        const icon = splash.querySelector(".desk-brand-icon").getBoundingClientRect();
+        const text = splash.querySelector(".brand-splash-wordmark").getBoundingClientRect();
+        const backdrop = getComputedStyle(splash.querySelector(".brand-splash-backdrop"));
+        const destination = document.querySelector("#desk-root .desk-brand-icon");
+        if (splash.dataset.phase === "docking" || splash.dataset.phase === "revealing") window.__brandDockFrames.push({ phase: splash.dataset.phase, blur: backdrop.backdropFilter || backdrop.webkitBackdropFilter, backdropOpacity: Number(backdrop.opacity), headerOpacity: Number(getComputedStyle(destination).opacity), x: icon.x, y: icon.y, width: icon.width, height: icon.height, textX: text.x, textY: text.y, textWidth: text.width, textHeight: text.height });
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await expect(splash).toHaveAttribute("data-phase", "docking");
+    await page.screenshot({ path: testInfo.outputPath("brand-handoff.png") });
+    await expect(splash).toHaveAttribute("data-phase", "revealing");
+    await page.screenshot({ path: testInfo.outputPath("brand-clear.png") });
+    await expect(splash).toHaveCount(0);
+    await expect(page.locator("html")).not.toHaveAttribute("data-brand-launch");
+    const destination = page.locator("#desk-root .desk-brand-icon");
+    await expect(destination).toHaveCSS("opacity", "1");
+    const bounds = await destination.boundingBox();
+    const frames = await page.evaluate(() => window.__brandDockFrames);
+    expect(frames.length).toBeGreaterThan(4);
+    const travel = frames.filter(frame => frame.phase === "docking");
+    const revealing = frames.filter(frame => frame.phase === "revealing");
+    expect(travel.every(frame => frame.blur.includes("blur(12px)") && frame.backdropOpacity === 1)).toBe(true);
+    expect(revealing.some(frame => frame.backdropOpacity > .05 && frame.backdropOpacity < .95)).toBe(true);
+    expect(frames.every(frame => frame.headerOpacity === 0)).toBe(true);
+    expect(frames.some(frame => frame.width < openingBounds.width - 2 && frame.width > bounds.width + 2)).toBe(true);
+    const landed = frames.at(-1);
+    expect(Math.abs(landed.x - bounds.x)).toBeLessThan(2);
+    expect(Math.abs(landed.y - bounds.y)).toBeLessThan(2);
+    expect(Math.abs(landed.width - bounds.width)).toBeLessThan(2);
+    expect(revealing.every(frame => Math.abs(frame.x - bounds.x) < 2 && Math.abs(frame.y - bounds.y) < 2 && Math.abs(frame.width - bounds.width) < 2)).toBe(true);
+    const text = page.locator("#desk-root .brand-wordmark");
+    if (await text.isVisible()) {
+      const textBounds = await text.boundingBox();
+      expect(Math.abs(landed.textX - textBounds.x)).toBeLessThan(2);
+      expect(Math.abs(landed.textY - textBounds.y)).toBeLessThan(2);
+      expect(Math.abs(landed.textWidth - textBounds.width)).toBeLessThan(2);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath("landed-brand.png") });
+    if (!setup) {
+      await page.getByRole("link", { name: "Activities", exact: true }).click();
+      await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+      await expect(splash).toHaveCount(0);
+    }
+  });
+}
+
+test("brand splash skips reduced motion and cancels live preference, input and resize", async ({ page }) => {
+  await page.goto("/desk.html#training");
+  await expect(page.locator(".desk-brand")).toBeVisible();
+  await expect(page.locator(".brand-splash")).toHaveCount(0);
+  for (const interruption of ["preference", "input", "resize"]) {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.reload();
+    await expect(page.locator(".brand-splash")).toHaveCount(1);
+    if (interruption === "preference") await page.emulateMedia({ reducedMotion: "reduce" });
+    if (interruption === "input") await page.getByRole("link", { name: "Activities", exact: true }).click();
+    if (interruption === "resize") await page.setViewportSize({ width: 1440, height: 740 });
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    await expect(page.locator("html")).not.toHaveAttribute("data-brand-launch");
+    await expect(page.locator(".desk-brand-icon")).toHaveCSS("opacity", "1");
+  }
+});
+
+for (const setup of [false, true]) test(`brand splash waits for visible ${setup ? "setup" : "workspace"} launch`, async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    window.__launchHidden = true;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => window.__launchHidden });
+  });
+  await page.goto(`/desk.html?${setup ? "noPlan" : ""}#training`);
+  const splash = page.locator(".brand-splash");
+  await expect(splash).toHaveAttribute("data-phase", "intro");
+  await page.evaluate(() => { window.__launchHidden = false; document.dispatchEvent(new Event("visibilitychange")); });
+  await expect(splash).toHaveAttribute("data-phase", "docking");
+  await expect(splash).toHaveCount(0);
+  await expect(page.locator(setup ? ".onboarding-header .desk-brand-icon" : ".desk-appbar .desk-brand-icon")).toBeVisible();
+});
+
+for (const outcome of ["delayed", "failed"]) test(`brand splash handles ${outcome} startup data`, async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(outcome => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    const startup = new Promise(resolve => { window.__releaseBrandStartup = resolve; });
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "current_plan") {
+        if (outcome === "failed") throw new Error("Synthetic startup unavailable");
+        await startup;
+      }
+      return invoke(command, args);
+    };
+  }, outcome);
+  await page.goto("/desk.html#training");
+  await expect(page.locator(".brand-splash")).toHaveAttribute("data-phase", "intro");
+  if (outcome === "delayed") {
+    await page.waitForFunction(() => [...document.querySelectorAll(".brand-splash-wordmark > span")].every(element => getComputedStyle(element).opacity === "1"));
+    await expect(page.locator(".desk-appbar")).toHaveCount(0);
+    await page.evaluate(() => window.__releaseBrandStartup());
+    await expect(page.locator(".brand-splash")).toHaveAttribute("data-phase", "docking");
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    await expect(page.locator(".desk-brand-icon")).toBeVisible();
+  } else {
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    await expect(page.getByRole("alert")).toContainText("Synthetic startup unavailable");
+    await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeEnabled();
+  }
+  await expect(page.locator("html")).not.toHaveAttribute("data-brand-launch");
+});
+
 for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
   test(`load-only activity review has no injury risk ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
@@ -177,6 +310,45 @@ for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]
   await expect(page.getByRole("region", { name: "Training race estimates" })).toHaveCount(0);
 });
 
+test("successful sync prompts for pending session feedback once", async ({ page }) => {
+  await page.goto("/desk.html?feedback#training/plan");
+  await expect(page.getByRole("region", { name: "Session feedback" })).toBeVisible();
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: false }));
+  await expect(page.getByRole("dialog", { name: "Tempo feedback" })).toHaveCount(0);
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: true }));
+  const first = page.getByRole("dialog", { name: "Tempo feedback" });
+  await expect(first).toBeVisible();
+  await first.getByRole("radio", { name: "5 Much too hard" }).check();
+  await page.evaluate(() => window.__deskFail = "save_session_feedback");
+  await first.getByRole("button", { name: "Save feedback" }).click();
+  await expect(first.getByRole("alert")).toBeVisible();
+  await expect(first.getByRole("radio", { name: "5 Much too hard" })).toBeChecked();
+  await page.evaluate(() => window.__deskFail = "");
+  await first.getByRole("button", { name: "Save feedback" }).click();
+  const second = page.getByRole("dialog", { name: "Long run feedback" });
+  await expect(second).toBeVisible();
+  await second.getByRole("button", { name: "Not now" }).click();
+  await expect(second).toHaveCount(0);
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: true }));
+  await expect(page.getByRole("dialog", { name: "Tempo feedback" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Long run feedback" })).toHaveCount(0);
+});
+
+for (const width of [320, 390]) test(`sync feedback dialog remains usable at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 640 });
+  await page.goto("/desk.html?feedback#training/plan");
+  await expect(page.getByRole("region", { name: "Session feedback" })).toBeVisible();
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: true }));
+  const dialog = page.getByRole("dialog", { name: "Tempo feedback" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: "1 Much too easy" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(dialog.getByRole("radio", { name: "2 Slightly easy" })).toBeChecked();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await dialog.getByRole("button", { name: "Not now" }).click();
+  await expect(page.getByRole("dialog", { name: "Long run feedback" })).toBeVisible();
+});
+
 test("optional session feedback keeps failed drafts and never defaults to a rating", async ({ page }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -198,6 +370,17 @@ test("optional session feedback keeps failed drafts and never defaults to a rati
   await form.getByRole("button", { name: "Save feedback" }).click();
   await expect(form.getByRole("status")).toHaveText("Feedback saved.");
   expect(errors).toEqual([]);
+});
+
+test("activity overview retains feedback drafts across tabs", async ({ page }) => {
+  await page.goto("/desk.html?feedback#journal/1");
+  const overview = page.getByRole("tabpanel", { name: "Overview" });
+  await overview.getByRole("radio", { name: "5 Much too hard" }).check();
+  await page.getByRole("tab", { name: "Splits" }).click();
+  await expect(page.getByRole("tabpanel", { name: "Splits" })).toBeVisible();
+  await expect(page.getByRole("tabpanel", { name: "Splits" }).getByRole("heading", { name: "How was this session?" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await expect(page.getByRole("tabpanel", { name: "Overview" }).getByRole("radio", { name: "5 Much too hard" })).toBeChecked();
 });
 
 test("optional session feedback dismisses without rating and manual controls preserve mileage", async ({ page }) => {
@@ -320,7 +503,7 @@ for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion p
     window.__packagedAnimations = [];
     const animate = Element.prototype.animate;
     Element.prototype.animate = function (keyframes, options) {
-      window.__packagedAnimations.push({ duration: options?.duration, keyframes });
+      window.__packagedAnimations.push({ duration: options?.duration, keyframes, splash: Boolean(this.closest(".brand-splash")) });
       return animate.call(this, keyframes, options);
     };
     window.__packagedCounts = [];
@@ -332,6 +515,13 @@ for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion p
   await page.goto("/desk.html#pace");
   const counter = page.locator('.race-estimates .sr-only + [aria-hidden="true"]').first();
   await expect(counter).toBeVisible();
+  await expect(page.locator(".brand-splash")).toHaveCount(0);
+  const launchAnimations = await page.evaluate(() => window.__packagedAnimations.filter(animation => animation.splash));
+  if (reducedMotion === "reduce") expect(launchAnimations).toEqual([]);
+  else {
+    expect(launchAnimations.length).toBeGreaterThanOrEqual(14);
+    expect(launchAnimations.every(animation => animation.duration === 560)).toBe(true);
+  }
   expect(errors).toEqual([]);
   const final = counter.locator("..").locator(".sr-only");
   await expect.poll(() => counter.textContent()).toBe(await final.textContent());
@@ -821,8 +1011,7 @@ test.describe("Strava settings", () => {
     await toggle.click();
     await confirmation.getByRole("button", { name: "Enable updates", exact: true }).click();
     await expect(toggle).toBeChecked();
-    await page.getByRole("button", { name: "Retry pending descriptions" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "1 copied, 1 already present" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Needs attention (0)" })).toBeVisible();
     await page.getByRole("button", { name: "Disconnect Strava" }).click();
     const disconnect = page.getByRole("dialog", { name: "Disconnect Strava?" });
     await expect(disconnect).toContainText("not revoked");
@@ -833,6 +1022,21 @@ test.describe("Strava settings", () => {
     await disconnect.getByRole("button", { name: "Disconnect", exact: true }).click();
     await expect(page.getByText("Strava not connected", { exact: true })).toBeVisible();
     await expect(toggle).not.toBeChecked();
+  });
+
+  test("strava review identifies runs and allows retry or discard", async ({ page }) => {
+    await page.goto("/desk.html?stravaReview#settings/strava");
+    await expect(page.getByRole("heading", { name: "Needs attention (2)" })).toBeVisible();
+    const review = page.locator(".settings-section").filter({ hasText: "Multiple possible Strava activities" }).last();
+    await expect(review).toContainText("5.0 km");
+    await review.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.find(call => call.command === "strava_resolve_review")?.args)).toEqual({sourceKey:"coros:one",retry:true});
+    const expired = page.locator(".settings-section").filter({ hasText: "Pending description expired" }).last();
+    await expect(expired.getByRole("button", { name: "Try again" })).toBeDisabled();
+    await expired.getByRole("button", { name: "Discard" }).click();
+    await expect(page.getByRole("heading", { name: "Needs attention (0)" })).toBeVisible();
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "strava_resolve_review").at(-1).args)).toEqual({sourceKey:"coros:two",retry:false});
+    await expect(page.getByText("Already present", { exact: true })).toHaveCount(0);
   });
 
   test("strava failed secure save retains the credential draft", async ({ page }) => {
@@ -3980,6 +4184,19 @@ test("unified notifications remain dismissible above a native modal without losi
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => document.body.style.overflow)).not.toBe("hidden");
+});
+
+test("new user appearance defaults to purple and follows the system", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/desk.html?theme=system&palette=amethyst#settings/appearance");
+  await expect(page.getByRole("radio", { name: "Purple Reign", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "System", exact: true })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-desk-palette", "amethyst");
+  await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-desk-theme", "light");
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "Purple Reign", exact: true })).toBeChecked();
 });
 
 test("design system appearance updates cached and native control themes together", async ({ page }) => {

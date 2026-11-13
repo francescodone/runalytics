@@ -1,5 +1,5 @@
-import { t, text, languagePreference, dateTime as fmtDateTime } from "./i18n";
-import { useEffect, useState } from "react";
+import { t, text, languagePreference, dateTime as fmtDateTime, distance as fmtKm } from "./i18n";
+import { useEffect, useState, type ReactNode } from "react";
 import { IconArrowLeft, IconChevronDown, IconChevronRight, IconDeviceWatch, IconPalette, IconLanguage, IconAdjustments, IconMap, IconCalendarShare, IconCalendarEvent, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh, IconBrandStrava, IconLink, IconUnlink, IconDeviceFloppy } from "@tabler/icons-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -26,6 +26,10 @@ const tasks = [
   { id: "about", title: t("About and updates"), detail: t("App version, releases, install an update"), Icon: IconInfoCircle },
 ];
 
+function SetupOrDialog({ inline, title, onClose, children }: { inline: boolean; title: string; onClose: () => void; children: ReactNode }) {
+  return inline ? <section className="settings-section" aria-label={title}><h2>{title}</h2>{children}</section> : <Dialog title={title} onClose={onClose}>{children}</Dialog>;
+}
+
 export function SettingsWorkspace() {
   const route = useRoute();
   const [query, setQuery] = useState("");
@@ -42,7 +46,7 @@ export function SettingsWorkspace() {
   </section> : <section className="settings-directory"><label className="search-field"><IconSearch size={20} /><input type="search" aria-label={t("Search settings")} value={query} onChange={event => setQuery(event.target.value)} placeholder={t("Find a setting")} /></label>{groups.filter(group => group.items.length > 0).map(group => <section className="settings-group" key={group.id} aria-labelledby={`settings-${group.id}`}><h2 id={`settings-${group.id}`}>{group.title}</h2><div className="settings-task-list">{group.items.map(task => <a key={task.id} href={`#settings/${task.id}`}><task.Icon size={25} aria-hidden="true" /><span><strong>{task.title}</strong><small>{task.detail}</small></span><IconChevronRight size={18} aria-hidden="true" /></a>)}</div></section>)}{groups.every(group => group.items.length === 0) && <Empty title={t("No matching settings")} action={<Button onClick={() => setQuery("")}>{t("Clear search")}</Button>} />}</section>}</Change>;
 }
 
-export function WatchSettings({ onboarding = false }: { onboarding?: boolean } = {}) {
+export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding?: boolean; onSyncChange?: (active: boolean) => void } = {}) {
   const status = useRemote(tauri.providerStatus);
   const notice = useRemote(tauri.corosSigninNotice);
   const { refresh, notify } = useWorkspace();
@@ -83,11 +87,11 @@ export function WatchSettings({ onboarding = false }: { onboarding?: boolean } =
   }, [waiting]);
   return <><ErrorNotice error={status.error ?? notice.error ?? command.error} retry={status.retry} />{status.loading ? <Loading /> : <>
     <div className="connection-summary"><strong>{coros?.connected ? t("COROS connected") : t("COROS not connected")}</strong><p>{coros?.lastSync ? t("Last synced {{value0}}", { value0: fmtDateTime(coros.lastSync) }) : coros?.detail || t("No training history synced yet.")}</p></div>
-    <div className="form-actions">{coros?.connected ? <><Button tone="primary" busy={command.busy} onClick={() => void command.run(async () => { const report = await tauri.syncNow("coros"); notify(t("{{value0}} new activities, {{value1}} health days. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") })); })}><IconRefresh size={18} />{t("Sync history")}</Button><Button tone="danger" onClick={() => setDisconnect(true)}>{t("Disconnect")}</Button></> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(t("Finish signing in to COROS when it opens.")); setWaiting(true); if (!await command.run(() => tauri.connectProvider("coros"))) setWaiting(false); }}>{t("Connect COROS")}</Button>}</div>
+    <div className="form-actions">{coros?.connected ? <><Button tone="primary" busy={command.busy} onClick={() => { onSyncChange?.(true); void command.run(async () => { const report = await tauri.syncNow("coros"); notify(t("{{value0}} new activities, {{value1}} health days. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") })); }).finally(() => onSyncChange?.(false)); }}><IconRefresh size={18} />{t("Sync history")}</Button><Button tone="danger" onClick={() => setDisconnect(true)}>{t("Disconnect")}</Button></> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(t("Finish signing in to COROS when it opens.")); setWaiting(true); if (!await command.run(() => tauri.connectProvider("coros"))) setWaiting(false); }}>{t("Connect COROS")}</Button>}</div>
     {(waiting || message) && <p role="status">{waiting ? t("Waiting for COROS sign-in...") : message}</p>}
     {coros?.connected && !onboarding && <a className="desk-button normal context-link" href="#training/plan">{t("Open your training plan")}<IconChevronRight size={18} /></a>}
-    <InfoDialog title={t("Connection diagnostics")} className="settings-section"><Button busy={command.busy} onClick={() => void command.run(async () => setTools(await tauri.checkProviderApi("coros")))}>{t("Check COROS API")}</Button><ErrorNotice error={command.error} />{tools && <><p role="status">{t("API reachable: {{value0}} tools exposed.", { value0: tools.length })}</p><ul className="plain-list">{tools.map(tool => <li key={tool}>{tool}</li>)}</ul></>}</InfoDialog>
-  </>}<Presence>{disconnect && <Dialog title={t("Disconnect COROS?")} onClose={() => setDisconnect(false)}><p>{t("Downloaded training history stays on this device. Future syncing requires signing in again.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>{t("Keep connected")}</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(() => tauri.disconnectProvider("coros"), t("COROS disconnected."))) setDisconnect(false); }}>{t("Disconnect COROS")}</Button></div></Dialog>}</Presence></>;
+    {!onboarding && <InfoDialog title={t("Connection diagnostics")} className="settings-section"><Button busy={command.busy} onClick={() => void command.run(async () => setTools(await tauri.checkProviderApi("coros")))}>{t("Check COROS API")}</Button><ErrorNotice error={command.error} />{tools && <><p role="status">{t("API reachable: {{value0}} tools exposed.", { value0: tools.length })}</p><ul className="plain-list">{tools.map(tool => <li key={tool}>{tool}</li>)}</ul></>}</InfoDialog>}
+  </>}<Presence>{disconnect && <SetupOrDialog inline={onboarding} title={t("Disconnect COROS?")} onClose={() => setDisconnect(false)}><p>{t("Downloaded training history stays on this device. Future syncing requires signing in again.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>{t("Keep connected")}</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(() => tauri.disconnectProvider("coros"), t("COROS disconnected."))) setDisconnect(false); }}>{t("Disconnect COROS")}</Button></div></SetupOrDialog>}</Presence></>;
 }
 
 export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" | "publishing" } = {}) {
@@ -109,8 +113,10 @@ export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" |
     try { await run(tauri.stravaConnect, t("Strava connected. Description updates remain paused until enabled.")); }
     finally { setConnecting(false); }
   };
+  const setupInformation = <><p>{t("Create your own API application in Strava settings. Set its Authorization Callback Domain to ")}<strong>{t("strava")}</strong>{t(" for iPhone; macOS uses the whitelisted loopback address. Enter that application's Client ID and Client Secret separately on each device.")}</p><p>{t("Credentials stay in this device's Keychain. No Runalytics server receives them. Connecting requires activity read and write access, including private activities.")}</p><p>{t("Automatic updates append the same text as Copy prescription, including results and training load, under the activity's existing Strava visibility. Existing notes are preserved. Only runs recorded after activation are eligible; nothing runs while Runalytics is closed.")}</p><p>{t("Another device's copied text is checked before writing. Simultaneous device or third-party edits can still race.")}</p><Button onClick={() => void command.run(() => openUrl("https://www.strava.com/settings/api"))}><IconLink size={18} />{t("Open Strava API settings")}</Button></>;
   return <><ErrorNotice error={remote.error ?? command.error ?? cancelError} retry={remote.retry} />{remote.loading && !data ? <Loading /> : data && <>
-    <div className="connection-summary"><strong>{data.connected ? t("Strava connected: athlete {{value0}}", { value0: data.athleteId }) : t("Strava not connected")}</strong><p role="status">{data.lastMessage || (data.configured ? t("API credentials saved in Keychain.") : t("API credentials not configured."))}</p></div>
+    <div className="connection-summary"><strong>{data.connected ? t("Strava connected: athlete {{value0}}", { value0: data.athleteId }) : t("Strava not connected")}</strong><p role="status">{(data.lastMessage && !data.lastMessage.startsWith("Strava:")) ? data.lastMessage : (data.configured ? t("API credentials saved in Keychain.") : t("API credentials not configured."))}</p></div>
+    {mode === "connection" && <section className="settings-section"><h2>{t("Strava API setup and privacy")}</h2>{setupInformation}</section>}
     {mode !== "publishing" && <><form onSubmit={async event => {
       event.preventDefault();
       if (await run(() => tauri.stravaConfigure(clientId, secret || null), t("Strava API credentials saved."))) setSecret("");
@@ -123,17 +129,17 @@ export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" |
     </div></>}
     {mode !== "connection" && <section className="settings-section"><h3>{t("Activity descriptions")}</h3><label className="toggle-setting"><input type="checkbox" checked={data.enabled} disabled={!data.connected || command.busy} onChange={event => { if (event.target.checked) setConfirmation("enable"); else void run(() => tauri.stravaSetEnabled(false), t("Strava description updates paused.")); }} />{t("Update paired activity descriptions")}</label>
       {data.enabledAt != null && <p className="muted">{t("Eligible runs: recorded from {{value0}}.", { value0: fmtDateTime(new Date(data.enabledAt * 1000).toISOString()) })}</p>}
-      <dl className="metrics-line"><div><dt>{t("Copied")}</dt><dd>{data.updated}</dd></div><div><dt>{t("Already present")}</dt><dd>{data.alreadyPresent}</dd></div><div><dt>{t("Pending")}</dt><dd>{data.pending}</dd></div><div><dt>{t("Needs attention")}</dt><dd>{data.needsReview}</dd></div></dl>
-      {data.lastAttemptAt != null && <p className="muted">{t("Last attempt {{value0}}", { value0: fmtDateTime(new Date(data.lastAttemptAt * 1000).toISOString()) })}</p>}
-      <Button disabled={!data.connected || !data.enabled || !data.pending} busy={command.busy} onClick={() => void run(tauri.stravaRetry, t("Strava pending descriptions checked."))}><IconRefresh size={18} />{t("Retry pending descriptions")}</Button>
+      <h3>{t("Needs attention")} ({data.needsReview})</h3>
+      <p className="muted">{t("These runs could not be updated. Try again or discard the pending description; discarding does not change Strava.")}</p>
+      {(data.reviewItems ?? []).map(item => <div className="settings-section" key={item.sourceKey}><strong>{t("Run")} · {fmtDateTime(new Date(item.startTs * 1000).toISOString())} · {fmtKm(item.distanceM)}</strong><p>{text(item.message)}</p><div className="form-actions"><Button disabled={!data.connected || !data.enabled || !item.retryable} busy={command.busy} onClick={() => void run(() => tauri.stravaResolveReview(item.sourceKey, true), t("Try again"))}><IconRefresh size={18} />{t("Try again")}</Button><Button disabled={command.busy} onClick={() => void run(() => tauri.stravaResolveReview(item.sourceKey, false), t("Discard"))}>{t("Discard")}</Button></div></div>)}
     </section>}
-    {mode !== "publishing" && <InfoDialog title={t("Strava API setup and privacy")} className="settings-section"><p>{t("Create your own API application in Strava settings. Set its Authorization Callback Domain to ")}<strong>{t("strava")}</strong>{t(" for iPhone; macOS uses the whitelisted loopback address. Enter that application's Client ID and Client Secret separately on each device.")}</p><p>{t("Credentials stay in this device's Keychain. No Runalytics server receives them. Connecting requires activity read and write access, including private activities.")}</p><p>{t("Automatic updates append the same text as Copy prescription, including results and training load, under the activity's existing Strava visibility. Existing notes are preserved. Only runs recorded after activation are eligible; nothing runs while Runalytics is closed.")}</p><p>{t("Another device's copied text is checked before writing. Simultaneous device or third-party edits can still race.")}</p><Button onClick={() => void command.run(() => openUrl("https://www.strava.com/settings/api"))}><IconLink size={18} />{t("Open Strava API settings")}</Button></InfoDialog>}
-  </>}<Presence>{confirmation && <Dialog title={confirmation === "enable" ? t("Enable Strava description updates?") : confirmation === "forget" ? t("Remove Strava API credentials?") : t("Disconnect Strava?")} onClose={() => setConfirmation(null)}>
+    {mode === "all" && <InfoDialog title={t("Strava API setup and privacy")} className="settings-section">{setupInformation}</InfoDialog>}
+  </>}<Presence>{confirmation && <SetupOrDialog inline={mode !== "all"} title={confirmation === "enable" ? t("Enable Strava description updates?") : confirmation === "forget" ? t("Remove Strava API credentials?") : t("Disconnect Strava?")} onClose={() => setConfirmation(null)}>
     {confirmation === "enable" ? <><p>{t("Future paired runs will receive the same text as Copy prescription, including results and training load. This text may be public if the Strava activity is public.")}</p><p>{t("Your existing descriptions stay. Older activities will not be updated.")}</p></> : <p>{t("Updates stop on this device. Existing Strava descriptions and local completion receipts stay. Authorization on other devices is not revoked.{{value0}}", { value0: confirmation === "forget" ? t(" The Client ID, Client Secret and local tokens will be removed from Keychain.") : t(" API credentials remain in Keychain for reconnecting.") })}</p>}
     <ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirmation(null)}>{t("Cancel")}</Button><Button tone={confirmation === "enable" ? "primary" : "danger"} busy={command.busy} onClick={async () => {
       if (await run(() => confirmation === "enable" ? tauri.stravaSetEnabled(true) : tauri.stravaDisconnect(confirmation === "forget"), confirmation === "enable" ? t("Strava description updates enabled for new runs.") : t("Strava disconnected on this device."))) { setConfirmation(null); setSecret(""); }
     }}>{confirmation === "enable" ? t("Enable updates") : confirmation === "forget" ? t("Remove credentials") : t("Disconnect")}</Button></div>
-  </Dialog>}</Presence></>;
+  </SetupOrDialog>}</Presence></>;
 }
 
 function Language() {
@@ -224,11 +230,11 @@ function TrainingData() {
   }}>{t("Clear plans and scheduled training")}</Button></div></Dialog>}</Presence></>;
 }
 
-export function CalendarSettings() {
+export function CalendarSettings({ onboarding = false }: { onboarding?: boolean } = {}) {
   const data = useRemote(() => Promise.all([tauri.calendarPublishing(), tauri.icsPath()]));
-  return <><ErrorNotice error={data.error} retry={data.retry} />{data.loading ? <Loading /> : data.data && <PublishingForm config={data.data[0]} path={data.data[1]} />}</>;
+  return <><ErrorNotice error={data.error} retry={data.retry} />{data.loading ? <Loading /> : data.data && <PublishingForm config={data.data[0]} path={data.data[1]} onboarding={onboarding} />}</>;
 }
-function PublishingForm({ config, path }: { config: CalendarPublishing; path: string }) {
+function PublishingForm({ config, path, onboarding }: { config: CalendarPublishing; path: string; onboarding: boolean }) {
   const [enabled, setEnabled] = useState(config.enabled);
   const [upload, setUpload] = useState(config.uploadUrl);
   const [subscription, setSubscription] = useState(config.subscriptionUrl);
@@ -259,7 +265,7 @@ function PublishingForm({ config, path }: { config: CalendarPublishing; path: st
       await tauri.saveCalendarPublishing({...latest,enabled,uploadUrl:upload.trim(),subscriptionUrl:subscription.trim(),username:username.trim()}, clear ? "" : secret || null);
     }, t("Calendar settings saved."))) { setSecret(""); setClear(false); setSetup(false); }
   }}><fieldset disabled={command.busy}><label className="toggle-setting"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />{t("Publish calendar remotely")}</label><div className="form-grid"><label className="full">{t("Upload URL")}<input type="url" required={enabled} value={upload} onChange={event => setUpload(event.target.value)} /></label><label className="full">{t("Subscription URL")}<input type="url" required={enabled} value={subscription} onChange={event => setSubscription(event.target.value)} /></label><label>{t("Username")}<input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} /></label><label>{t("Password or token")}<input type="password" autoComplete="new-password" value={secret} onChange={event => setSecret(event.target.value)} placeholder={config.hasPassword ? t("Saved in Keychain; leave blank to keep") : t("Not configured")} /></label></div><label className="toggle-setting"><input type="checkbox" checked={clear} onChange={event => setClear(event.target.checked)} />{t("Remove saved credential")}</label><Button type="submit" tone="primary" busy={command.busy}><IconDeviceFloppy size={18} />{t("Save calendar settings")}</Button></fieldset></form></section></Disclosure>
-    <Presence>{disconnect && <Dialog title={t("Stop calendar publishing?")} onClose={() => setDisconnect(false)}><p>{t("Future changes will no longer be published. The existing feed and saved credentials are kept. Remove the subscription in your calendar app separately.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>{t("Keep publishing")}</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(async () => { const latest = await tauri.calendarPublishing(); await tauri.saveCalendarPublishing({...latest,enabled:false}, null); }, t("Calendar publishing stopped."))) { setEnabled(false); setDisconnect(false); } }}>{t("Stop publishing")}</Button></div></Dialog>}</Presence></section>;
+    <Presence>{disconnect && <SetupOrDialog inline={onboarding} title={t("Stop calendar publishing?")} onClose={() => setDisconnect(false)}><p>{t("Future changes will no longer be published. The existing feed and saved credentials are kept. Remove the subscription in your calendar app separately.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>{t("Keep publishing")}</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(async () => { const latest = await tauri.calendarPublishing(); await tauri.saveCalendarPublishing({...latest,enabled:false}, null); }, t("Calendar publishing stopped."))) { setEnabled(false); setDisconnect(false); } }}>{t("Stop publishing")}</Button></div></SetupOrDialog>}</Presence></section>;
 }
 
 export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } = {}) {
@@ -312,12 +318,12 @@ export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } =
         }, t("Plan sync preference saved."));
       }} />{t("Sync this plan across devices")}</label>
       <p className="muted">{t("Use the same COROS account and GitHub token on each device. Calendar publishing is not required.")}</p>
-      <Disclosure id="device-options" open={options} className="connection-options"><div className="form-actions">{!needsAction && <Button disabled={!ready} busy={command.busy} onClick={() => void sync()}><IconRefresh size={18} />{t("Sync now")}</Button>}<Button className="connection-disclosure" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconChevronDown className="disclosure-indicator" size={18} />{t("Connection settings")}</Button></div><InfoDialog title={t("Sync diagnostics")}><dl className="definition-list">
+      <Disclosure id="device-options" open={options} className="connection-options"><div className="form-actions">{!needsAction && <Button disabled={!ready} busy={command.busy} onClick={() => void sync()}><IconRefresh size={18} />{t("Sync now")}</Button>}<Button className="connection-disclosure" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconChevronDown className="disclosure-indicator" size={18} />{t("Connection settings")}</Button></div>{!onRequestWatch && <InfoDialog title={t("Sync diagnostics")}><dl className="definition-list">
         <div><dt>{t("Channel")}</dt><dd className="file-path">{status.data?.code ?? t("Unavailable until COROS is connected")}</dd></div>
         <div><dt>{t("Last checked")}</dt><dd>{config.lastChecked ? fmtDateTime(config.lastChecked) : t("Never")}</dd></div>
         <div><dt>{t("Last published")}</dt><dd>{config.lastPushed ? fmtDateTime(config.lastPushed) : t("Never")}</dd></div>
         <div><dt>{t("Last imported")}</dt><dd>{config.lastPulled ? fmtDateTime(config.lastPulled) : t("Never")}</dd></div>
-      </dl></InfoDialog></Disclosure>
+      </dl></InfoDialog>}</Disclosure>
       <Disclosure id="device-setup" open={setup}><section className="settings-section"><h3>{t("GitHub connection")}</h3><p className="muted">{t("A personal access token with gist scope is needed on each device. It stays in Keychain and is also used by GitHub calendar publishing.")}</p><form onSubmit={async event => {
         event.preventDefault();
         if (await command.run(async () => {
@@ -327,7 +333,7 @@ export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } =
       }}><label>{t("GitHub token")}<input type="password" autoComplete="new-password" required={!config.hasToken} value={token} onChange={event => setToken(event.target.value)} placeholder={config.hasToken ? t("Saved in Keychain; leave blank to keep") : t("Token with gist scope")} /></label><Button type="submit" tone="primary" busy={command.busy}><IconDeviceFloppy size={18} />{t("Save device connection")}</Button></form></section></Disclosure>
       {syncError && <ErrorNotice error={syncError} />}
     </>}
-    <Presence>{conflict !== null && <Dialog title={t("Replace the plan on this device?")} onClose={() => setConflict(null)}><p>{text(conflict)}</p><p>{t("The published plan will replace this device's local plan. Your recorded activities are kept.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConflict(null)}>{t("Keep local plan")}</Button><Button tone="danger" busy={command.busy} onClick={() => void pull(true)}>{t("Replace local plan")}</Button></div></Dialog>}</Presence>
+    <Presence>{conflict !== null && <SetupOrDialog inline={Boolean(onRequestWatch)} title={t("Replace the plan on this device?")} onClose={() => setConflict(null)}><p>{text(conflict)}</p><p>{t("The published plan will replace this device's local plan. Your recorded activities are kept.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConflict(null)}>{t("Keep local plan")}</Button><Button tone="danger" busy={command.busy} onClick={() => void pull(true)}>{t("Replace local plan")}</Button></div></SetupOrDialog>}</Presence>
   </section>;
 }
 

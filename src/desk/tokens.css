@@ -2,7 +2,7 @@
 
 :root {
   --font-ui: "Outfit", "Avenir Next", sans-serif;
-  --font-brand: "Avenir Next", Avenir, var(--font-ui);
+  --font-brand: var(--font-ui);
   --text-brand: 1.0625rem;
   --text-caption: .75rem;
   --text-detail: .8125rem;
@@ -18,7 +18,7 @@
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;
-  --weight-brand: 750;
+  --weight-brand: var(--weight-bold);
   --weight-display: 800;
   --leading-tight: 1.2;
   --leading-heading: 1.3;
@@ -69,6 +69,7 @@
   --layer-notification: 20;
   --layer-tooltip: 30;
   --layer-drag: 40;
+  --layer-splash: 45;
   --layer-skip: 50;
   --desk-canvas: #eef0f6;
   --desk-surface: #ffffff;

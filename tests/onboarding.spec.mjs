@@ -3,20 +3,227 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
-test("setup wordmark uses the shoe PoC brand typography", async ({ page }, testInfo) => {
-  for (const width of [320, 1440]) {
+test("setup starts with the transfer choice", async ({ page }) => {
+  await page.goto("/desk.html?noPlan&noWatch#training");
+  await expect(page.getByRole("heading", { name: "Import connections with a QR code?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
+  await page.getByRole("radio", { name: "Not now" }).check();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
+  await page.getByLabel("Name", { exact: true }).fill("Ada");
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+});
+
+for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }, { width: 667, height: 375 }]) {
+  test(`setup respects mobile safe areas at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/desk.html?noPlan&noWatch#training");
+    const shell = page.locator(".onboarding-shell");
+    await shell.evaluate(element => {
+      element.style.setProperty("--setup-safe-top", "47px");
+      element.style.setProperty("--setup-safe-right", "44px");
+      element.style.setProperty("--setup-safe-bottom", "34px");
+      element.style.setProperty("--setup-safe-left", "44px");
+    });
+    const header = await page.locator(".onboarding-header strong").boundingBox();
+    const navigation = await page.locator(".onboarding-header nav").boundingBox();
+    expect(header.y).toBeGreaterThanOrEqual(47);
+    expect(header.x).toBeGreaterThanOrEqual(44);
+    expect(navigation.x + navigation.width).toBeLessThanOrEqual(viewport.width - 44);
+    await page.screenshot({ path: testInfo.outputPath("setup-safe-top.png") });
+    await page.getByRole("radio", { name: "Not now" }).check();
+    await shell.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    const button = page.getByRole("button", { name: "Continue", exact: true });
+    await expect(button).toBeInViewport();
+    const bounds = await button.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(44);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width - 44);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height - 34);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+    await button.click();
+    await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("setup-safe-scrolled.png") });
+  });
+}
+
+for (const scenario of ["matching", "mismatch", "sync-failure", "restored-plan"]) test(`QR-first setup ${scenario}`, async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/desk.html?noPlan&noWatch#training");
+  const image = await page.evaluate(async scenario => {
+    const { sealConnections } = await import("/src/desk/connection-transfer.tsx");
+    const { default: QRCode } = await import("/node_modules/.vite/deps/qrcode.js");
+    const source = { version: 1, created: 1, calendar: { uploadUrl: "", subscriptionUrl: "", username: "", password: null }, githubToken: "synthetic-token", identity: { corosCode: scenario === "mismatch" ? "other-account" : "synthetic-account-channel" } };
+    const code = await sealConnections(source, "synthetic passphrase");
+    if (scenario === "sync-failure") window.__deskFail = "sync_now";
+    return QRCode.toDataURL(code, { width: 1000, margin: 4 });
+  }, scenario);
+  await page.getByRole("radio", { name: "Yes" }).check();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.locator(".onboarding-actions").getByRole("button", { name: "Continue" })).toBeDisabled();
+  await page.getByRole("button", { name: "Import transfer QR" }).click();
+  const dialog = page.getByRole("region", { name: "Import connection transfer" });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Review settings" })).toBeDisabled();
+  await dialog.getByLabel("QR image").setInputFiles({ name: "transfer.png", mimeType: "image/png", buffer: Buffer.from(image.split(",")[1], "base64") });
+  await dialog.getByLabel("Transfer passphrase").fill("synthetic passphrase");
+  await dialog.getByRole("button", { name: "Review settings" }).click();
+  const contents = dialog.getByRole("region", { name: "Transfer contents" });
+  await expect(contents).toContainText("COROS account fingerprint: Included");
+  await expect(contents).toContainText("Strava application Client ID and Client Secret: Not included");
+  await expect(contents).toContainText("Calendar settings: Not included");
+  await expect(contents).toContainText("GitHub token for device sync: Included");
+  await expect(dialog.getByText("COROS not connected")).toBeVisible();
+  if (scenario === "matching") {
+    await page.reload();
+    await expect(dialog.getByText("QR code loaded.")).toBeVisible();
+    await expect(dialog.getByLabel("Transfer passphrase")).toHaveValue("");
+    await dialog.getByLabel("Transfer passphrase").fill("synthetic passphrase");
+    await dialog.getByRole("button", { name: "Review settings" }).click();
+  }
+  await dialog.getByRole("button", { name: "Connect COROS" }).click();
+  if (scenario === "mismatch") {
+    await expect(dialog.getByRole("alert")).toContainText("Import blocked");
+    await expect(dialog.getByRole("button", { name: "Replace connections" })).toBeDisabled();
+    return;
+  }
+  await expect(dialog.getByText("COROS account matches this device.")).toBeVisible();
+  if (scenario === "restored-plan") await page.evaluate(async () => {
+    window.__deskRemotePlan = await window.__TAURI_INTERNALS__.invoke("preview_plan", { request: { startDate: "2026-11-13", targetDate: "2027-01-13", weeklyFrequency: 4, longrunDay: 7, qualityDays: [2], restDays: [], increase: "moderate" } });
+  });
+  await dialog.getByRole("button", { name: "Replace connections" }).click();
+  if (scenario === "sync-failure") {
+    await expect(page.getByRole("alert")).toContainText("Unable to save right now");
+    await page.evaluate(() => { window.__deskFail = ""; });
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+  }
+  else await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+  await expect(page.locator(".onboarding-step[data-step-state='present']").getByRole("region", { name: "Transfer contents" })).toContainText("GitHub token for device sync: Included");
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "plan_sync_refresh"))).toBe(true);
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "sync_now"))).toBe(true);
+  if (scenario === "restored-plan") {
+    await page.getByLabel("Name", { exact: true }).fill("Ada");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeVisible();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByText("Your imported plan is ready.")).toBeVisible();
+    expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "create_plan"))).toBe(false);
+  }
+});
+
+for (const [step, question] of [["strava", "Connect Strava?"], ["calendar", "Connect a calendar or GitHub Gist?"], ["devices", "Sync across devices?"]]) test(`setup requires a choice on ${step}`, async ({ page }) => {
+  await page.addInitScript(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada" })), step);
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
+  const next = page.locator(".onboarding-actions").getByRole("button", { name: "Continue", exact: true });
+  await expect(next).toBeDisabled();
+  await page.getByRole("radio", { name: "Not now" }).check();
+  await expect(next).toBeEnabled();
+});
+
+for (const [step, query] of [["strava-config", ""], ["calendar-config", ""], ["devices-config", "&syncSetup"]]) test(`setup allows deferring incomplete ${step}`, async ({ page }) => {
+  await page.addInitScript(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada", strava: true, calendar: true, devices: true })), step);
+  await page.goto(`/desk.html?noPlan${query}#training`);
+  const actions = page.locator(".onboarding-actions");
+  await expect(actions.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
+  await actions.getByRole("button", { name: "Not now" }).click();
+  await expect(page.locator('.onboarding-step[data-step-state="present"] h1')).not.toHaveText(step);
+});
+
+test("Strava setup enables Continue after connecting", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "strava-config", name: "Ada", strava: true })));
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByText("Create your own API application in Strava settings.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Strava API settings" })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const next = page.locator(".onboarding-actions").getByRole("button", { name: "Continue", exact: true });
+  await expect(next).toBeDisabled();
+  await page.getByLabel("Strava Client ID").fill("12345");
+  await page.getByLabel("Strava Client Secret").fill("synthetic-secret");
+  await page.getByRole("button", { name: "Save API credentials" }).click();
+  await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("status").filter({ hasText: "Strava API credentials saved." })).toBeVisible();
+  await expect(page.locator(".notification-viewport")).toHaveCount(0);
+  await expect(next).toBeDisabled();
+  await page.getByRole("button", { name: "Connect with Strava" }).click();
+  await expect(next).toBeEnabled();
+  await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("status").filter({ hasText: "Strava connected. Description updates remain paused until enabled." })).toBeVisible();
+  await next.click();
+  await page.getByRole("checkbox", { name: "Update paired activity descriptions" }).click();
+  const confirmation = page.getByRole("region", { name: "Enable Strava description updates?" });
+  await expect(confirmation).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_set_enabled"))).toBe(false);
+  await confirmation.getByRole("button", { name: "Enable updates" }).click();
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_set_enabled" && call.args.enabled))).toBe(true);
+});
+
+test("setup suppresses background notifications and achievement celebrations", async ({ page }) => {
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByRole("heading", { name: "Import connections with a QR code?" })).toBeVisible();
+  await page.evaluate(() => {
+    window.__deskEmit("sync://completed", { ok: false });
+    window.__deskEmit("plan://stage", { op: "sync", target: "calendar", state: "working" });
+    window.dispatchEvent(new CustomEvent("runalytics:achievements-unlocked", { detail: [{ id: "test", name: "Test", desc: "Test", icon: "" }] }));
+  });
+  await expect(page.locator(".notification-viewport")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Earned" })).toHaveCount(0);
+});
+
+test("setup keeps calendar continuation disabled after an upload failure", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "calendar-config", name: "Ada", calendar: true })));
+  await page.goto("/desk.html?noPlan&calendarError&calendarUploadFails#training");
+  const next = page.locator(".onboarding-actions").getByRole("button", { name: "Continue", exact: true });
+  await expect(page.getByText("Calendar host unavailable")).toBeVisible();
+  await expect(next).toBeDisabled();
+  await page.getByRole("button", { name: "Retry publishing" }).click();
+  await expect(page.getByRole("alert")).toContainText("Calendar upload failed");
+  await expect(next).toBeDisabled();
+  await expect(page.locator(".notification-viewport")).toHaveCount(0);
+});
+
+test("QR review identifies all included connection types", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer-config", transfer: true })));
+  await page.goto("/desk.html?noPlan#training");
+  const image = await page.evaluate(async () => {
+    const { sealConnections } = await import("/src/desk/connection-transfer.tsx");
+    const { default: QRCode } = await import("/node_modules/.vite/deps/qrcode.js");
+    const source = { version: 1, created: 1, calendar: { uploadUrl: "https://example.test/feed", subscriptionUrl: "https://example.test/feed", username: "runner", password: "calendar-secret" }, githubToken: "synthetic-token", strava: { clientId: "12345", clientSecret: "strava-secret" }, identity: { corosCode: "synthetic-account-channel" } };
+    return QRCode.toDataURL(await sealConnections(source, "synthetic passphrase"), { width: 1000, margin: 4 });
+  });
+  await page.getByRole("button", { name: "Import transfer QR" }).click();
+  const dialog = page.getByRole("region", { name: "Import connection transfer" });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await dialog.getByLabel("QR image").setInputFiles({ name: "transfer.png", mimeType: "image/png", buffer: Buffer.from(image.split(",")[1], "base64") });
+  await dialog.getByLabel("Transfer passphrase").fill("synthetic passphrase");
+  await dialog.getByRole("button", { name: "Review settings" }).click();
+  const contents = dialog.getByRole("region", { name: "Transfer contents" });
+  for (const label of ["COROS account fingerprint", "Strava application Client ID and Client Secret", "Calendar settings", "GitHub token for device sync"]) await expect(contents).toContainText(`${label}: Included`);
+  await expect(contents).not.toContainText("synthetic-token");
+  await expect(contents).not.toContainText("strava-secret");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await contents.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("qr-summary-320.png") });
+});
+
+test("setup wordmark shares the app typography and original logo", async ({ page }, testInfo) => {
+  for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
     await page.setViewportSize({ width, height: 740 });
-    await page.goto("/desk.html?noPlan#training");
+    await page.goto(`/desk.html?noPlan&theme=${theme}#training`);
     const wordmark = page.locator(".onboarding-header strong");
     await expect(wordmark).toBeVisible();
-    await expect(wordmark).toHaveCSS("font-family", '"Avenir Next", Avenir, Outfit, "Avenir Next", sans-serif');
+    await expect(wordmark).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
     await expect(wordmark).toHaveCSS("font-size", "17px");
-    await expect(wordmark).toHaveCSS("font-weight", "750");
+    await expect(wordmark).toHaveCSS("font-weight", "700");
     await expect(wordmark).toHaveCSS("font-synthesis", "none");
     await expect(wordmark).toHaveCSS("letter-spacing", /^(normal|0px)$/);
-    await expect(page.getByRole("heading").first()).toHaveCSS("font-family", 'Outfit, "Avenir Next", sans-serif');
+    await expect(wordmark.locator(".desk-brand-icon")).toBeVisible();
+    await expect(wordmark.locator(".desk-brand-icon")).toHaveCSS("width", "32px");
+    await expect(page.getByRole("heading").first()).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-    await page.screenshot({ path: testInfo.outputPath(`wordmark-setup-${width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`wordmark-setup-${theme}-${width}.png`), fullPage: true });
   }
 });
 
@@ -98,21 +305,22 @@ for (const width of [320, 1440]) test(`all optional branch combinations remain n
     ["Sync across devices?", "Set up device sync"],
   ];
   for (let combination = 0; combination < 16; combination++) {
-    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe(combination === 0 ? "name" : "goal");
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe(combination === 0 ? "transfer" : "goal");
     await page.evaluate(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer", name: "Ada", threshold: "4:40" })));
     await page.reload();
     for (const [index, [question, configuration]] of questions.entries()) {
       await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
       const enabled = Boolean(combination & (1 << index));
-      await page.getByRole("radio", { name: enabled ? "Yes" : "Not now" }).check();
+      await page.locator('.onboarding-step[data-step-state="present"]').getByRole("radio", { name: enabled ? "Yes" : "Not now" }).check();
       await page.getByRole("button", { name: "Continue", exact: true }).click();
       if (enabled) {
         await expect(page.getByRole("heading", { name: configuration, exact: true })).toBeVisible();
+        await page.locator(".onboarding-actions").getByRole("button", { name: "Not now", exact: true }).click();
+      }
+      if (index === 0) {
+        await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Ada");
         await page.getByRole("button", { name: "Continue", exact: true }).click();
-        if (index === 1) {
-          await expect(page.getByRole("heading", { name: "Update your Strava activities?" })).toBeVisible();
-          await page.getByRole("button", { name: "Continue", exact: true }).click();
-        }
+        await page.getByRole("button", { name: "Continue", exact: true }).click();
       }
     }
     await expect(page.getByRole("heading", { name: "What are you training for?" })).toBeVisible();
@@ -124,7 +332,7 @@ for (const width of [320, 1440]) test(`wizard steps fit and remain reachable at 
   await page.setViewportSize({ width, height: 640 });
   await page.goto("/desk.html?noPlan&syncSetup#training");
   const steps = ["name", "watch", "transfer", "transfer-config", "strava", "strava-config", "publishing", "calendar", "calendar-config", "devices", "devices-config", "goal", "method", "distance", "start", "end", "pace", "mileage", "recent-long-run", "frequency", "rest-days", "long-day", "quality", "preview"];
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe("name");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe("transfer");
   for (const step of steps) {
     await page.evaluate(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada", threshold: "4:40", transfer: true, strava: true, calendar: true, devices: true })), step);
     await page.reload();
@@ -149,41 +357,105 @@ for (const width of [320, 1440]) test(`setup viewport reveals keep long previews
   await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "preview", name: "Ada", threshold: "4:40" })));
   await page.goto("/desk.html?noPlan#training");
   const heading = page.locator('.onboarding-step[data-step-state="present"] h1');
-  await expect(heading).toHaveAttribute("data-reveal", "settled");
+  if (width > 800) await expect(heading).toHaveAttribute("data-reveal", "settled");
+  else await expect(heading).toBeVisible();
   const week = page.locator(".onboarding-step details").nth(1);
   await week.locator("summary").click();
   const row = week.locator("li").last();
   await row.scrollIntoViewIfNeeded();
-  await expect(row).toHaveAttribute("data-reveal", "settled");
+  if (width > 800) await expect(row).toHaveAttribute("data-reveal", "settled");
+  else await expect(row).toBeVisible();
   await expect(page.locator(".onboarding-step")).toHaveCSS("transform", "none");
   await page.screenshot({ path: testInfo.outputPath(`setup-scroll-${width}.png`) });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(page.locator('[data-reveal="waiting"], [data-reveal="visible"]')).toHaveCount(0);
 });
 
-test("step transitions animate in and out while the exiting step is inert", async ({ page }) => {
+for (const width of [320, 1440]) test(`step transitions animate in and out while the exiting step is inert at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "name" })));
   await page.goto("/desk.html?noPlan#training");
   await page.getByLabel("Name", { exact: true }).fill("Ada");
+  const actions = page.locator(".onboarding-actions");
+  const initialTop = await actions.evaluate(element => element.offsetTop);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   const outgoing = page.locator('.onboarding-step[data-step-state="exiting"]');
   const incoming = page.locator('.onboarding-step[data-step-state="present"]');
   await expect(outgoing).toHaveAttribute("inert", "");
-  await expect(incoming.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(incoming).toHaveCount(0);
+  expect(await actions.evaluate(element => element.offsetTop)).toBe(initialTop);
+  await expect(actions).toBeHidden();
   const values = await page.evaluate(() => {
     const oldStep = document.querySelector('.onboarding-step[data-step-state="exiting"]');
-    const newStep = document.querySelector('.onboarding-step[data-step-state="present"]');
-    return { old: getComputedStyle(oldStep).transform, next: getComputedStyle(newStep).transform, leaves: [...oldStep.querySelectorAll('[data-reveal]'), ...newStep.querySelectorAll('[data-reveal]')].filter(element => element.getAnimations().length).length };
+    return { old: getComputedStyle(oldStep).transform, animations: [oldStep, ...oldStep.querySelectorAll('[data-reveal]')].filter(element => element.getAnimations().length).length };
   });
   expect(values.old).toBe("none");
-  expect(values.next).toBe("none");
-  expect(values.leaves).toBeGreaterThan(0);
+  expect(values.animations).toBeGreaterThan(0);
   await expect(outgoing).toHaveCount(0);
+  await expect(incoming.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(actions).toBeVisible();
+  await expect(incoming).toHaveCSS("transform", "none");
   await expect.poll(() => incoming.evaluate(element => Number(getComputedStyle(element).opacity))).toBe(1);
+});
+
+test("setup choices use staggered blur on departure", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "goal", name: "Ada" })));
+  await page.goto("/desk.html?noPlan#training");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  const outgoing = page.locator('.onboarding-step[data-step-state="exiting"]');
+  const choices = outgoing.locator(".onboarding-options label");
+  await expect(choices).toHaveCount(3);
+  const timings = await choices.evaluateAll(elements => elements.map(element => ({ name: getComputedStyle(element).animationName, delay: getComputedStyle(element).animationDelay })));
+  expect(timings.map(timing => timing.name)).toEqual(["setup-focus-out", "setup-focus-out", "setup-focus-out"]);
+  expect(new Set(timings.map(timing => timing.delay)).size).toBe(3);
+  await expect(outgoing).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Training method" })).toBeFocused();
+});
+
+for (const step of ["transfer-config", "watch", "strava-config", "publishing", "calendar-config", "devices-config", "preview"]) test(`nested setup content fades when leaving ${step}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada", transfer: true, strava: true, calendar: true, devices: true, threshold: "4:40" })), step);
+  await page.goto("/desk.html?noPlan&syncSetup#training");
+  const current = page.locator('.onboarding-step[data-step-state="present"]');
+  await expect(current.locator("h1")).toBeVisible();
+  await page.locator(".onboarding-actions").getByRole("button", { name: "Back", exact: true }).click();
+  const outgoing = page.locator('.onboarding-step[data-step-state="exiting"]');
+  await expect(outgoing).toHaveAttribute("inert", "");
+  await expect.poll(() => outgoing.evaluate(element => Number(getComputedStyle(element).opacity))).toBeLessThan(1);
+  if (step === "transfer-config") {
+    const copy = outgoing.locator("section > p").first();
+    await expect(copy).toHaveCSS("animation-name", "setup-text-out");
+    await expect.poll(() => copy.evaluate(element => Number(getComputedStyle(element).opacity))).toBeLessThan(1);
+    expect(await copy.evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).m42)).toBeLessThan(0);
+  }
+  await expect(outgoing).toHaveCount(0);
+  await expect(page.locator('.onboarding-step[data-step-state="present"] h1')).toBeFocused();
+});
+
+test("weekday choices stagger in top-to-bottom order", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "long-day", name: "Ada" })));
+  await page.goto("/desk.html?noPlan#training");
+  const choices = page.locator('.onboarding-step[data-step-state="present"] .onboarding-options label');
+  await expect(choices).toHaveCount(7);
+  const delays = await choices.evaluateAll(elements => elements.map(element => parseFloat(getComputedStyle(element).animationDelay)));
+  for (let index = 1; index < delays.length; index++) expect(delays[index]).toBeGreaterThan(delays[index - 1]);
+  await page.locator(".onboarding-actions").getByRole("button", { name: "Back", exact: true }).click();
+  const outgoing = page.locator('.onboarding-step[data-step-state="exiting"] .onboarding-options label');
+  await expect(outgoing).toHaveCount(7);
+  const exits = await outgoing.evaluateAll(elements => elements.map(element => ({ delay: parseFloat(getComputedStyle(element).animationDelay), name: getComputedStyle(element).animationName })));
+  expect(exits.map(exit => exit.name)).toEqual(Array(7).fill("setup-focus-out"));
+  for (let index = 1; index < exits.length; index++) expect(exits[index].delay).toBeGreaterThan(exits[index - 1].delay);
 });
 
 test("reduced motion switches steps immediately and preserves keyboard focus", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "name" })));
   await page.goto("/desk.html?noPlan#training");
   await page.getByLabel("Name", { exact: true }).fill("Ada");
   await page.getByRole("button", { name: "Continue", exact: true }).focus();
@@ -198,19 +470,19 @@ for (const width of [320, 1440]) test(`each wizard step transitions in both dire
   await page.setViewportSize({ width, height: 740 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/desk.html?noPlan#training");
-  await page.getByLabel("Name", { exact: true }).fill("Ada");
-  const expected = ["Connect your watch", "Import connections with a QR code?", "Import your connections", "Connect Strava?", "Connect with Strava", "Update your Strava activities?", "Connect a calendar or GitHub Gist?", "Calendar apps", "Sync across devices?", "Set up device sync", "What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days", "Your plan preview"];
+  const expected = ["What should we call you?", "Connect your watch", "Connect Strava?", "Connect a calendar or GitHub Gist?", "Sync across devices?", "What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days", "Your plan preview"];
   for (const heading of expected) {
-    const choice = page.getByRole("radio", { name: "Yes" });
+    const choice = page.getByRole("radio", { name: "Not now" });
     if (await choice.isVisible()) await choice.check();
+    if (await page.getByLabel("Name", { exact: true }).isVisible()) await page.getByLabel("Name", { exact: true }).fill("Ada");
     await page.locator(".onboarding-actions").getByRole("button", { name: "Continue", exact: true }).click();
-    await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
+    if (width > 800) await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
     await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("heading", { name: heading, exact: true })).toBeFocused();
     await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveCount(0);
   }
   for (const heading of expected.slice(0, -1).reverse()) {
     await page.locator(".onboarding-actions").getByRole("button", { name: "Back", exact: true }).click();
-    await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
+    if (width > 800) await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
     await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("heading", { name: heading, exact: true })).toBeFocused();
     await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveCount(0);
   }
@@ -225,30 +497,107 @@ test("configuration controls remain reachable on a short mobile viewport", async
   await field.scrollIntoViewIfNeeded();
   await expect(field).toBeInViewport();
   await expect(page.getByRole("button", { name: "Save calendar settings" })).toBeVisible();
-  await page.locator(".onboarding-actions").getByRole("button", { name: "Continue" }).click();
+  await page.locator(".onboarding-actions").getByRole("button", { name: "Not now" }).click();
   await expect(page.getByRole("heading", { name: "Sync across devices?" })).toBeFocused();
   expect(await page.locator(".onboarding-shell").evaluate(element => element.scrollTop)).toBe(0);
 });
 
-test("QR setup can return to the watch connection without leaving the wizard", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer-config", name: "Ada", transfer: true })));
-  await page.goto("/desk.html?noPlan&noWatch#training");
-  await page.getByRole("button", { name: "Connect your watch" }).click();
+test("mobile setup shows sync loading through calendar work and preserves the step", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "watch", name: "Ada" })));
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeVisible();
+  await page.evaluate(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "sync_now") {
+        window.__deskEmit("sync://started", null);
+        await new Promise(resolve => { window.__finishSync = resolve; });
+        window.__deskEmit("sync://completed", { ok: true });
+      }
+      return invoke(command, args);
+    };
+  });
+  await page.getByRole("button", { name: "Sync history" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Syncing activities" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeHidden();
+  await page.evaluate(() => window.__deskEmit("plan://stage", { op: "sync", target: "calendar", state: "working" }));
+  await expect(page.locator(".onboarding-loading").getByRole("status")).toContainText("Updating calendar");
+  await page.evaluate(() => window.__finishSync());
   await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
 });
 
-test("QR import dialog opens and returns focus inside the wizard", async ({ page }) => {
+test("mobile steps remain visible without intersection callbacks", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "name", name: "Ada" }));
+    window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } };
+  });
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync history" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Not now" })).toBeVisible();
+});
+
+test("background sync preserves an unfinished mobile answer", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "name" })));
+  await page.goto("/desk.html?noPlan#training");
+  await page.getByLabel("Name", { exact: true }).fill("Ada");
+  await page.evaluate(() => window.__deskEmit("sync://started", null));
+  await expect(page.locator(".onboarding-loading").getByRole("status")).toBeVisible();
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: false }));
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Ada");
+  await expect(page.getByRole("heading", { name: "What should we call you?" })).toBeFocused();
+});
+
+test("failed plan creation restores the preview after loading", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "preview", name: "Ada", threshold: "4:40" })));
+  await page.goto("/desk.html?noPlan#training");
+  await expect(page.getByRole("button", { name: "Build plan" })).toBeEnabled();
+  await page.evaluate(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "create_plan") {
+        await new Promise(resolve => { window.__finishCreate = resolve; });
+        throw new Error("Plan could not be saved");
+      }
+      return invoke(command, args);
+    };
+  });
+  await page.getByRole("button", { name: "Build plan" }).click();
+  await expect(page.locator(".onboarding-loading").getByRole("status")).toContainText("Building your baseline");
+  await page.evaluate(() => window.__finishCreate());
+  await expect(page.getByRole("alert")).toContainText("Plan could not be saved");
+  await expect(page.getByRole("heading", { name: "Your plan preview" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Build plan" })).toBeEnabled();
+});
+
+test("QR setup can open import before connecting a watch", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer-config", name: "Ada", transfer: true })));
+  await page.goto("/desk.html?noPlan&noWatch#training");
+  await page.getByRole("button", { name: "Import transfer QR" }).click();
+  await expect(page.getByRole("region", { name: "Import connection transfer" })).toBeVisible();
+});
+
+test("QR import stays in the wizard and can be cancelled", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 });
   await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer-config", name: "Ada", transfer: true })));
   await page.goto("/desk.html?noPlan#training");
   const opener = page.getByRole("button", { name: "Import transfer QR" });
   await opener.click();
-  const dialog = page.getByRole("dialog", { name: "Import connection transfer" });
+  const dialog = page.getByRole("region", { name: "Import connection transfer" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Transfer passphrase")).toBeFocused();
-  await page.keyboard.press("Escape");
+  await dialog.getByLabel("Transfer passphrase").fill("test passphrase");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(opener).toBeFocused();
+  await expect(opener).toBeVisible();
 });
 
 for (const width of [320, 1440]) test(`onboarding preview supports dark theme at ${width}px`, async ({ page }, testInfo) => {
@@ -266,7 +615,7 @@ test("the watch connection can be deferred", async ({ page }) => {
   await page.goto("/desk.html?noPlan&noWatch#training");
   await expect(page.getByText("COROS not connected")).toBeVisible();
   await page.getByRole("button", { name: "Not now" }).click();
-  await expect(page.getByRole("heading", { name: "Import connections with a QR code?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect Strava?" })).toBeVisible();
 });
 
 for (const width of [320, 390, 820, 1440]) test(`onboarding resumes and previews before confirming at ${width}px`, async ({ page }, testInfo) => {
@@ -274,6 +623,8 @@ for (const width of [320, 390, 820, 1440]) test(`onboarding resumes and previews
   await page.goto("/desk.html?noPlan#journal");
   await expect(page.getByRole("navigation", { name: "Workspaces" })).toContainText("Setup");
   await expect(page.locator(".desk-navigation")).toHaveCount(0);
+  await page.getByRole("radio", { name: "Not now" }).check();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Ada");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeVisible();
@@ -283,9 +634,9 @@ for (const width of [320, 390, 820, 1440]) test(`onboarding resumes and previews
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Ada");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  for (const question of ["Import connections with a QR code?", "Connect Strava?", "Connect a calendar or GitHub Gist?", "Sync across devices?"]) {
+  for (const question of ["Connect Strava?", "Connect a calendar or GitHub Gist?", "Sync across devices?"]) {
     await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
-    await page.getByRole("radio", { name: "Not now" }).check();
+    await page.locator('.onboarding-step[data-step-state="present"]').getByRole("radio", { name: "Not now" }).check();
     await page.getByRole("button", { name: "Continue", exact: true }).click();
   }
   for (const question of ["What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days"]) {

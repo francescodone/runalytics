@@ -1,3 +1,111 @@
+## Activity Overview Feedback, 2026-11-13
+
+Matched eligible plan sessions show their existing feedback form in the activity
+Overview tab. Unsaved ratings survive switching between activity detail tabs.
+
+Verification: the production build and 11 focused synthetic-IPC Chromium checks
+passed, including keyboard interaction in light and dark themes at 320, 390, 820
+and 1440px. The 320px light screenshot was inspected. Native WebViews, physical
+devices and live providers were not tested.
+
+## Inline Setup Feedback, 2026-11-13
+
+Setup displays Strava API guidance alongside its credentials fields and keeps
+QR transfer review and connection confirmations in the setup flow. Explicit
+consent, account checks and replacement guards remain in place; ordinary
+Settings dialogs are unchanged. Background notifications remain suppressed.
+
+Verification: the production build, eight locale catalogs, and ten focused
+synthetic-IPC setup checks passed in Chromium and WebKit. The 320x640 QR review
+screenshot was inspected; QR workflows also ran at 390x844. The wider Prism
+matrix did not produce a reliable final summary in this run. Physical devices,
+native WebViews and live provider authentication were not tested.
+
+## Mobile Setup Safe Areas, 2026-11-13
+
+The compact setup header and content reserve the viewport's top, left, right
+and bottom safe-area insets, in addition to their normal spacing. Landscape
+cutouts and the bottom home indicator therefore do not cover setup controls;
+desktop setup geometry is unchanged.
+
+Verification: the production build passed. Synthetic-IPC Chromium and WebKit
+checks simulated a 47px top inset, 44px side insets and 34px bottom inset at
+320x640, 390x844 and 667x375, including scrolling and advancing setup. Portrait
+and landscape screenshots were inspected. The broader Chromium route, short
+viewport, enlarged-text and setup matrix passed 41 of 42 checks; the existing
+320px, 200%-text training roadmap overflow remains. Actual native safe-area
+reporting, physical devices and native keyboards were not tested.
+
+## Branded Opening And Frosted Handoff, 2026-11-13
+
+The original nested-tile logo is unchanged. Runalytics wordmarks use the local
+Outfit UI font at the shared bold weight. On opening, the logo and staggered
+letters resolve centrally, then shrink into the measured desktop, compact or
+setup header. The workspace stays blurred throughout travel. Once the logo
+lands, the stationary frosted layer gently fades away; the actual header logo
+stays hidden until the splash copy is synchronously hidden, avoiding overlap.
+Reduced motion skips the sequence, reduced transparency uses an opaque fallback,
+and input, resize, navigation or backgrounding dismisses it immediately.
+
+Verification: production build, 61 synthetic-IPC Chromium checks, 18 focused
+WebKit checks and 13 native-chrome unit tests passed. Splash frames and landing
+geometry were checked at 320, 390, 820 and 1440px, in setup and the main workspace,
+including constant blur during travel, the post-landing fade, no duplicate logo,
+delayed/failed startup, cancellation and packaged CSS timing. The route matrix
+covered sixteen widths from 320 to 2560px in both themes, plus 537x740, 913x480
+and 667x375; enlarged text passed at 820 and 1440px. Mobile and desktop opening,
+blurred travel, reveal and final screenshots were inspected. The previously
+documented 320px, 200%-text training roadmap overflow was not included in this
+gate. Native binaries, OS launch screens, physical devices and live providers
+were not rebuilt or tested; the splash is the app's shared web opening.
+
+## Setup Input And QR Summary, 2026-11-13
+
+Continue is disabled until required answers are supplied or the selected
+connection setup is complete. Optional integrations can be deferred explicitly.
+QR review and the post-import setup screen show which COROS account fingerprint,
+Strava application credentials, calendar settings and device-sync token were
+included, without revealing secrets. COROS sign-in is not transferred.
+
+Verification: synthetic-IPC Chromium and WebKit checks cover required choices,
+incomplete connection deferral, QR review and import at 390x844. A populated QR
+and successful Strava connection were checked in both browsers at mobile widths;
+the 320x640 QR review screenshot was inspected. Branch navigation and transitions
+passed at 320x740 and 1440x740. The production build and all eight locale catalogs
+passed. The Prism matrix passed 37 of 38 checks; the existing 320px, 200%-text
+training roadmap overflow remains. Physical devices, native WebViews and live
+provider authentication were not tested.
+
+## QR-First Setup, 2026-11-13
+
+Setup offers connection transfer before name and watch setup. The encrypted QR
+can be scanned before COROS authorization; review and account comparison still
+precede import. After import, setup attempts COROS history and device-plan sync,
+offers retry on failure, and reviews an existing plan without creating another.
+Only encrypted QR text is retained across a sign-in navigation; the passphrase
+and decrypted settings are not persisted there.
+
+Verification: synthetic-IPC Chromium checks covered QR-first setup, matching
+and mismatched accounts, encrypted QR recovery on reload, failed-sync retry and
+restored-plan review at 390x844. Existing branch and resume checks passed at
+320, 390, 820 and 1440px. Native WebViews, real provider authorization and
+physical devices were not tested.
+
+## Mobile Setup Reliability, 2026-11-13
+
+Setup shows a loading state during watch sync, including its calendar stage,
+connection-import sync and plan creation. The current step remains mounted and
+focus returns when work finishes. Compact setup content does not depend on
+viewport reveal or exit callbacks; desktop setup keeps its existing transitions.
+
+Verification: the production build, locale catalog check and focused synthetic
+IPC onboarding checks passed in Chromium and WebKit. Step transitions were
+checked in both directions at 320x740 and 1440x740; 320x640 and 390x844 checks
+covered loading, failures and retained answers. Mobile preview and loading
+screenshots were inspected. The Prism matrix passed 37 of 38 checks; the known
+320px, 200%-text training roadmap overflow remains. Physical iPhones, native
+WebViews and live watch and calendar services were not tested.
+
 ## Compact Header Wordmark, 2026-11-13
 
 The compact header retains the accessible brand link and icon but hides the

@@ -100,8 +100,19 @@ pub struct Status {
     already_present: usize,
     pending: usize,
     needs_review: usize,
+    review_items: Vec<ReviewItem>,
     last_message: Option<String>,
     last_attempt_at: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewItem {
+    source_key: String,
+    start_ts: i64,
+    distance_m: f64,
+    message: String,
+    retryable: bool,
 }
 
 fn status(store: &Store) -> Result<Status> {
@@ -131,7 +142,7 @@ fn account_status(store: &Store, mut output: Status) -> Result<Status> {
             output.last_attempt_at = attempted;
         }
         let mut statement = connection.prepare(
-            "SELECT status,count(*) FROM strava_exports WHERE athlete_id=?1 GROUP BY status",
+            "SELECT status,count(*) FROM strava_exports WHERE athlete_id=?1 AND COALESCE(message,'')<>'Discarded locally; no Strava activity was changed.' GROUP BY status",
         )?;
         for entry in statement.query_map([athlete], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)? as usize))
@@ -144,6 +155,10 @@ fn account_status(store: &Store, mut output: Status) -> Result<Status> {
                 _ => output.pending += count,
             }
         }
+        let mut statement = connection.prepare("SELECT source_key,start_ts,distance_m,COALESCE(message,''),payload<>'' AND retention_expires_at>unixepoch() FROM strava_exports WHERE athlete_id=?1 AND status IN ('needs_review','auth_required') AND COALESCE(message,'')<>'Discarded locally; no Strava activity was changed.' ORDER BY start_ts DESC")?;
+        output.review_items = statement.query_map([athlete], |row| Ok(ReviewItem {
+            source_key: row.get(0)?, start_ts: row.get(1)?, distance_m: row.get(2)?, message: row.get(3)?, retryable: row.get(4)?,
+        }))?.collect::<std::result::Result<Vec<_>, _>>()?;
     }
     Ok(output)
 }
@@ -677,7 +692,7 @@ async fn sync_inner(store: &Store) -> Result<String> {
         .optional()?
         .flatten();
     let Some(cutoff) = cutoff else {
-        return Ok("Strava description updates are paused.".into());
+        return Ok(String::new());
     };
     let now = Utc::now().timestamp();
     let queue_failed = enqueue(store, athlete, cutoff, now).is_err();
@@ -754,9 +769,10 @@ fn record_sync_result(store: &Store, athlete: i64, now: i64) -> Result<String> {
     );
     let connection = store.conn.lock().unwrap();
     let outstanding: Option<(String, i64)> = connection.query_row(
-        "SELECT message,next_attempt_at FROM strava_exports WHERE athlete_id=?1 AND status IN ('pending','waiting','retry','auth_required','needs_review') ORDER BY CASE status WHEN 'auth_required' THEN 0 WHEN 'needs_review' THEN 1 ELSE 2 END,next_attempt_at,start_ts LIMIT 1",
+        "SELECT message,next_attempt_at FROM strava_exports WHERE athlete_id=?1 AND status IN ('pending','waiting','retry','auth_required','needs_review') AND COALESCE(message,'')<>'Discarded locally; no Strava activity was changed.' ORDER BY CASE status WHEN 'auth_required' THEN 0 WHEN 'needs_review' THEN 1 ELSE 2 END,next_attempt_at,start_ts LIMIT 1",
         [athlete], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional()?;
+    let notice = outstanding.as_ref().map(|(detail, _)| format!("Strava: {detail} Check Strava in Settings."));
     if let Some((detail, retry_at)) = outstanding {
         if !detail.is_empty() { message.push_str(&format!(" {detail}")); }
         if output.needs_review == 0 && retry_at > now {
@@ -767,13 +783,40 @@ fn record_sync_result(store: &Store, athlete: i64, now: i64) -> Result<String> {
         "UPDATE strava_accounts SET last_message=?2,last_attempt_at=?3 WHERE athlete_id=?1",
         params![athlete, message, now],
     )?;
-    Ok(message)
+    Ok(if output.needs_review > 0 { notice.unwrap_or_else(|| "Strava needs attention. Check Strava in Settings.".into()) } else { String::new() })
 }
 
 #[tauri::command]
 pub async fn strava_retry(state: State<'_, AppState>) -> Result<Status> {
     sync(&state.store).await?;
     status(&state.store)
+}
+
+#[tauri::command]
+pub async fn strava_resolve_review(state: State<'_, AppState>, source_key: String, retry: bool) -> Result<Status> {
+    let _guard = operation().lock().await;
+    let config = credentials()?.ok_or_else(|| failure("Strava is not connected."))?;
+    let athlete = config.tokens.ok_or_else(|| failure("Strava is not connected."))?.athlete_id;
+    if retry {
+        let enabled: bool = state.store.conn.lock().unwrap().query_row("SELECT enabled FROM strava_accounts WHERE athlete_id=?1", [athlete], |row| row.get(0)).optional()?.unwrap_or(false);
+        if !enabled { return Err(failure("Enable Strava description updates before retrying.")); }
+    }
+    resolve_review(&state.store, athlete, &source_key, retry)?;
+    if retry { sync_inner(&state.store).await?; }
+    status(&state.store)
+}
+
+fn resolve_review(store: &Store, athlete: i64, key: &str, retry: bool) -> Result<()> {
+    let connection = store.conn.lock().unwrap();
+    let changed = if retry {
+        connection.execute("UPDATE strava_exports SET status='pending',next_attempt_at=0,message='',updated_at=?3 WHERE athlete_id=?1 AND source_key=?2 AND status IN ('needs_review','auth_required') AND payload<>'' AND retention_expires_at>?3", params![athlete, key, Utc::now().timestamp()])?
+    } else {
+        connection.execute("UPDATE strava_exports SET status='needs_review',payload='',message='Discarded locally; no Strava activity was changed.',updated_at=?3 WHERE athlete_id=?1 AND source_key=?2 AND status IN ('needs_review','auth_required') AND COALESCE(message,'')<>'Discarded locally; no Strava activity was changed.'", params![athlete, key, Utc::now().timestamp()])?
+    };
+    if changed == 0 {
+        return Err(failure("This description is no longer available for that action. Refresh and try again."));
+    }
+    Ok(())
 }
 
 fn housekeeping(store: &Store, now: i64) -> Result<()> {
@@ -920,19 +963,65 @@ mod tests {
     }
 
     #[test]
+    fn review_actions_keep_receipt_and_guard_expired_payloads() {
+        let (store, job) = fixture();
+        let now = Utc::now().timestamp();
+        finish_job(&store, 42, &job, "needs_review", "Multiple matches", None, now).unwrap();
+        assert!(resolve_review(&store, 99, &job.key, true).is_err());
+        resolve_review(&store, 42, &job.key, true).unwrap();
+        assert_eq!(outcome(&store).0, "pending");
+        finish_job(&store, 42, &job, "needs_review", "Multiple matches", None, now).unwrap();
+        store.conn.lock().unwrap().execute("UPDATE strava_exports SET retention_expires_at=?1", [now - 1]).unwrap();
+        let review = account_status(&store, Status { athlete_id: Some(42), ..Status::default() }).unwrap();
+        assert!(!review.review_items[0].retryable);
+        assert!(resolve_review(&store, 42, &job.key, true).is_err());
+        resolve_review(&store, 42, &job.key, false).unwrap();
+        assert_eq!(outcome(&store).0, "needs_review");
+        assert!(outcome(&store).2.is_empty());
+        assert_eq!(account_status(&store, Status { athlete_id: Some(42), ..Status::default() }).unwrap().needs_review, 0);
+        assert!(resolve_review(&store, 42, &job.key, false).is_err());
+    }
+
+    #[test]
     fn deferred_queue_reports_reason_and_retry_without_staying_silent() {
         let (store, job) = fixture();
         let now = Utc::now().timestamp();
         finish_job(&store, 42, &job, "waiting", "Waiting for the watch activity to arrive in Strava.", None, now + 300).unwrap();
         let message = record_sync_result(&store, 42, now).unwrap();
-        assert!(message.contains("1 pending"));
-        assert!(message.contains("Waiting for the watch activity to arrive in Strava."));
-        assert!(message.contains("Next retry in 5 min."));
+        assert!(message.is_empty());
         let output = account_status(&store, Status { athlete_id: Some(42), ..Status::default() }).unwrap();
-        assert_eq!(output.last_message.as_deref(), Some(message.as_str()));
+        let saved = output.last_message.as_deref().unwrap();
+        assert!(saved.contains("1 pending"));
+        assert!(saved.contains("Waiting for the watch activity to arrive in Strava."));
+        assert!(saved.contains("Next retry in 5 min."));
         assert_eq!(output.last_attempt_at, Some(now));
         assert_eq!(outcome(&store).0, "waiting");
         assert_eq!(outcome(&store).3, now + 300);
+    }
+
+    #[test]
+    fn completed_copies_are_quiet_but_remain_in_status() {
+        let (store, job) = fixture();
+        let now = Utc::now().timestamp();
+        finish_job(&store, 42, &job, "updated", "Copied.", Some(99), now).unwrap();
+        assert!(record_sync_result(&store, 42, now).unwrap().is_empty());
+        let output = account_status(&store, Status { athlete_id: Some(42), ..Status::default() }).unwrap();
+        assert_eq!(output.updated, 1);
+        assert!(output.last_message.unwrap().contains("1 copied"));
+    }
+
+    #[test]
+    fn review_notification_contains_only_actionable_detail() {
+        let (store, job) = fixture();
+        let now = Utc::now().timestamp();
+        finish_job(&store, 42, &job, "needs_review", "An existing Runalytics description needs review; nothing changed.", Some(99), now).unwrap();
+        assert_eq!(record_sync_result(&store, 42, now).unwrap(), "Strava: An existing Runalytics description needs review; nothing changed. Check Strava in Settings.");
+        let output = account_status(&store, Status { athlete_id: Some(42), ..Status::default() }).unwrap();
+        assert_eq!(output.review_items.len(), 1);
+        assert_eq!(output.review_items[0].source_key, job.key);
+        assert!(output.review_items[0].message.contains("needs review"));
+        assert!(output.review_items[0].retryable);
+        assert!(output.last_message.unwrap().contains("1 need attention"));
     }
 
     #[test]
@@ -941,8 +1030,9 @@ mod tests {
         let now = Utc::now().timestamp();
         finish_job(&store, 42, &job, "auth_required", "Reconnect Strava and allow activity read/write permissions.", None, now + 300).unwrap();
         let message = record_sync_result(&store, 42, now).unwrap();
-        assert!(message.contains("0 pending, 1 need attention"));
+        assert!(!message.contains("copied"));
         assert!(message.contains("Reconnect Strava"));
+        assert!(message.contains("Settings"));
         assert!(!message.contains("Next retry"));
     }
 

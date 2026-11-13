@@ -1,4 +1,8 @@
 {
+  "COROS account fingerprint": "Empreinte du compte COROS",
+  "Calendar settings": "Paramètres du calendrier",
+  "Included": "Inclus",
+  "Not included": "Non inclus",
   "Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.": "Les connexions aux comptes, les jetons OAuth, les plans d'entraînement et l'historique des activités ne sont pas inclus.",
   "Watch predictions reflect the latest sync and may not be from today.": "Les prévisions de la montre datent de la dernière synchronisation et ne sont pas nécessairement celles d'aujourd'hui.",
   "Race day projection": "Projection pour la course",
@@ -547,6 +551,8 @@
   "Cancel sign-in": "Annuler la connexion",
   "Remove API credentials": "Supprimer les informations d'identification de l'API",
   "Activity descriptions": "Descriptions des activités",
+  "Discard": "Ignorer",
+  "These runs could not be updated. Try again or discard the pending description; discarding does not change Strava.": "Ces courses n'ont pas pu être mises à jour. Réessayez ou ignorez la description en attente ; cela ne modifie pas Strava.",
   "Strava description updates paused.": "Les mises à jour des descriptions Strava ont été suspendues.",
   "Update paired activity descriptions": "Mettre à jour les descriptions d'activités associées",
   "Eligible runs: recorded from {{value0}}.": "Exécutions éligibles : enregistrées à partir de {{value0}}.",

@@ -116,9 +116,12 @@ a backdrop-filtered layer; the stationary scrim retains blur. Dialogs enter the
 top layer and establish focus and scroll locks before paint.
 Removed rows remain mounted until
 their opacity exit completes. Disclosure contents use the viewport scheduler;
-collapse waits for the visible children's exit cascade. Setup steps retain their
-outgoing inert leaves through the same cascade, while the incoming question is
-available immediately. Their wrappers stay opaque and untransformed.
+collapse waits for the visible children's exit cascade. Desktop setup steps retain
+their outgoing inert leaves through the same cascade before the incoming question
+appears. Compact setup steps fade as whole units without depending on viewport
+reveals, and waiting setup chrome remains visible. Setup headings and choices add
+a small staggered blur during the handoff; reduced motion skips it. Step wrappers
+stay untransformed.
 `SelectionGroup` scopes shared selection indicators
 without adding DOM wrappers or nested focus targets.
 
@@ -137,6 +140,29 @@ Screen readers always receive the final value;
 reduced motion displays it immediately. Press, hover and selection feedback
 retain their immediate interaction feedback; selection-marker travel uses the
 shared Bezier tween. Gesture tracking remains one-to-one with the pointer.
+
+## Opening Brand Handoff
+
+`BrandSplash` preserves the original logo and uses the local Outfit wordmark.
+It runs once per document opening, outside route and setup-step presence. The
+logo and staggered letters resolve using the shared 560ms arrival and 60ms
+stagger, then move to the measured header logo and wordmark over 560ms. Compact
+headers retain their icon-only layout; their splash text folds away during travel.
+
+A stationary, full-viewport frosted layer keeps the workspace blurred during
+travel. Only after landing does that layer fade out over another 560ms, with the
+logo held sharp and still. The blur radius itself is not animated and no filter
+or transform is added to the workspace or a fixed-element ancestor. Reduced
+transparency, increased contrast and unsupported blur use an opaque fallback.
+The real header branding stays hidden until the splash copy is synchronously
+hidden, preventing a duplicate-logo frame during React unmount.
+
+The shared `desk:reveal-settle` event settles the destination header before
+measurement so viewport entrances cannot move the landing point. Reduced motion
+skips the splash entirely. Input, resize, navigation, backgrounding and live motion
+preference changes cancel it immediately without blocking the initiating action.
+A bounded startup deadline exposes loading or errors if no header becomes ready;
+fonts, delayed data and setup do not create an indefinite splash.
 
 ## Accessibility And Performance
 

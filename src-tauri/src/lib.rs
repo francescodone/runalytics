@@ -36,6 +36,7 @@ pub fn run() {
 
             let data_dir = app.path().app_data_dir()?;
             let db_path = data_dir.join("runalytics.sqlite");
+            let existing_installation = db_path.exists();
             let store = store::Store::open(&db_path)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             if let Err(error) = calendar::adopt_naming(&store) {
@@ -51,12 +52,20 @@ pub fn run() {
                     pmtiles_path: None,
                     last_provider: None,
                     theme: None,
-                    palette: None,
+                    palette: (!existing_installation).then(|| "amethyst".to_string()),
                     llm_enabled: false,
                     llm_endpoint: None,
                     llm_model: None,
                     thresholds: Default::default(),
                 });
+            if !existing_installation && !settings_path.exists() {
+                if let Err(error) = serde_json::to_vec_pretty(&settings)
+                    .map_err(std::io::Error::other)
+                    .and_then(|json| std::fs::write(&settings_path, json))
+                {
+                    eprintln!("could not save initial settings: {error}");
+                }
+            }
 
             let providers = providers::build_providers();
             providers::coros::set_app_handle(app.handle().clone());
@@ -151,6 +160,7 @@ pub fn run() {
             strava::strava_disconnect,
             strava::strava_set_enabled,
             strava::strava_retry,
+            strava::strava_resolve_review,
             commands::provider_status,
             commands::coros_signin_notice,
             commands::check_provider_api,

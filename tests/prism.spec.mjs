@@ -1873,11 +1873,12 @@ for (const width of [320, 375, 390, 820, 1440]) {
     const icon = brand.locator(".desk-brand-icon");
     await expect(icon).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-family", '"Avenir Next", Avenir, Outfit, "Avenir Next", sans-serif');
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-size", "17px");
-    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-weight", "750");
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-weight", "700");
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-synthesis", "none");
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("letter-spacing", /^(normal|0px)$/);
+    await expect(icon).toHaveAttribute("aria-hidden", "true");
     const geometry = await brand.evaluate(element => {
       const bounds = element.getBoundingClientRect();
       const mark = element.querySelector(".desk-brand-icon").getBoundingClientRect();
@@ -1930,20 +1931,23 @@ for (const reducedMotion of ["no-preference", "reduce"]) {
     await page.emulateMedia({ reducedMotion });
     await page.addInitScript(() => {
       window.__brandEntrances = [];
-      document.addEventListener("animationstart", event => {
-        if (event.target.matches(".desk-brand-icon, .desk-brand-name")) window.__brandEntrances.push({ target: event.target.className, animation: event.animationName, delay: getComputedStyle(event.target).animationDelay });
-      });
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (keyframes, options) {
+        if (this.matches(".desk-brand-icon, .desk-brand-name, .brand-splash-wordmark, .brand-splash-wordmark > span")) window.__brandEntrances.push({ target: this.className, splash: Boolean(this.closest(".brand-splash")), duration: options?.duration });
+        return animate.call(this, keyframes, options);
+      };
     });
     await page.goto("/desk.html#journal");
     const brand = page.getByRole("link", { name: "Runalytics training" });
     await expect(brand.locator(".desk-brand-icon")).toHaveAttribute("data-reveal", "settled");
     await expect(brand.locator(".desk-brand-name")).toHaveAttribute("data-reveal", "settled");
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
     const entrances = await page.evaluate(() => window.__brandEntrances);
     if (reducedMotion === "reduce") expect(entrances).toEqual([]);
     else {
-      expect(entrances.map(entry => entry.target)).toEqual(["desk-brand-icon", "desk-brand-name"]);
-      expect(entrances.every(entry => entry.animation === "content-arrive")).toBe(true);
-      expect(parseFloat(entrances[1].delay)).toBeGreaterThan(parseFloat(entrances[0].delay));
+      expect(entrances.some(entry => entry.splash && entry.target === "desk-brand-icon")).toBe(true);
+      expect(entrances.some(entry => entry.splash && entry.target === "brand-splash-wordmark")).toBe(true);
+      expect(entrances.every(entry => entry.duration === 560)).toBe(true);
     }
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");

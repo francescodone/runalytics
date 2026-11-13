@@ -108,14 +108,17 @@ distributed.
 - **Connection transfer**: Settings > Transfer connections offers
   **Create transfer QR** and **Import transfer QR**. Choose a private passphrase
   of at least 12 characters on the old device, then scan or upload the encrypted
-  QR image on the new device and enter the same passphrase. Review before
+  QR image on the new device and enter the same passphrase. Initial setup offers
+  the import first. Sign in to the same COROS account to verify the transfer;
+  after confirmation, setup attempts to sync COROS history and the plan when a
+  device-sync token is included. Failures can be retried. Review before
   replacing settings. Calendar hosting credentials, the GitHub sync token and
   saved Strava application Client ID/Secret are included; COROS/Strava sessions
   and training history are not. The review shows actual URLs, username and
   Strava Client ID, with secrets masked and replacement/removal effects stated.
   Older QR images without Strava credentials leave Strava unchanged. Imports leave
-  publishing and device sync paused. Sign in to the same COROS account before
-  enabling sync. Camera scanning is available on iPhone and supported browsers;
+  calendar publishing paused; a transferred GitHub token enables device sync.
+  Strava still requires separate authorization. Camera scanning is available on iPhone and supported browsers;
   native macOS uses image upload. Keep both the image and passphrase private and
   delete the image after use. Transfer images remain reusable until deleted or
   the included credentials are revoked.

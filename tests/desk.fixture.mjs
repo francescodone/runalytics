@@ -23,7 +23,8 @@ export const deskFixture = `(function () {
   if (connectionParams.has('syncError')) deskSync.config.lastError='Device channel unavailable';
   let deskKey = true;
   let deskConnected = !connectionParams.has('noWatch');
-  let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,lastMessage:null,lastAttemptAt:null};
+  let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,reviewItems:[],lastMessage:null,lastAttemptAt:null};
+  if (connectionParams.has('stravaReview')) deskStrava = {...deskStrava,configured:true,clientId:'123',connected:true,athleteId:42,enabled:true,needsReview:2,reviewItems:[{sourceKey:'coros:one',startTs:1793664000,distanceM:5000,message:'Multiple possible Strava activities; no description changed.',retryable:true},{sourceKey:'coros:two',startTs:1793577600,distanceM:10000,message:'Pending description expired after 90 days; no Strava activity was changed.',retryable:false}]};
   // Stands in for the backend's original_json snapshot: what a session was
   // before a benchmark overwrote it ('created' when the plan had a rest day).
   const deskBenchmarks = new Map();
@@ -83,6 +84,7 @@ export const deskFixture = `(function () {
     if (cmd === 'strava_set_enabled') { deskStrava={...deskStrava,enabled:args.enabled,enabledAt:deskStrava.enabledAt ?? Math.floor(Date.now()/1000)}; return {...deskStrava}; }
     if (cmd === 'strava_disconnect') { deskStrava={...deskStrava,connected:false,enabled:false,athleteId:null,...(args.forget ? {configured:false,clientId:''} : {})}; return {...deskStrava}; }
     if (cmd === 'strava_retry') { deskStrava={...deskStrava,updated:1,alreadyPresent:1,pending:0,lastMessage:'Strava: 1 copied, 1 already present, 0 pending, 0 need attention.'}; return {...deskStrava}; }
+    if (cmd === 'strava_resolve_review') { deskStrava={...deskStrava,reviewItems:deskStrava.reviewItems.filter(item=>item.sourceKey!==args.sourceKey),needsReview:deskStrava.needsReview-1}; return {...deskStrava}; }
     if (cmd === 'current_plan') {
       if (deskCurrent !== undefined) return deskCurrent;
       if (new URLSearchParams(location.search).has('noPlan')) return null;
@@ -99,6 +101,7 @@ export const deskFixture = `(function () {
     if (cmd === 'coros_signin_notice') return null;
     if (cmd === 'disconnect_provider') { deskConnected=false; return null; }
     if (cmd === 'connect_provider') { deskConnected=true; return 'connected'; }
+    if (cmd === 'sync_now') return {activitiesNew:0,healthDays:0,messages:[]};
     if (cmd === 'check_provider_api') return ['synthetic-list-activities'];
     if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:connectionParams.has('noWatchPredictions') ? null : 1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
     if (cmd === 'preview_plan') {

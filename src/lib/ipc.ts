@@ -89,6 +89,7 @@ export const tauri = {
   stravaSetEnabled: (enabled: boolean) => call<import("./types").StravaStatus>("strava_set_enabled", { enabled }),
   stravaDisconnect: (forget = false) => call<import("./types").StravaStatus>("strava_disconnect", { forget }),
   stravaRetry: () => call<import("./types").StravaStatus>("strava_retry"),
+  stravaResolveReview: (sourceKey: string, retry: boolean) => call<import("./types").StravaStatus>("strava_resolve_review", { sourceKey, retry }),
   providerStatus: () => call<ProviderStatus[]>("provider_status"),
   checkProviderApi: (provider: ProviderKind) =>
     call<string[]>("check_provider_api", { provider }),

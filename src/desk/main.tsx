@@ -1,5 +1,5 @@
 import { FeedbackReminder } from "./feedback";
-import { Activity, useEffect, useRef, useState } from "react";
+import { Activity, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
@@ -8,7 +8,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
 import type { Workspace } from "./data";
-import { ErrorNotice, IconButton } from "./ui";
+import { BrandMark, ErrorNotice, IconButton } from "./ui";
 import "./desk.css";
 import { Training } from "./training";
 import { Journal } from "./journal";
@@ -16,6 +16,7 @@ import { Milestones } from "./health";
 import { PaceInsightsView } from "./pace-insights";
 import { SettingsWorkspace, Help } from "./settings";
 import { Onboarding, hasOnboardingDraft } from "./onboarding";
+import { BrandSplash } from "./splash";
 import { Change, MotionSystem, SelectionGroup, SelectionMarker, tempo, useCompactLayout } from "./interaction";
 import { locale, t } from "./i18n";
 import "./interaction.css";
@@ -48,7 +49,8 @@ function App() {
   const [runnerName, setRunnerName] = useState(() => { try { return localStorage.getItem("runalytics.runnerName") ?? ""; } catch { return ""; } });
   const setupPending = !setupCompleted && (currentPlan.loading || currentPlan.error !== null || hasOnboardingDraft() || !currentPlan.data);
   const command = useCommand();
-  const { syncing, notify } = useWorkspace();
+  const { syncing, notify, setSetupPending } = useWorkspace();
+  useLayoutEffect(() => { setSetupPending(setupPending); }, [setupPending]);
   useEffect(() => {
     if (setupCompleted || !currentPlan.data || hasOnboardingDraft()) return;
     try { localStorage.setItem("runalytics.onboarding.complete", "1"); } catch {}
@@ -86,10 +88,10 @@ function App() {
     let nativeTheme: string | undefined;
     const paint = () => {
       let cachedTheme = "system";
-      let cachedPalette = "reference";
+      let cachedPalette = "amethyst";
       try {
         cachedTheme = localStorage.getItem("runalytics.theme") ?? "system";
-        cachedPalette = localStorage.getItem("runalytics.palette") ?? "reference";
+        cachedPalette = localStorage.getItem("runalytics.palette") ?? "amethyst";
         if (settings.data) {
           localStorage.setItem("runalytics.theme", settings.data.theme ?? "system");
           localStorage.setItem("runalytics.palette", settings.data.palette ?? "reference");
@@ -97,7 +99,7 @@ function App() {
       } catch {}
       const theme = settings.data?.theme ?? cachedTheme;
       const resolvedTheme = theme === "system" ? (media.matches ? "dark" : "light") : theme;
-      const palette = settings.data?.palette ?? cachedPalette;
+      const palette = settings.data ? (settings.data.palette ?? "reference") : cachedPalette;
       const root = document.documentElement;
       const changed = root.dataset.deskTheme !== resolvedTheme || root.dataset.deskPalette !== palette;
       const version = ++appearanceVersion.current;
@@ -134,12 +136,8 @@ function App() {
     <a lang={locale} className="desk-skip" href="#workspace" onClick={event => { event.preventDefault(); document.getElementById("workspace")?.focus(); }}>{t("skip")}</a>
     <header lang={locale} className="desk-appbar">
       <a href="#training" className="desk-brand" aria-label={t("brand")}>
-        <span className="desk-brand-icon" data-entrance aria-hidden="true"><svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor" focusable="false">
-          <path d="M32 4C8 4 4 8 4 32s4 28 28 28 28-4 28-28S56 4 32 4Z" />
-          <rect x="12" y="12" width="40" height="40" rx="15" fill="var(--desk-on-action)" />
-          <path d="M23.044 40.875 27.481 23.125H35.606Q37.581 23.125 38.879 23.775Q40.176 24.425 40.678 25.608Q41.18 26.79 40.777 28.4Q40.467 29.64 39.735 30.598Q39.004 31.555 37.956 32.165Q36.909 32.775 35.651 32.965L35.642 32.72Q37.467 32.72 38.2 33.5Q38.932 34.28 38.655 35.83L37.814 40.875H33.379L34.169 36.555Q34.359 35.555 33.96 35.08Q33.561 34.605 32.291 34.605H28.961L27.394 40.875ZM29.851 31.045H32.961Q34.266 31.045 35.11 30.47Q35.954 29.895 36.215 28.85Q36.482 27.78 35.914 27.232Q35.346 26.685 33.996 26.685H30.941Z" />
-        </svg></span>
-        <span className="desk-brand-name" data-entrance>Runalytics</span>
+        <BrandMark />
+        <span className="desk-brand-name brand-wordmark" data-entrance>Runalytics</span>
       </a>
       <SelectionGroup><nav aria-label={t("workspaces")} className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}><Icon size={21} /></motion.div><span>{label}</span></a>)}</nav></SelectionGroup>
       <div className="desk-utilities">
@@ -160,4 +158,4 @@ function App() {
   </>;
 }
 
-createRoot(document.getElementById("desk-root")!).render(<MotionSystem><WorkspaceProvider><App /></WorkspaceProvider></MotionSystem>);
+createRoot(document.getElementById("desk-root")!).render(<MotionSystem><WorkspaceProvider><App /><BrandSplash /></WorkspaceProvider></MotionSystem>);

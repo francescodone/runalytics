@@ -186,6 +186,8 @@ function LapExecution({ laps, prescribed }: { laps: LapSlice[]; prescribed: bool
 
 function ActivityReview({ activity, score, match, tab, onTab }: { activity: Activity; score?: RunScore; match?: MatchedSession; tab: ReviewTab; onTab: (tab: ReviewTab) => void }) {
   const host = useRef<HTMLElement>(null);
+  const feedbackDraft = useRef<{ activityId: number; current: number | null | undefined }>({ activityId: activity.id, current: undefined });
+  if (feedbackDraft.current.activityId !== activity.id) feedbackDraft.current = { activityId: activity.id, current: undefined };
   const [range, setRange] = useState<TimeRange>("7d");
   useEffect(() => { host.current?.closest(".desk-inspector")?.scrollTo({ top: 0, behavior: "instant" }); }, [activity.id]);
   const review = useRemote(() => tauri.activityReview(activity.id), [activity.id]);
@@ -193,13 +195,13 @@ function ActivityReview({ activity, score, match, tab, onTab }: { activity: Acti
   const settings = useRemote(tauri.getSettings);
   return <article ref={host} className="activity-review"><div className="review-heading"><span className="muted">{activity.provider.toUpperCase()} / {fmtDateTime(activity.startTime)}</span><h2>{match ? cleanTitle(match.title) : capitalizeFirst(activity.sport)}</h2></div>
     <ReviewTabs activityId={activity.id} tab={tab} onSelect={onTab} />
-    <SessionFeedback key={activity.id} activityId={activity.id} />
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label={t("Loading recorded route and splits")} /> : review.data && <Change identity={tab}>
       {tab === "overview" && <ReviewPanel activityId={activity.id} tab="overview">
         <dl className="metrics-line"><Metric label={t("Distance")} value={number((activity.distanceM / 1000), 2)} count={{ value: activity.distanceM / 1000, format: value => number(value, 2) }} unit="km" /><Metric label={t("Moving time")} value={fmtDuration(activity.durationS)} count={{ value: activity.durationS, format: fmtDuration }} /><Metric label={t("Average pace")} value={fmtPace(activity.avgPaceSKm)} unit="/km" /><Metric label={t("Heart rate")} value={activity.avgHr ?? "Not recorded"} count={activity.avgHr != null ? { value: activity.avgHr } : undefined} unit={activity.avgHr ? "bpm" : undefined} /><Metric label={t("Elevation gain")} value={activity.elevationGainM ?? "Not recorded"} count={activity.elevationGainM != null ? { value: activity.elevationGainM } : undefined} unit={activity.elevationGainM != null ? "m" : undefined} /></dl>
         {review.data.track.length > 1 && settings.data ? <Suspense fallback={<Loading label={t("Loading map")} />}><RouteMap track={review.data.track} settings={settings.data} /></Suspense> : <p className="context-note">{t("No GPS track was recorded for this activity.")}</p>}
         {score && <section className="review-section"><h3>{t("Recorded session impact")}</h3><dl className="metrics-line"><Metric label={t("Training load")} value={score.load ?? "Not recorded"} /></dl></section>}
+        <SessionFeedback key={activity.id} activityId={activity.id} draft={feedbackDraft.current} />
       </ReviewPanel>}
       {tab === "execution" && <ReviewPanel activityId={activity.id} tab="execution"><LapExecution key={activity.id} laps={review.data.laps} prescribed={review.data.prescribed} /></ReviewPanel>}
       {tab === "splits" && (() => {

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { IconArrowDown, IconArrowUp, IconCheck, IconX } from "@tabler/icons-react";
 import { fmtPace, tauri } from "../lib/ipc";
 import type { DifficultyDetails, FeedbackContext, FeedbackSession } from "../lib/types";
@@ -9,17 +9,22 @@ import { Button, Dialog, ErrorNotice, Loading } from "./ui";
 
 const labels = ["Much too easy", "Slightly easy", "About right", "Slightly hard", "Much too hard"] as const;
 
-function Rating({ context, session }: { context: FeedbackContext; session: FeedbackSession }) {
+function Rating({ context, session, draft, onSaved }: { context: FeedbackContext; session: FeedbackSession; draft?: { current: number | null | undefined }; onSaved?: () => void }) {
   const id = useId();
   const command = useCommand();
   const { notify } = useWorkspace();
-  const [rating, setRating] = useState<number | null>(session.rating);
+  const [rating, setRatingState] = useState<number | null>(draft?.current === undefined ? session.rating : draft.current);
+  const setRating = (value: number | null) => { if (draft) draft.current = value; setRatingState(value); };
   const [result, setResult] = useState("");
-  const submit = (value: number | null, dismiss = false) => command.run(async () => {
-    const outcome = await tauri.saveSessionFeedback(context.planId, context.revision, session.workoutId, value, dismiss);
-    setResult(dismiss ? t("Feedback dismissed.") : text(outcome.reason));
-    if (outcome.changed > 0) notify(text(outcome.reason), { label: t("Undo"), run: () => tauri.undoPlanDifficulty(context.planId) });
-  });
+  const submit = async (value: number | null, dismiss = false) => {
+    const saved = await command.run(async () => {
+      const outcome = await tauri.saveSessionFeedback(context.planId, context.revision, session.workoutId, value, dismiss);
+      setResult(dismiss ? t("Feedback dismissed.") : text(outcome.reason));
+      if (outcome.changed > 0) notify(text(outcome.reason), { label: t("Undo"), run: () => tauri.undoPlanDifficulty(context.planId) });
+    });
+    if (saved) onSaved?.();
+    return saved;
+  };
   return <section className="session-feedback" aria-labelledby={`${id}-heading`}>
     <h3 id={`${id}-heading`}>{t("How was this session?")}</h3>
     <form onSubmit={event => { event.preventDefault(); if (rating !== null) void submit(rating); }}>
@@ -39,26 +44,62 @@ function Rating({ context, session }: { context: FeedbackContext; session: Feedb
   </section>;
 }
 
-export function SessionFeedback({ workoutId, activityId }: { workoutId?: string | null; activityId?: number }) {
+export function SessionFeedback({ workoutId, activityId, draft }: { workoutId?: string | null; activityId?: number; draft?: { current: number | null | undefined } }) {
   const feedback = useRemote(tauri.sessionFeedback);
   const context = feedback.data;
   const session = context?.sessions.find(session => workoutId ? session.workoutId === workoutId : session.activityId === activityId);
-  return context && session ? <Rating key={session.workoutId} context={context} session={session} /> : null;
+  return context && session ? <Rating key={session.workoutId} context={context} session={session} draft={draft} /> : null;
 }
 
 export function FeedbackReminder() {
   const feedback = useRemote(tauri.sessionFeedback);
   const [open, setOpen] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<FeedbackSession | null>(null);
+  const [promptContext, setPromptContext] = useState<FeedbackContext | null>(null);
+  const prompted = useRef(new Set<string>());
+  const queue = useRef<string[]>([]);
+  const showing = useRef(false);
+  const advance = async () => {
+    if (showing.current) return;
+    showing.current = true;
+    try {
+      const context = await tauri.sessionFeedback();
+      while (context && queue.current.length) {
+        const id = queue.current.shift();
+        const session = context.sessions.find(item => item.pending && `${context.planId}:${item.workoutId}` === id);
+        if (session) { setPromptContext(context); setPrompt(session); return; }
+      }
+    } catch {}
+    showing.current = false;
+  };
+  useEffect(() => {
+    let active = true;
+    const synced = () => {
+      void tauri.sessionFeedback().then(context => {
+        if (!active || !context) return;
+        for (const session of context.sessions) {
+          const id = `${context.planId}:${session.workoutId}`;
+          if (session.pending && !prompted.current.has(id)) { prompted.current.add(id); queue.current.push(id); }
+        }
+        void advance();
+      }).catch(() => {});
+    };
+    window.addEventListener("desk:sync-succeeded", synced);
+    return () => { active = false; window.removeEventListener("desk:sync-succeeded", synced); };
+  }, []);
   const context = feedback.data;
   const sessions = context?.sessions.filter(session => session.pending) ?? [];
-  if (!context || !sessions.length) return null;
-  return <section className="feedback-reminder" aria-label={t("Session feedback")}>
+  return <>{context && sessions.length > 0 && <section className="feedback-reminder" aria-label={t("Session feedback")}>
     <h3>{t("Session feedback")}</h3>
     {sessions.map(session => <div key={session.workoutId}>
       <Button aria-expanded={open === session.workoutId} onClick={() => setOpen(current => current === session.workoutId ? null : session.workoutId)}>{sessionTitle(session.title)} · {shortDate(session.date)}</Button>
       {open === session.workoutId && <Rating context={context} session={session} />}
     </div>)}
-  </section>;
+  </section>}
+    {prompt && promptContext && <Dialog key={prompt.workoutId} title={sessionTitle(prompt.title)} onClose={() => { setPrompt(null); showing.current = false; void advance(); }}>
+      <Rating context={promptContext} session={prompt} onSaved={() => { setPrompt(null); showing.current = false; void advance(); }} />
+    </Dialog>}
+  </>;
 }
 
 export function EditPlan({ planId }: { planId: string }) {

@@ -642,7 +642,30 @@ impl CorosProvider {
         if end == 0 {
             return None;
         }
-        rest[..end].replace(',', "").parse().ok()
+        let number = &rest[..end];
+        let normalized = match (number.rfind(','), number.rfind('.')) {
+            (Some(comma), Some(dot)) if comma > dot => number.replace('.', "").replace(',', "."),
+            (Some(comma), None) if number.len() - comma - 1 != 3 => number.replace(',', "."),
+            _ => number.replace(',', ""),
+        };
+        normalized.parse().ok()
+    }
+
+    fn distance_m_after(text: &str, label: &str) -> Option<f64> {
+        let rest = text.split_once(label)?.1.trim_start();
+        let unit = rest
+            .trim_start_matches(|character: char| {
+                character.is_ascii_digit() || character == ',' || character == '.'
+            })
+            .trim_start()
+            .split(|character: char| !character.is_ascii_alphabetic())
+            .next()?;
+        let scale = match unit {
+            "m" => 1.0,
+            "km" => 1000.0,
+            _ => return None,
+        };
+        Self::num_after(rest, "").map(|distance| distance * scale)
     }
 
     /// Alphanumeric token right after a label: "LabelId: 481003780305879140".
@@ -834,7 +857,7 @@ impl CorosProvider {
                     .unwrap_or(0.0)
             });
             let duration_s = Self::clock_after(block, "Duration:").unwrap_or(0.0);
-            let distance_m = Self::num_after(block, "Distance:").unwrap_or(0.0) * 1000.0;
+            let distance_m = Self::distance_m_after(block, "Distance:").unwrap_or(0.0);
             // Strength sessions report Sets instead of Distance, so a missing
             // distance is normal — only a record with neither distance nor
             // duration is unusable. Requiring both silently dropped every
@@ -2462,6 +2485,107 @@ mod tests {
             (run.distance_m - 7010.0).abs() < 1.0,
             "7.01 km must land as ~7010 m, got {}",
             run.distance_m
+        );
+    }
+
+    #[test]
+    fn parse_distance_in_metres() {
+        use crate::{store::Store, types::ProviderKind};
+
+        let store = Store::open(std::path::Path::new(":memory:")).expect("open store");
+        let original = CorosProvider::parse_sport_records(&RECORDS.replace("7.01 km", "590 km"))
+            .into_iter()
+            .find(|record| record.sport == "run")
+            .expect("incorrect run");
+        let activity_id = store
+            .upsert_activity(ProviderKind::Coros, &original)
+            .expect("store incorrect run")
+            .expect("new activity");
+
+        for distance in ["590 m", "590m", "590.0 m", "590,0 m", "0.59 km", "0,59 km"] {
+            let report = RECORDS.replace("7.01 km", distance);
+            let records = CorosProvider::parse_sport_records(&report);
+            let run = records
+                .iter()
+                .find(|record| record.sport == "run")
+                .expect("run");
+            assert!(
+                (run.distance_m - 590.0).abs() < 0.001,
+                "{distance} must be 590 m, got {}",
+                run.distance_m
+            );
+            assert_eq!(
+                store
+                    .upsert_activity(ProviderKind::Coros, run)
+                    .expect("resync corrected run"),
+                None
+            );
+            let events = crate::calendar::events(&store).expect("corrected calendar");
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].activity_id, Some(activity_id));
+            assert!(events[0].title.ends_with("Run 0.59 km"));
+            assert_eq!(events[0].distance_m, Some(590.0));
+        }
+        for distance in ["590", "590 feet"] {
+            assert_eq!(
+                CorosProvider::distance_m_after(&format!("Distance: {distance}"), "Distance:"),
+                None,
+                "{distance} must not be assumed to be kilometres"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_distance_decimal_separators() {
+        use crate::{store::Store, types::ProviderKind};
+
+        let store = Store::open(std::path::Path::new(":memory:")).expect("open store");
+        let original = CorosProvider::parse_sport_records(&RECORDS.replace("7.01 km", "590 km"))
+            .into_iter()
+            .find(|record| record.sport == "run")
+            .expect("incorrect run");
+        let activity_id = store
+            .upsert_activity(ProviderKind::Coros, &original)
+            .expect("store incorrect run")
+            .expect("new activity");
+        let events = crate::calendar::events(&store).expect("incorrect calendar");
+        assert!(events[0].title.ends_with("Run 590.00 km"));
+        assert_eq!(events[0].distance_m, Some(590_000.0));
+
+        for distance in ["5.90", "5,90", "5.9", "5,9"] {
+            let report = RECORDS.replace("7.01 km", &format!("{distance} km"));
+            let records = CorosProvider::parse_sport_records(&report);
+            let run = records
+                .iter()
+                .find(|record| record.sport == "run")
+                .expect("run");
+            assert!(
+                (run.distance_m - 5900.0).abs() < 0.001,
+                "{distance} km must be 5900 m, got {}",
+                run.distance_m
+            );
+            assert_eq!(
+                store
+                    .upsert_activity(ProviderKind::Coros, run)
+                    .expect("resync corrected run"),
+                None
+            );
+            let events = crate::calendar::events(&store).expect("corrected calendar");
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].activity_id, Some(activity_id));
+            assert!(events[0].title.ends_with("Run 5.90 km"));
+            assert_eq!(events[0].distance_m, Some(5900.0));
+        }
+        for number in ["5,900.00", "5.900,00", "5,900", "5900"] {
+            assert_eq!(
+                CorosProvider::num_after(&format!("Distance: {number} m"), "Distance:"),
+                Some(5900.0),
+                "{number} m must be 5900 m"
+            );
+        }
+        assert_eq!(
+            CorosProvider::num_after("Steps: 18,176", "Steps:"),
+            Some(18176.0)
         );
     }
 

@@ -1,4 +1,8 @@
 {
+  "COROS account fingerprint": "COROS 账户指纹",
+  "Calendar settings": "日历设置",
+  "Included": "已包含",
+  "Not included": "未包含",
   "Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.": "账户登录信息、OAuth 令牌、训练计划和活动历史不包含在内。",
   "Watch predictions reflect the latest sync and may not be from today.": "手表预测来自上次同步，可能不是今天的数据。",
   "Race day projection": "比赛日预测",
@@ -547,6 +551,8 @@
   "Cancel sign-in": "取消登录",
   "Remove API credentials": "移除 API 凭证",
   "Activity descriptions": "活动描述",
+  "Discard": "丢弃",
+  "These runs could not be updated. Try again or discard the pending description; discarding does not change Strava.": "无法更新这些跑步活动。请重试或丢弃待处理的描述；丢弃不会更改 Strava。",
   "Strava description updates paused.": "Strava描述更新暂停。",
   "Update paired activity descriptions": "更新配对活动描述",
   "Eligible runs: recorded from {{value0}}.": "合格分数：记录于{{value0}}。",

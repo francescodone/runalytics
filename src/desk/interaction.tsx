@@ -257,6 +257,12 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       });
     };
     document.addEventListener("desk:view-arrive", landView);
+    const settleReveals = (event: Event) => {
+      if (!(event.target instanceof HTMLElement)) return;
+      if (event.target.matches(selector)) settleElement(event.target);
+      event.target.querySelectorAll<HTMLElement>(selector).forEach(settleElement);
+    };
+    document.addEventListener("desk:reveal-settle", settleReveals);
     const settleInteraction = (event: Event) => {
       if (!(event.target instanceof Element)) return;
       if (event.type === "focusin" && event.target.matches("h1, h2, h3, h4")) return;
@@ -283,6 +289,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       compact.removeEventListener("change", settleMotion);
       window.removeEventListener("hashchange", endUnlock);
       document.removeEventListener("desk:view-arrive", landView);
+      document.removeEventListener("desk:reveal-settle", settleReveals);
       document.removeEventListener("toggle", toggle, true);
       document.removeEventListener("scroll", scheduleReveals, true);
       window.removeEventListener("resize", scheduleReveals);

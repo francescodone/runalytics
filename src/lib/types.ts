@@ -60,6 +60,7 @@ export interface StravaStatus {
   alreadyPresent: number;
   pending: number;
   needsReview: number;
+  reviewItems: { sourceKey: string; startTs: number; distanceM: number; message: string; retryable: boolean }[];
   lastMessage: string | null;
   lastAttemptAt: number | null;
 }
