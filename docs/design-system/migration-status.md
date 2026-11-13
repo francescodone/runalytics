@@ -1,3 +1,14 @@
+## Compact Header Wordmark, 2026-11-13
+
+The compact header retains the accessible brand link and icon but hides the
+app name. Desktop branding and the macOS window title are unchanged.
+
+Verification: the production build and five synthetic-IPC branding checks passed
+at 320, 375, 390, 820 and 1440px, covering light/dark themes and all six accents.
+Mobile light and desktop dark screenshots were inspected. The 320px enlarged-text
+training roadmap still overflows, as previously documented. Physical iPhones and
+native WebViews were not tested.
+
 ## Rest Day Reveal, 2026-11-12
 
 Week-view rest-day labels participate in the shared viewport reveal stagger.

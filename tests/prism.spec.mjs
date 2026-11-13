@@ -1888,7 +1888,7 @@ for (const width of [320, 375, 390, 820, 1440]) {
     });
     expect(geometry.width).toBe(width > 800 ? 44 : 36);
     expect(geometry.height).toBe(geometry.width);
-    expect(geometry.textVisible).toBe(width === 375 || width === 390 || width === 1440);
+    expect(geometry.textVisible).toBe(width === 1440);
     expect(Math.abs(width <= 800 ? geometry.leftOffset : geometry.centerOffset)).toBeLessThan(1);
     expect(Math.abs(geometry.verticalOffset)).toBeLessThan(1);
     await assertLayout(page, `brand ${width}`);

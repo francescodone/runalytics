@@ -676,6 +676,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
    .desk-utilities { margin-top: 0; padding-top: 0; border: 0; gap: var(--space-2); justify-self: end; }
    .form-actions { gap: var(--space-3); }
    .desk-brand { justify-content: flex-start; font-size: var(--text-subtitle); container: brand / inline-size; }
+   .desk-brand-name { display: none; }
    .desk-brand-icon { width: var(--space-9); height: var(--space-9); }
    .desk-navigation { position: fixed; flex-direction: row; align-items: stretch; bottom: max(var(--space-1), calc(env(safe-area-inset-bottom) - var(--space-5))); left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 4 * var(--space-2)); min-height: 0; height: auto; padding: var(--space-2); background: var(--desk-surface); border: 1px solid var(--glass-border); border-radius: var(--radius-pill); box-shadow: var(--shadow-floating); z-index: var(--layer-navigation); gap: var(--space-2); }
    .desk-navigation a { flex: 0 0 calc(var(--control-size) + var(--space-5)); width: calc(var(--control-size) + var(--space-5)); height: var(--control-size); min-width: var(--control-size); flex-direction: column; justify-content: center; align-items: center; gap: var(--space-1); padding: var(--space-2); font-size: var(--text-caption); font-weight: var(--weight-semibold); border-radius: var(--radius-pill); }
