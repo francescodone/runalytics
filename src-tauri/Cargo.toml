@@ -1,6 +1,6 @@
 [package]
 name = "runalytics"
-version = "0.46.0"
+version = "0.47.0"
 description = "Training analytics for runners"
 edition = "2021"
 
