@@ -14,7 +14,7 @@ async function requireWatchConnection() {
   if (!providers.some(provider => provider.provider === "coros" && provider.connected)) throw new Error(t("Sign in to your watch account before importing or exporting connections."));
 }
 
-type Connections = { version: 1; created: number; calendar: { uploadUrl: string; subscriptionUrl: string; username: string; password: string | null }; githubToken: string | null; strava?: {clientId:string; clientSecret:string; athleteId?:number | null} | null; identity?: {corosCode:string | null}; assistant?: {endpoint:string; model:string | null; apiKey:string | null} | null };
+type Connections = { version: 1; created: number; name?: string; calendar: { uploadUrl: string; subscriptionUrl: string; username: string; password: string | null }; githubToken: string | null; strava?: {clientId:string; clientSecret:string; athleteId?:number | null} | null; identity?: {corosCode:string | null}; assistant?: {endpoint:string; model:string | null; apiKey:string | null} | null };
 export type TransferContents = { coros: boolean; strava: boolean; calendar: boolean; devices: boolean };
 function transferContents(value: Connections): TransferContents {
   return { coros: Boolean(value.identity?.corosCode), strava: Boolean(value.strava), calendar: Boolean(value.calendar.uploadUrl || value.calendar.subscriptionUrl || value.calendar.username || value.calendar.password), devices: Boolean(value.githubToken) };
@@ -72,6 +72,7 @@ export async function openConnections(text: string, passphrase: string): Promise
     value = JSON.parse(new TextDecoder().decode(raw));
   } catch { throw new Error(t("Could not unlock this QR code. Check the passphrase and image.")); }
   if (value?.version !== 1 || !Number.isFinite(value.created) || !value.calendar || typeof value.calendar.username !== "string" || ![value.calendar.password, value.githubToken].every(secret => secret === null || typeof secret === "string")) throw new Error(t("Invalid connection settings."));
+  if (value.name !== undefined && (typeof value.name !== "string" || value.name.length > 80)) throw new Error(t("Invalid connection settings."));
   if (value.strava != null && (typeof value.strava.clientId !== "string" || !/^[0-9]+$/.test(value.strava.clientId) || typeof value.strava.clientSecret !== "string" || !value.strava.clientSecret.trim())) throw new Error(t("Invalid Strava application credentials."));
   if (value.strava?.athleteId != null && (!Number.isSafeInteger(value.strava.athleteId) || value.strava.athleteId <= 0)) throw new Error(t("Invalid Strava athlete identity."));
   if (value.identity != null && (typeof value.identity !== "object" || (value.identity.corosCode !== null && typeof value.identity.corosCode !== "string"))) throw new Error(t("Invalid source account identity."));
@@ -85,7 +86,7 @@ export async function openConnections(text: string, passphrase: string): Promise
   return value;
 }
 
-export function ConnectionTransfer({ onRequestWatch, setupWatch, onImported }: { onRequestWatch?: () => void; setupWatch?: ReactNode; onImported?: (hasToken: boolean, contents: TransferContents) => void } = {}) {
+export function ConnectionTransfer({ onRequestWatch, setupWatch, onImported }: { onRequestWatch?: () => void; setupWatch?: ReactNode; onImported?: (hasToken: boolean, contents: TransferContents, name?: string) => void } = {}) {
   const [mode, setMode] = useState<"export" | "import" | null>(() => {
     try { return setupWatch && sessionStorage.getItem(setupTransferKey) ? "import" : null; } catch { return null; }
   });
@@ -94,7 +95,7 @@ export function ConnectionTransfer({ onRequestWatch, setupWatch, onImported }: {
   return <section><p className="muted">{t("Move saved connection settings to another Runalytics device using a passphrase-encrypted QR image.")}</p><p id="transfer-watch-disclaimer">{setupWatch ? t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.") : t("Before importing or exporting connections, sign in to your watch account. Use the same COROS account on both devices.")}</p><ErrorNotice error={providers.error} /><div className="form-actions">{!setupWatch && <Button disabled={!watchConnected} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("export")}><IconQrcode size={18} />{t("Create transfer QR")}</Button>}<Button disabled={!watchConnected && !setupWatch} aria-describedby="transfer-watch-disclaimer" onClick={() => setMode("import")}><IconUpload size={18} />{t("Import transfer QR")}</Button>{!watchConnected && !setupWatch && (onRequestWatch ? <Button onClick={onRequestWatch}>{t("Connect your watch")}</Button> : <a className="desk-button normal" href="#settings/watch">{t("Connect your watch")}</a>)}</div><Presence>{mode && (watchConnected || setupWatch) && <TransferDialog key={mode} mode={mode} onClose={() => { try { sessionStorage.removeItem(setupTransferKey); } catch {} setMode(null); }} setupWatch={setupWatch} watchConnected={Boolean(watchConnected)} onImported={onImported} />}</Presence></section>;
 }
 
-function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}: {mode:"export" | "import"; onClose:() => void; setupWatch?: ReactNode; watchConnected: boolean; onImported?: (hasToken: boolean, contents: TransferContents) => void}) {
+function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}: {mode:"export" | "import"; onClose:() => void; setupWatch?: ReactNode; watchConnected: boolean; onImported?: (hasToken: boolean, contents: TransferContents, name?: string) => void}) {
   const command = useCommand();
   const [passphrase, setPassphrase] = useState("");
   const [image, setImage] = useState("");
@@ -193,7 +194,7 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
   const title = mode === "export" ? t("Create connection transfer") : t("Import connection transfer");
   const content = <>
     <div className="connection-transfer-content">
-    {!preview && <section className="transfer-summary" aria-label={t("Transfer contents")}><h3>{mode === "export" ? t("Transferred when configured") : t("Supported connection settings")}</h3><ul><li>{t("Calendar upload and subscription URLs")}</li><li>{t("Calendar hosting username and password or token")}</li><li>{t("GitHub token for device sync")}</li><li>{t("Strava application Client ID and Client Secret")}</li><li>{t("COROS account fingerprint and Strava athlete ID for account comparison")}</li></ul><p className="muted">{t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.")}</p></section>}
+    {!preview && <section className="transfer-summary" aria-label={t("Transfer contents")}><h3>{mode === "export" ? t("Transferred when configured") : t("Supported connection settings")}</h3><ul><li>{t("Name")}</li><li>{t("Calendar upload and subscription URLs")}</li><li>{t("Calendar hosting username and password or token")}</li><li>{t("GitHub token for device sync")}</li><li>{t("Strava application Client ID and Client Secret")}</li><li>{t("COROS account fingerprint and Strava athlete ID for account comparison")}</li></ul><p className="muted">{t("Account sign-ins, OAuth access/refresh tokens, training plans and activity history are not included.")}</p></section>}
     <p className="transfer-privacy">{t("Keep the QR image and passphrase private. Anyone with both can access these connections.")}</p>
     <ErrorNotice error={command.error ?? cameraError} />
     {!preview && !image && <form onSubmit={async event => {
@@ -202,6 +203,7 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
         if (mode === "export" || !setupWatch) await requireWatchConnection();
         if (mode === "export") {
           const connections = await invoke<Connections>("export_connection_settings");
+          try { connections.name = localStorage.getItem("runalytics.runnerName")?.trim() || undefined; } catch {}
           const encrypted = await sealConnections(connections, passphrase);
           setEncryptedCode(encrypted); setPassphrase("");
         } else {
@@ -217,6 +219,7 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
     </form>}
     {image && <div className="transfer-export"><img className="transfer-qr" src={image} alt={t("Encrypted connection transfer QR code")} /><div className="transfer-export-footer"><a className="desk-button normal" download="runalytics-connections.png" href={image}><IconDownload size={18} />{t("Download QR image")}</a><p className="muted">{t("Enter the same passphrase on the receiving device. Delete the image after importing.")}</p></div></div>}
     {preview && <TransferContentsSummary contents={transferContents(preview)} />}
+    {preview?.name?.trim() && <dl className="definition-list"><div><dt>{t("Name")}</dt><dd>{preview.name.trim()}</dd></div></dl>}
     {preview && setupWatch && !watchConnected && <section><h3>{t("Connect your watch")}</h3>{setupWatch}</section>}
     {preview && <><h3>{t("Replace connection settings?")}</h3><section aria-label={t("Account comparison")}><h3>{t("Source account check")}</h3>{identity?.details.map(detail => <p key={detail}>{detail}</p>)}{identity?.mismatch && <p role="alert">{t("Import blocked: the connected accounts do not match.")}</p>}{identity?.unverified && !identity.mismatch && <label className="toggle-setting"><input type="checkbox" checked={acceptUnverified} onChange={event => setAcceptUnverified(event.target.checked)} />{t("I trust this QR source and understand the account could not be fully verified.")}</label>}</section><dl className="definition-list"><div><dt>{t("Calendar upload")}</dt><dd className="file-path">{preview.calendar.uploadUrl || t("Not configured; existing value will be cleared")}</dd></div><div><dt>{t("Subscription")}</dt><dd className="file-path">{preview.calendar.subscriptionUrl || t("Not configured; existing value will be cleared")}</dd></div><div><dt>{t("Calendar username")}</dt><dd>{preview.calendar.username || t("None; existing value will be cleared")}</dd></div><div><dt>{t("Calendar credential")}</dt><dd>{preview.calendar.password ? t("Included (hidden); replaces saved credential") : t("None; saved credential will be removed")}</dd></div><div><dt>{t("Device sync token")}</dt><dd>{preview.githubToken ? t("Included (hidden); replaces saved token") : t("None; saved token will be removed")}</dd></div><div><dt>{t("Strava Client ID")}</dt><dd>{preview.strava?.clientId ?? t("Not included; existing Strava setup stays")}</dd></div>{preview.strava && <div><dt>{t("Strava Client Secret")}</dt><dd>{t("Included (hidden); replaces saved application credentials")}</dd></div>}</dl><p>{t("Calendar publishing will remain paused. {{value0}} {{value1}} Plans are not included in the QR; existing plan conflict protections still apply.", { value0: preview.githubToken ? t("Device sync will be enabled with the imported token.") : t("Device sync will remain paused without a token."), value1: preview.strava ? t("Strava application credentials will be replaced; reconnect Strava and enable description updates separately.") : t("Strava settings will not change.") })}</p><div className="form-actions"><Button onClick={() => { setPreview(null); setCode(""); }}>{t("Choose another QR")}</Button><Button tone="primary" busy={command.busy} disabled={!identity || identity.mismatch || (identity.unverified && !acceptUnverified)} onClick={() => void command.run(async () => {
       await requireWatchConnection();
@@ -232,7 +235,8 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
         await tauri.planSyncConfigure({enabled:true}, null);
         window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
       }
-      setPreview(null); setCode(""); onClose(); onImported?.(Boolean(preview.githubToken), transferContents(preview));
+      if (preview.name?.trim()) { try { localStorage.setItem("runalytics.runnerName", preview.name.trim()); window.dispatchEvent(new Event("runalytics:runner-name-changed")); } catch {} }
+      setPreview(null); setCode(""); onClose(); onImported?.(Boolean(preview.githubToken), transferContents(preview), preview.name?.trim());
     }, preview.githubToken ? t("Connections imported. Device sync is enabled; calendar publishing remains paused.") : t("Connections imported. Device sync and calendar publishing remain paused."))}>{t("Replace connections")}</Button></div></>}
     </div>
   </>;

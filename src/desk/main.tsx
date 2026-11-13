@@ -50,6 +50,11 @@ function App() {
   const setupPending = !setupCompleted && (currentPlan.loading || currentPlan.error !== null || hasOnboardingDraft() || !currentPlan.data);
   const command = useCommand();
   const { syncing, notify, setSetupPending } = useWorkspace();
+  useEffect(() => {
+    const updateName = () => { try { setRunnerName(localStorage.getItem("runalytics.runnerName") ?? ""); } catch {} };
+    window.addEventListener("runalytics:runner-name-changed", updateName);
+    return () => window.removeEventListener("runalytics:runner-name-changed", updateName);
+  }, []);
   useLayoutEffect(() => { setSetupPending(setupPending); }, [setupPending]);
   useEffect(() => {
     if (setupCompleted || !currentPlan.data || hasOnboardingDraft()) return;

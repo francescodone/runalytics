@@ -787,6 +787,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 }
 @media (max-width: 800px) {
   .desk-appbar { z-index: var(--layer-chrome); }
+   .journal-sidebar .activity-library { max-height: none; overflow-y: visible; mask-image: none; }
   .desk-inspector, .journal-workspace .desk-inspector { border-radius: 0; border: 0; padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--space-5) calc(var(--space-7) + env(safe-area-inset-bottom)); }
   .desk-toolbar { padding: var(--space-2); }
   .desk-toolbar .horizon-switch { max-width: 100%; overflow-x: auto; }

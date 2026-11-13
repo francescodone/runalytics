@@ -60,8 +60,8 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [restoreToken, setRestoreToken] = useState<boolean | null>(null);
   const [transferContents, setTransferContents] = useState<TransferContents | null>(null);
-  const { syncing, syncStage } = useWorkspace();
-  const loading = syncing || operation !== null;
+  const { syncStage } = useWorkspace();
+  const loading = operation !== null;
   const main = useRef<HTMLElement>(null);
   const wasLoading = useRef(false);
   useLayoutEffect(() => {
@@ -148,7 +148,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       {draft.step === "name" && <>{transferContents && <TransferContentsSummary contents={transferContents} />}<label>{t("Name")}<input autoComplete="given-name" value={draft.name} maxLength={80} onChange={event => update({ name: event.target.value })} /></label></>}
       {draft.step === "watch" && <WatchSettings onboarding onSyncChange={active => setOperation(active ? "sync" : null)} />}
       {draft.step === "transfer" && choice(draft.transfer, "transfer")}
-      {draft.step === "transfer-config" && <ConnectionTransfer setupWatch={<WatchSettings onboarding />} onImported={(hasToken, contents) => { setTransferContents(contents); restore(hasToken); }} />}
+      {draft.step === "transfer-config" && <ConnectionTransfer setupWatch={<WatchSettings onboarding />} onImported={(hasToken, contents, name) => { setTransferContents(contents); if (name) update({ name }); restore(hasToken); }} />}
       {draft.step === "strava" && choice(draft.strava, "strava")}
       {draft.step === "strava-config" && <StravaSettings mode="connection" />}
       {draft.step === "publishing" && <StravaSettings mode="publishing" />}

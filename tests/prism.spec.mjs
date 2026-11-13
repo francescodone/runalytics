@@ -961,6 +961,105 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
+for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
+  test(`surface aura drifts independently without moving controls ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    const toolbar = page.locator(".journal-sidebar > .desk-toolbar");
+    await expect(toolbar).toHaveAttribute("data-reveal", "settled");
+    await expect.poll(() => toolbar.evaluate(element => element.getAnimations().filter(animation => animation.id === "material-aura").length)).toBe(1);
+    const bounds = await toolbar.boundingBox();
+    const frames = await toolbar.evaluate(element => {
+      const animation = element.getAnimations().find(animation => animation.id === "material-aura");
+      animation.pause();
+      animation.currentTime = 0;
+      const first = getComputedStyle(element).backgroundPosition;
+      animation.currentTime = animation.effect.getTiming().duration / 3;
+      return { first, next: getComputedStyle(element).backgroundPosition, size: getComputedStyle(element).backgroundSize, frames: animation.effect.getKeyframes(), duration: animation.effect.getTiming().duration };
+    });
+    expect(frames.next).not.toBe(frames.first);
+    expect(frames.size).toBe("160% 240%, 150% 220%, 100% 100%");
+    expect(frames.duration).toBeGreaterThanOrEqual(16000);
+    expect(frames.frames.every(frame => !("transform" in frame) && !("filter" in frame))).toBe(true);
+    expect(await toolbar.boundingBox()).toEqual(bounds);
+    const firstPaint = await toolbar.screenshot({ path: testInfo.outputPath("aura-first.png") });
+    await toolbar.evaluate(element => {
+      const animation = element.getAnimations().find(animation => animation.id === "material-aura");
+      animation.currentTime = animation.effect.getTiming().duration * 2 / 3;
+    });
+    const nextPaint = await toolbar.screenshot({ path: testInfo.outputPath("aura-drift.png") });
+    expect(nextPaint.equals(firstPaint)).toBe(false);
+    await toolbar.getByRole("button", { name: /Filters/ }).click();
+    await expect(page.locator(".journal-tools")).toBeVisible();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect.poll(() => page.evaluate(() => document.getAnimations().filter(animation => animation.id === "material-aura").length)).toBe(0);
+    await expect(toolbar).not.toHaveCSS("background-image", "none");
+    await page.emulateMedia({ reducedMotion: "no-preference", contrast: "more" });
+    await expect(toolbar).toHaveCSS("background-image", "none");
+    await expect.poll(() => page.evaluate(() => document.getAnimations().filter(animation => animation.id === "material-aura").length)).toBe(0);
+  });
+}
+
+test("surface aura pauses offscreen and renews independent paths without leaking", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#journal");
+  await expect(page.locator(".journal-sidebar > .desk-toolbar")).toHaveAttribute("data-reveal", "settled");
+  await page.evaluate(() => {
+    for (const [index, name] of ["first", "second"].entries()) {
+      const surface = document.createElement("div");
+      surface.id = `aura-${name}`;
+      surface.className = "route-controls";
+      Object.assign(surface.style, { position: "fixed", top: "40px", left: `${40 + index * 240}px`, width: "200px", height: "48px" });
+      document.body.append(surface);
+    }
+  });
+  const first = page.locator("#aura-first");
+  const second = page.locator("#aura-second");
+  const playback = locator => locator.evaluate(element => element.getAnimations().find(animation => animation.id === "material-aura")?.playState);
+  await expect.poll(() => playback(first)).toBe("running");
+  await expect.poll(() => playback(second)).toBe("running");
+  const independent = await page.evaluate(() => {
+    const first = document.querySelector("#aura-first").getAnimations()[0];
+    const second = document.querySelector("#aura-second").getAnimations()[0];
+    window.__previousAura = first;
+    const paths = [first.effect.getKeyframes(), second.effect.getKeyframes()];
+    first.finish();
+    return JSON.stringify(paths[0]) !== JSON.stringify(paths[1]);
+  });
+  expect(independent).toBe(true);
+  await expect.poll(() => first.evaluate(element => {
+    const animation = element.getAnimations().find(animation => animation.id === "material-aura");
+    if (!animation || animation === window.__previousAura) return false;
+    return window.__previousAura.playState === "idle" && animation.effect.getTiming().fill === "forwards" && animation.effect.getKeyframes()[0].backgroundPosition === window.__previousAura.effect.getKeyframes().at(-1).backgroundPosition;
+  })).toBe(true);
+  await first.evaluate(element => { element.style.top = "-200px"; });
+  await expect.poll(() => playback(first)).toBe("paused");
+  await expect.poll(() => playback(second)).toBe("running");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => playback(second)).toBe("paused");
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => playback(second)).toBe("running");
+  await expect.poll(() => playback(first)).toBe("paused");
+  await second.evaluate(element => {
+    window.__removedAura = element.getAnimations().find(animation => animation.id === "material-aura");
+    element.remove();
+  });
+  await expect.poll(() => page.evaluate(() => window.__removedAura.playState)).toBe("idle");
+  await first.evaluate(element => { element.style.top = "40px"; });
+  await expect.poll(() => playback(first)).toBe("running");
+  await page.emulateMedia({ forcedColors: "active" });
+  await expect.poll(() => page.evaluate(() => document.getAnimations().filter(animation => animation.id === "material-aura").length)).toBe(0);
+});
+
 test("shared aura color fades on hover and departure", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -2255,7 +2354,7 @@ for (const theme of ["light", "dark"]) {
     await page.goto(`/desk.html?theme=${theme}#training`);
     await expect(page.locator(".session-tile:visible").first()).toBeVisible();
     await page.waitForFunction(() => {
-      const running = document.getAnimations().some(animation => animation.playState === "running");
+      const running = document.getAnimations().some(animation => animation.id !== "material-aura" && animation.playState === "running");
       window.__prismQuiet = running ? 0 : (window.__prismQuiet ?? 0) + 1;
       return window.__prismQuiet >= 5;
     }, null, { polling: 100 });
@@ -2267,11 +2366,15 @@ for (const theme of ["light", "dark"]) {
           return style.backdropFilter !== "none" && (!pseudo || !["none", "normal"].includes(style.content));
         }).map(pseudo => `${element.className}${pseudo ?? ""}`);
       });
-      return { filtered, nodes: document.querySelectorAll("*").length, animations: document.getAnimations().filter(animation => animation.playState === "running").length, fontRequests: performance.getEntriesByType("resource").filter(resource => resource.name.endsWith("woff2")).map(resource => ({ url: new URL(resource.name).pathname, bytes: resource.transferSize })) };
+      const auras = document.getAnimations().filter(animation => animation.id === "material-aura");
+      return { filtered, nodes: document.querySelectorAll("*").length, animations: document.getAnimations().filter(animation => animation.id !== "material-aura" && animation.playState === "running").length, auras: auras.length, boundedAuras: auras.every(animation => animation.effect.target.matches(".desk-toolbar, .route-controls, .choice-row, .pace-mode, .setup-band, .proposal-prompt, .desk-notice") && animation.effect.getKeyframes().every(frame => !("transform" in frame) && !("filter" in frame))), fontRequests: performance.getEntriesByType("resource").filter(resource => resource.name.endsWith("woff2")).map(resource => ({ url: new URL(resource.name).pathname, bytes: resource.transferSize })) };
     });
     expect(rendering.filtered.length).toBeLessThanOrEqual(3);
     expect(rendering.filtered.some(selector => /session-tile|activity-row|day-lane/.test(selector))).toBe(false);
     expect(rendering.animations).toBe(0);
+    expect(rendering.auras).toBeGreaterThan(0);
+    expect(rendering.auras).toBeLessThanOrEqual(8);
+    expect(rendering.boundedAuras).toBe(true);
     expect(rendering.fontRequests.some(resource => resource.url.includes("outfit"))).toBe(true);
     const screenshot = await page.screenshot({ path: testInfo.outputPath("settled.png") });
     const pixels = await page.evaluate(async source => {

@@ -9,5 +9,7 @@ Use native disabled, checked, selected and current semantics. Keep pending and
 result content in the original footprint. Retain failed drafts and visible errors.
 Use shared Dialog, Inspector, Presence, SelectionGroup and NotificationViewport.
 Maintain Escape, focus return, inert background, scroll ownership and Undo.
-No ambient animation loops. Reduced motion removes spatial movement, not feedback.
+Ambient animation is limited to the existing bounded material-aura surfaces;
+pause offscreen and in hidden documents, and cancel for accessibility preferences.
+Reduced motion removes spatial movement, not feedback.
 Validate real keyboard, pointer and touch behavior after shared primitive edits.

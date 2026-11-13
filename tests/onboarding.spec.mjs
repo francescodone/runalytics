@@ -16,6 +16,14 @@ test("setup starts with the transfer choice", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
 });
 
+test("background sync does not block the initial setup choice", async ({ page }) => {
+  await page.goto("/desk.html?noPlan&noWatch#training");
+  await expect(page.getByRole("heading", { name: "Import connections with a QR code?" })).toBeVisible();
+  await page.evaluate(() => window.__deskEmit("sync://started", {}));
+  await expect(page.getByRole("heading", { name: "Import connections with a QR code?" })).toBeVisible();
+  await expect(page.locator(".onboarding-loading")).toHaveCount(0);
+});
+
 for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }, { width: 667, height: 375 }]) {
   test(`setup respects mobile safe areas at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -54,7 +62,7 @@ for (const scenario of ["matching", "mismatch", "sync-failure", "restored-plan"]
   const image = await page.evaluate(async scenario => {
     const { sealConnections } = await import("/src/desk/connection-transfer.tsx");
     const { default: QRCode } = await import("/node_modules/.vite/deps/qrcode.js");
-    const source = { version: 1, created: 1, calendar: { uploadUrl: "", subscriptionUrl: "", username: "", password: null }, githubToken: "synthetic-token", identity: { corosCode: scenario === "mismatch" ? "other-account" : "synthetic-account-channel" } };
+    const source = { version: 1, created: 1, ...(scenario === "matching" ? { name: "Ada" } : {}), calendar: { uploadUrl: "", subscriptionUrl: "", username: "", password: null }, githubToken: "synthetic-token", identity: { corosCode: scenario === "mismatch" ? "other-account" : "synthetic-account-channel" } };
     const code = await sealConnections(source, "synthetic passphrase");
     if (scenario === "sync-failure") window.__deskFail = "sync_now";
     return QRCode.toDataURL(code, { width: 1000, margin: 4 });
@@ -100,6 +108,7 @@ for (const scenario of ["matching", "mismatch", "sync-failure", "restored-plan"]
     await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
   }
   else await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(scenario === "matching" ? "Ada" : "");
   await expect(page.locator(".onboarding-step[data-step-state='present']").getByRole("region", { name: "Transfer contents" })).toContainText("GitHub token for device sync: Included");
   await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "plan_sync_refresh"))).toBe(true);
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "sync_now"))).toBe(true);

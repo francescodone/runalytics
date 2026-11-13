@@ -1,3 +1,37 @@
+## Drifting Material Aura, 2026-11-13
+
+Existing aura-backed toolbars, route controls, choice tracks, pace modes, setup
+bands, proposal prompts and notices have a soft smoke-like color drift. Each
+surface follows independent random paths with continuous 18-30 second sequences.
+Only the background moves. Playback pauses offscreen and in hidden documents,
+and is cancelled on removal or accessibility preference changes. Reduced motion
+keeps the wash static; contrast and transparency fallbacks remain opaque.
+
+Verification: the production build, 44 existing control/route-matrix checks,
+13 focused Chromium acceptance checks and 14 focused WebKit checks passed using
+synthetic IPC. The final sequence-handoff regression passed five checks in each
+engine. Painted frames and fixed geometry were checked at 320 and 1440px in both
+themes. The route matrix covered sixteen widths from 320 to 2560px in both
+themes, plus 537x740, 913x480 and 667x375; enlarged text passed at 820 and 1440px.
+Mobile light and desktop dark screenshots were inspected. The previously known
+320px, 200%-text training-roadmap overflow was not rerun. Native WebViews,
+physical-device performance and live providers were not tested.
+
+## Mobile Opening Resize, 2026-11-13
+
+Viewport changes during the brand intro no longer dismiss it; the destination is
+measured after the intro. Resizing during the measured handoff still dismisses it.
+Synthetic-IPC browser checks cover both cases. Native WebView startup and physical
+devices remain unverified.
+
+## Compact Activity Scrolling
+
+Compact activity history scrolls with the workspace instead of a separately
+height-capped list, including when the web navigation is hidden by native chrome.
+Synthetic-IPC Chromium and WebKit checks passed at 320x640, 390x844 and
+667x375 with hidden web navigation. Native WebViews and physical devices were
+not tested.
+
 ## Activity Overview Feedback, 2026-11-13
 
 Matched eligible plan sessions show their existing feedback form in the activity

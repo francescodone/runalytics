@@ -125,7 +125,7 @@
   /* The same action/blue wash the global atmosphere paints across the canvas,
      at shell strength: floating glass wears it as a background-image so the
      toolbar reads as cut from the background rather than a flat white slab. */
-  --material-aura: linear-gradient(115deg, color-mix(in srgb, var(--desk-action) 14%, transparent), transparent 40%, color-mix(in srgb, var(--desk-blue) 12%, transparent) 80%, transparent);
+  --material-aura: radial-gradient(ellipse at 30% 40%, color-mix(in srgb, var(--desk-action) 18%, transparent), transparent 68%), radial-gradient(ellipse at 70% 60%, color-mix(in srgb, var(--desk-blue) 14%, transparent), transparent 68%), linear-gradient(115deg, color-mix(in srgb, var(--desk-action) 6%, transparent), transparent 55%);
   --material-floating: var(--glass-floating);
   --material-optical: var(--glass-control);
   --material-liquid: var(--state-selected);

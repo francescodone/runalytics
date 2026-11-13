@@ -86,11 +86,25 @@ test("brand splash skips reduced motion and cancels live preference, input and r
     await expect(page.locator(".brand-splash")).toHaveCount(1);
     if (interruption === "preference") await page.emulateMedia({ reducedMotion: "reduce" });
     if (interruption === "input") await page.getByRole("link", { name: "Activities", exact: true }).click();
-    if (interruption === "resize") await page.setViewportSize({ width: 1440, height: 740 });
+    if (interruption === "resize") {
+      await expect(page.locator(".brand-splash")).toHaveAttribute("data-phase", "docking");
+      await page.setViewportSize({ width: 1440, height: 740 });
+    }
     await expect(page.locator(".brand-splash")).toHaveCount(0);
     await expect(page.locator("html")).not.toHaveAttribute("data-brand-launch");
     await expect(page.locator(".desk-brand-icon")).toHaveCSS("opacity", "1");
   }
+});
+
+test("brand splash survives a viewport resize during launch", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#training");
+  const splash = page.locator(".brand-splash");
+  await expect(splash).toHaveAttribute("data-phase", "intro");
+  await page.setViewportSize({ width: 390, height: 800 });
+  await expect(splash).toHaveAttribute("data-phase", "docking");
+  await expect(splash).toHaveCount(0);
+  await expect(page.locator(".desk-appbar .desk-brand-icon")).toBeVisible();
 });
 
 for (const setup of [false, true]) test(`brand splash waits for visible ${setup ? "setup" : "workspace"} launch`, async ({ page }) => {
@@ -1597,7 +1611,7 @@ test.describe("motion system", () => {
       await expect(page.locator('[data-transition-state="exiting"]')).toHaveCount(0);
       await page.evaluate(() => { window.__motionQuiet = 0; });
       await page.waitForFunction(() => {
-        if (document.querySelector('[data-reveal="visible"]') || document.getAnimations().some(animation => animation.playState === "running" || animation.pending)) { window.__motionQuiet = 0; return false; }
+        if (document.querySelector('[data-reveal="visible"]') || document.getAnimations().some(animation => animation.id !== "material-aura" && (animation.playState === "running" || animation.pending))) { window.__motionQuiet = 0; return false; }
         window.__motionQuiet = (window.__motionQuiet || 0) + 1;
         return window.__motionQuiet >= 5;
       }, null, { polling: 100 });
@@ -1777,7 +1791,7 @@ test.describe("motion system", () => {
           // staggered, so a single zero-count moment can sit in a gap between
           // two siblings: require the count to stay at zero for 500ms.
           await page.waitForFunction(() => {
-            if (document.getAnimations().length > 0) { window.__quiet = 0; return false; }
+            if (document.getAnimations().some(animation => animation.id !== "material-aura")) { window.__quiet = 0; return false; }
             window.__quiet = (window.__quiet || 0) + 1;
             return window.__quiet >= 5;
           }, null, { timeout: 20000, polling: 100 });
@@ -2857,11 +2871,16 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 844, height: 390 }
     await page.goto("/desk.html#journal");
     const library = page.getByRole("region", { name: "Activity history" });
     await expect(page.locator(".activity-row")).toHaveCount(9);
-    await expect.poll(() => library.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
-    expect(await library.evaluate(element => element.clientHeight <= document.querySelector("#workspace").clientHeight)).toBe(true);
-    await library.focus();
-    await page.keyboard.press("End");
-    await expect.poll(() => library.evaluate(element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThan(2);
+    if (viewport.width <= 800) {
+      await expect(library).toHaveCSS("max-height", "none");
+      await expect.poll(() => workspace.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    } else {
+      await expect.poll(() => library.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      expect(await library.evaluate(element => element.clientHeight <= document.querySelector("#workspace").clientHeight)).toBe(true);
+      await library.focus();
+      await page.keyboard.press("End");
+      await expect.poll(() => library.evaluate(element => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThan(2);
+    }
     expect(await page.evaluate(() => scrollY)).toBe(0);
     await page.goto("/desk.html#training");
     if (viewport.width <= 800) await page.locator(".mobile-date-ribbon button").first().click();
@@ -2874,6 +2893,25 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 844, height: 390 }
       const needed = content + Math.max(0, children.length - 1) * parseFloat(styles.rowGap) + parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
       return element.clientHeight <= Math.max(44, needed) + 2;
     }))).toBe(true);
+  });
+}
+
+for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }, { width: 667, height: 375 }]) {
+  test(`compact activity history scrolls fully ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/desk.html#journal");
+    const workspace = page.locator("#workspace");
+    const library = page.getByRole("region", { name: "Activity history" });
+    await expect(page.locator(".activity-row")).toHaveCount(9);
+    await page.locator(".desk-navigation").evaluate(element => { element.style.display = "none"; });
+    await expect(library).toHaveCSS("max-height", "none");
+    await expect.poll(() => workspace.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    await workspace.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect.poll(() => page.locator(".activity-row").last().evaluate(element => {
+      const row = element.getBoundingClientRect();
+      const workspace = element.closest("#workspace").getBoundingClientRect();
+      return row.bottom <= workspace.bottom && row.top >= workspace.top;
+    })).toBe(true);
   });
 }
 
@@ -3380,6 +3418,7 @@ test("calendar settings never publish on read and retain blank credentials and s
 });
 
 test("connection transfer QR encrypts credentials and enables device sync after review", async ({page}) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.runnerName", "Ada"));
   await page.goto("/desk.html?calendarReady=1#settings/transfer");
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "export_connection_settings"))).toBe(false);
   await page.getByRole("button", {name:"Create transfer QR", exact:true}).click();
@@ -3401,6 +3440,8 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   expect(decoded).toMatch(/^runalytics:connections:1:/);
   expect(decoded).not.toContain("synthetic-github-token");
   expect(decoded).not.toContain("synthetic-calendar-secret");
+  expect(decoded).not.toContain("Ada");
+  await page.evaluate(() => localStorage.setItem("runalytics.runnerName", "Previous name"));
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", {name:"Import transfer QR", exact:true}).click();
@@ -3413,6 +3454,7 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   await dialog.getByLabel("Transfer passphrase", {exact:true}).fill("synthetic transfer passphrase");
   await dialog.getByRole("button", {name:"Review settings", exact:true}).click();
   await expect(dialog.getByRole("heading", {name:"Replace connection settings?"})).toBeVisible();
+  await expect(dialog.getByText("Ada", {exact:true})).toBeVisible();
   await expect(dialog).toContainText("synthetic");
   await expect(dialog).toContainText("12345");
   await expect(dialog).toContainText("Strava Client Secret");
@@ -3428,6 +3470,8 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "save_calendar_publishing" || call.command === "plan_sync_configure"))).toBe(false);
   await dialog.getByRole("button", {name:"Replace connections", exact:true}).click();
   await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("runalytics.runnerName"))).toBe("Ada");
+  await expect(page.locator(".runner-greeting")).toHaveText("Hello, Ada");
   const calls=await page.evaluate(() => window.__deskCalls);
   expect(calls.find(call => call.command === "save_calendar_publishing").args.password).toBe("synthetic-calendar-secret");
   expect(calls.find(call => call.command === "save_calendar_publishing").args.config.enabled).toBe(false);

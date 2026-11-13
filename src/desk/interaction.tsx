@@ -19,6 +19,70 @@ export function actionOrigin() {
 
 export function MotionSystem({ children }: { children: ReactNode }) {
   useEffect(() => {
+    const selector = ".desk-toolbar, .route-controls, .choice-row, .pace-mode, .setup-band, .proposal-prompt, .desk-notice";
+    const preferences = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-transparency: reduce)", "(prefers-contrast: more)", "(forced-colors: active)"].map(query => matchMedia(query));
+    const surfaces = new Map<HTMLElement, { animation: Animation | null; visible: boolean }>();
+    const enabled = () => !preferences.some(preference => preference.matches);
+    const position = () => `${15 + Math.random() * 70}% ${20 + Math.random() * 60}%, ${15 + Math.random() * 70}% ${20 + Math.random() * 60}%, 50% 50%`;
+    const drift = (element: HTMLElement, state: { animation: Animation | null; visible: boolean }, from = "35% 45%, 65% 55%, 50% 50%") => {
+      const frames = [from, ...Array.from({ length: 5 }, position)];
+      const animation = element.animate(frames.map(backgroundPosition => ({ backgroundPosition, easing: "ease-in-out" })), {
+        id: "material-aura", duration: 18000 + Math.random() * 12000, fill: "forwards",
+      });
+      state.animation = animation;
+      animation.onfinish = () => {
+        if (surfaces.get(element) !== state || !enabled()) return;
+        drift(element, state, frames[frames.length - 1]);
+        animation.cancel();
+      };
+      if (!state.visible || document.hidden) animation.pause();
+    };
+    const sync = () => {
+      for (const [element, state] of surfaces) {
+        if (!enabled()) { state.animation?.cancel(); state.animation = null; }
+        else if (!state.animation && state.visible && !document.hidden) drift(element, state);
+        else if (state.visible && !document.hidden) state.animation?.play();
+        else state.animation?.pause();
+      }
+    };
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const state = surfaces.get(entry.target as HTMLElement);
+        if (state) state.visible = entry.isIntersecting;
+      }
+      sync();
+    });
+    const register = (root: ParentNode) => {
+      const elements = [...root.querySelectorAll<HTMLElement>(selector)];
+      if (root instanceof HTMLElement && root.matches(selector)) elements.unshift(root);
+      for (const element of elements) {
+        if (surfaces.has(element)) continue;
+        surfaces.set(element, { animation: null, visible: false });
+        observer.observe(element);
+      }
+    };
+    const mutations = new MutationObserver(records => {
+      for (const [element, state] of surfaces) {
+        if (element.isConnected) continue;
+        state.animation?.cancel();
+        observer.unobserve(element);
+        surfaces.delete(element);
+      }
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) register(node);
+    });
+    register(document);
+    mutations.observe(document.body, { childList: true, subtree: true });
+    for (const preference of preferences) preference.addEventListener("change", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+      for (const state of surfaces.values()) state.animation?.cancel();
+      for (const preference of preferences) preference.removeEventListener("change", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+  useEffect(() => {
     const selector = 'button, a[href], summary, [role="button"], .choice-row label, .palette-options label';
     const coarse = matchMedia("(pointer: coarse)");
     let touched: Element | null = null;

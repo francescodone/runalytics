@@ -182,6 +182,11 @@ progress { accent-color: var(--desk-action); }
   box-shadow: none;
 }
 @property --aura-strength { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+:root :is(.desk-toolbar, .route-controls, .choice-row, .pace-mode, .setup-band, .proposal-prompt, .desk-notice) {
+  background-size: 160% 240%, 150% 220%, 100% 100%;
+  background-position: 35% 45%, 65% 55%, center;
+  background-repeat: no-repeat;
+}
 :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) {
   --material-aura: radial-gradient(ellipse at var(--aura-x, 50%) var(--aura-y, 50%), color-mix(in srgb, var(--desk-ink) 4%, transparent), transparent 68%), linear-gradient(135deg, color-mix(in srgb, var(--desk-highlight) 12%, transparent), transparent 55%);
   background-position: center;

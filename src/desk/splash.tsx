@@ -31,7 +31,7 @@ export function BrandSplash() {
       for (const animation of animations) animation.cancel();
       delete root.dataset.brandLaunch;
       preference.removeEventListener("change", finish);
-      window.removeEventListener("resize", finish);
+      window.removeEventListener("resize", resized);
       window.removeEventListener("hashchange", finish);
       window.removeEventListener("pagehide", finish);
       document.removeEventListener("visibilitychange", visibilityChanged);
@@ -84,12 +84,15 @@ export function BrandSplash() {
     root.dataset.brandLaunch = "opening";
     observer.observe(document.getElementById("desk-root")!, { childList: true, subtree: true });
     preference.addEventListener("change", finish);
-    window.addEventListener("resize", finish);
+    window.addEventListener("resize", resized);
     window.addEventListener("hashchange", finish);
     window.addEventListener("pagehide", finish);
     document.addEventListener("visibilitychange", visibilityChanged);
     document.addEventListener("keydown", finish, true);
     document.addEventListener("pointerdown", finish, true);
+    function resized() {
+      if (destination) finish();
+    }
     function visibilityChanged() {
       if (document.hidden) {
         if (started) finish();

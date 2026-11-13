@@ -159,8 +159,10 @@ hidden, preventing a duplicate-logo frame during React unmount.
 
 The shared `desk:reveal-settle` event settles the destination header before
 measurement so viewport entrances cannot move the landing point. Reduced motion
-skips the splash entirely. Input, resize, navigation, backgrounding and live motion
+skips the splash entirely. Input, navigation, backgrounding and live motion
 preference changes cancel it immediately without blocking the initiating action.
+Viewport resizes during the intro are accommodated before measuring the destination;
+resizes during docking cancel the handoff.
 A bounded startup deadline exposes loading or errors if no header becomes ready;
 fonts, delayed data and setup do not create an indefinite splash.
 
@@ -173,9 +175,20 @@ reveals without replaying them when motion is enabled again.
 
 Use transform and opacity for arrivals and departures. Do not add transforms
 or filters to fixed-element ancestors, animate every row's blur, add permanent
-`will-change`, or run ambient animation loops. Motion-owned transforms must not
+`will-change`, or run ambient animation outside the bounded material aura below.
+Motion-owned transforms must not
 also have CSS transform transitions. Native selects keep their platform popup
 behavior; do not replace them just to add animation.
+
+Existing aura-backed toolbars, route controls, choice tracks, pace modes, setup
+bands, proposal prompts and notices may drift their broad color washes. The
+shared `MotionSystem` changes only background position along independent random
+paths, easing each segment over an 18-30 second sequence. Each new sequence
+starts where the last finished. Controls, content and page backgrounds do not
+move. No animated blur, permanent layer hints or per-frame JavaScript is added.
+Offscreen surfaces and hidden documents pause; removed surfaces cancel playback.
+Reduced motion keeps a static wash. Reduced transparency, increased contrast and
+forced colors cancel playback and retain the existing opaque fallback.
 
 ## Verification
 
