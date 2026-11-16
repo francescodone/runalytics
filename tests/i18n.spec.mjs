@@ -102,7 +102,7 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
       ["training/plan", "Training horizon"],
       ["journal", "Activity review"],
       ["health/overview", "Your training, in balance"],
-      ["health/pace", "Pace on point"],
+      ["health/pace", "Recent sessions"],
       ["health/journal", "Episodes"],
       ["health/milestones", "Last 12 weeks"],
       ["settings", "Third-party connections"],

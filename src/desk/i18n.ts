@@ -74,7 +74,16 @@ export function text(value: string | null | undefined): string | null | undefine
 export function number(value: number, digits?: number): string;
 export function number(value: number | null | undefined, digits?: number): string | undefined;
 export function number(value: number | null | undefined, digits = 0): string | undefined {
-  return value == null ? undefined : new Intl.NumberFormat(formatLocale, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+  const precision = Math.min(digits, 1);
+  return value == null ? undefined : new Intl.NumberFormat(formatLocale, { minimumFractionDigits: precision, maximumFractionDigits: precision }).format(value);
+}
+export function decimal(value: number): string;
+export function decimal(value: number | null | undefined): string | undefined;
+export function decimal(value: number | null | undefined): string | undefined {
+  return value == null ? undefined : new Intl.NumberFormat(formatLocale, { maximumFractionDigits: 1 }).format(value);
+}
+export function trainingMessage(value: string): string {
+  return value.replace(/(Recent load is |Load ratio (?:is )?)(-?\d+\.\d+)(?=×|[ .])/g, (_, prefix: string, amount: string) => prefix + decimal(Number(amount)));
 }
 const dateValue = (value: string | number | Date) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
 export const date = (value: string | number | Date) => dateValue(value).toLocaleDateString(formatLocale, { day: "2-digit", month: "2-digit", year: "numeric" });

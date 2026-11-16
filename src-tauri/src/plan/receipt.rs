@@ -138,7 +138,7 @@ pub fn receipt(plan: &TrainingPlan, workouts: &[PlanWorkout]) -> Vec<ReceiptLine
     });
 
     lines.push(ReceiptLine {
-        input: if plan.training_method == crate::types::TrainingMethod::RunnaLike { "Runna-like" } else { "Norwegian method" }.into(),
+        input: if plan.training_method == crate::types::TrainingMethod::RunnaLike { "Runalytics method" } else { "Norwegian method" }.into(),
         sentence: if plan.training_method == crate::types::TrainingMethod::RunnaLike {
             "Varied intervals, tempo and long runs follow a progressive build with recovery weeks. This is an independent heuristic inspired by Runna's public guidance, not its proprietary algorithm."
         } else {

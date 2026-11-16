@@ -221,6 +221,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     const order = new WeakMap<HTMLElement, number>();
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     const compact = matchMedia("(max-width: 800px)");
+    const immediate = () => reduced.matches || compact.matches;
     const started = performance.now();
     let unlocking = true;
     let sequence = 0;
@@ -246,7 +247,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       const visible = motionOrder([...pending].filter(element => motionVisible(element)));
       for (const [index, element] of visible.entries()) {
         const unlock = unlocking && performance.now() - started < tempo.landing * 1000;
-        if (reduced.matches || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
+        if (immediate() || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
         observer.unobserve(element);
         pending.delete(element);
         revealed.add(element);
@@ -286,7 +287,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
           delete descendant.dataset.reveal;
         }
         order.set(element, sequence++);
-        if (reduced.matches || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
+        if (immediate() || element.contains(document.activeElement) && !document.activeElement?.matches("h1, h2, h3, h4")) { settleElement(element); continue; }
         element.dataset.reveal = "waiting";
         pending.add(element);
         observer.observe(element);
@@ -310,7 +311,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     document.addEventListener("scroll", scheduleReveals, { capture: true, passive: true });
     window.addEventListener("resize", scheduleReveals);
     const landView = (event: Event) => {
-      if (!(event.target instanceof HTMLElement) || reduced.matches) return;
+      if (!(event.target instanceof HTMLElement) || immediate()) return;
       landingRoots.add(event.target);
       cancelAnimationFrame(landingFrame);
       cancelAnimationFrame(revealFrame);
@@ -340,7 +341,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
     };
     window.addEventListener("hashchange", endUnlock);
     const settleMotion = () => {
-      if (reduced.matches) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
+      if (immediate()) document.querySelectorAll<HTMLElement>('[data-reveal="waiting"], [data-reveal="visible"]').forEach(settleElement);
       else { for (const element of running.keys()) settleElement(element); scheduleReveals(); }
     };
     reduced.addEventListener("change", settleMotion);
@@ -514,6 +515,7 @@ export function useCompactLayout() {
     const media = matchMedia("(max-width: 800px)");
     const update = () => setCompact(media.matches);
     media.addEventListener("change", update);
+    update();
     return () => media.removeEventListener("change", update);
   }, []);
   return compact;

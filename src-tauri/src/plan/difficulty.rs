@@ -486,6 +486,15 @@ fn calculate(
                                     let mut changed_donor = donor.clone();
                                     changed_donor.distance_m = Some(distance - amount);
                                     changed_donor.duration_min = donor.duration_min.map(|minutes| minutes * (distance - amount) / distance);
+                                    if let Some((name, displayed)) = donor.title.strip_suffix(" km").and_then(|title| title.rsplit_once(' ')) {
+                                        if matches!(name, "Easy run" | "Medium-long run" | "Shakeout")
+                                            && displayed.parse::<f64>().is_ok()
+                                        {
+                                            let km = (distance - amount) / 1000.0;
+                                            let formatted = format!("{km:.1}");
+                                            changed_donor.title = format!("{name} {} km", formatted.trim_end_matches('0').trim_end_matches('.'));
+                                        }
+                                    }
                                     donor_update = Some(changed_donor);
                                     transferred = Some(candidate);
                                     break;
@@ -553,6 +562,7 @@ fn calculate(
                 let mut changed = workout.clone();
                 changed.distance_m = Some(adjusted.distance_m());
                 changed.duration_min = adjusted.estimated_min;
+                changed.title = super::session::adjusted_quality_title(workout, &plan, &adjusted);
                 changed
                     .customization
                     .get_or_insert_with(Customization::default)
@@ -702,8 +712,27 @@ mod tests {
         let updated = store.plan_workouts(&plan.id).unwrap();
         for change in &proposed.changes {
             let workout = updated.iter().find(|workout| workout.id == change.workout_id).unwrap();
+            assert_eq!(workout.title, change.title);
             assert_eq!(serde_json::to_value(super::super::session::details_for_plan(workout, &plan)).unwrap(), serde_json::to_value(&change.after).unwrap());
+            let work = change.after.steps.iter().find(|step| !step.open_ended).unwrap();
+            assert!(workout.title.contains(&format!("{} x {:.0} m", work.repeats, work.distance_m)), "{}", workout.title);
         }
+    }
+
+    #[test]
+    fn split_repetitions_are_all_described_in_adjusted_title() {
+        let (_, plan, workouts) = seed();
+        let mut workout = workouts.iter().find(|workout| workout.kind == WorkoutKind::Tempo).unwrap().clone();
+        workout.kind = WorkoutKind::Intervals;
+        workout.title = "Speed session · 4 x 1000 m".into();
+        let mut baseline = example();
+        baseline.steps[0].distance_m = 1600.0;
+        let adjusted = nudge(&baseline, &baseline, 300.0, 30.0, Direction::Harder).unwrap();
+        let title = super::super::session::adjusted_quality_title(&workout, &plan, &adjusted);
+        assert_eq!(title, "Speed session · 3 x 1000 m + 1 x 1100 m");
+        baseline.steps[1].recovery_m = 0.0;
+        let adjusted = nudge(&baseline, &baseline, 300.0, 30.0, Direction::Harder).unwrap();
+        assert_eq!(super::super::session::adjusted_quality_title(&workout, &plan, &adjusted), title);
     }
 
     #[test]
@@ -734,6 +763,8 @@ mod tests {
                 assert!(!original.done);
                 assert!(original.date >= Local::now().date_naive());
                 assert!(changed.distance_m.unwrap() >= 3000.0);
+                let displayed: f64 = changed.title.strip_suffix(" km").unwrap().rsplit_once(' ').unwrap().1.parse().unwrap();
+                assert!((displayed * 1000.0 - changed.distance_m.unwrap()).abs() < 0.001);
             }
             if original.kind == WorkoutKind::Tempo && changed.distance_m > original.distance_m {
                 transferred = true;
@@ -746,7 +777,9 @@ mod tests {
         store.undo_difficulty(&plan.id).unwrap();
         let restored = store.plan_workouts(&plan.id).unwrap();
         for original in &workouts {
-            assert_eq!(restored.iter().find(|workout| workout.id == original.id).unwrap().distance_m, original.distance_m);
+            let restored = restored.iter().find(|workout| workout.id == original.id).unwrap();
+            assert_eq!(restored.distance_m, original.distance_m);
+            assert_eq!(restored.title, original.title);
         }
     }
 

@@ -1374,16 +1374,16 @@ impl Store {
         let mut previous = Vec::new();
         for workout in workouts {
             if !workout.done {
-                let before = transaction.query_row("SELECT customization_json,duration_min,distance_m FROM plan_workouts WHERE id=?1 AND done=0", params![workout.id], |row|
-                    Ok((workout.id.clone(), row.get::<_, Option<String>>(0)?, row.get::<_, Option<f64>>(1)?, row.get::<_, Option<f64>>(2)?)))?;
+                let before = transaction.query_row("SELECT customization_json,duration_min,distance_m,title FROM plan_workouts WHERE id=?1 AND done=0", params![workout.id], |row|
+                    Ok((workout.id.clone(), row.get::<_, Option<String>>(0)?, row.get::<_, Option<f64>>(1)?, row.get::<_, Option<f64>>(2)?, row.get::<_, String>(3)?)))?;
                 previous.push(before);
             }
             let customization = workout.customization.as_ref().map(serde_json::to_string).transpose()?;
             let original = originals.iter().find(|original| original.id == workout.id)
                 .ok_or_else(|| AppError::Other("A session changed. Refresh before trying again.".into()))?;
             let changed = transaction.execute(
-                "UPDATE plan_workouts SET customization_json=?3, duration_min=?4, distance_m=?8 WHERE id=?1 AND plan_id=?2 AND done=?5 AND status='planned' AND day=?6 AND distance_m IS ?7 AND (?5 OR NOT EXISTS(SELECT 1 FROM calendar_completions WHERE workout_id=?1))",
-                params![workout.id, plan_id, customization, workout.duration_min, workout.done, workout.date.to_string(), original.distance_m, workout.distance_m],
+                "UPDATE plan_workouts SET customization_json=?3, duration_min=?4, distance_m=?8, title=?9 WHERE id=?1 AND plan_id=?2 AND done=?5 AND status='planned' AND day=?6 AND distance_m IS ?7 AND (?5 OR NOT EXISTS(SELECT 1 FROM calendar_completions WHERE workout_id=?1))",
+                params![workout.id, plan_id, customization, workout.duration_min, workout.done, workout.date.to_string(), original.distance_m, workout.distance_m, workout.title],
             )?;
             if changed != 1 { return Err(AppError::Other("A session changed. Refresh before trying again.".into())); }
         }
@@ -1404,16 +1404,18 @@ impl Store {
         #[derive(serde::Deserialize)]
         #[serde(untagged)]
         enum PreviousDifficulty {
+            WithTitle((String, Option<String>, Option<f64>, Option<f64>, String)),
             WithDistance((String, Option<String>, Option<f64>, Option<f64>)),
             Legacy((String, Option<String>, Option<f64>)),
         }
         let previous: Vec<PreviousDifficulty> = serde_json::from_str(&content)?;
         for previous in previous {
-            let (id, customization, duration, distance, restore_distance) = match previous {
-                PreviousDifficulty::WithDistance((id, customization, duration, distance)) => (id, customization, duration, distance, true),
-                PreviousDifficulty::Legacy((id, customization, duration)) => (id, customization, duration, None, false),
+            let (id, customization, duration, distance, restore_distance, title) = match previous {
+                PreviousDifficulty::WithTitle((id, customization, duration, distance, title)) => (id, customization, duration, distance, true, Some(title)),
+                PreviousDifficulty::WithDistance((id, customization, duration, distance)) => (id, customization, duration, distance, true, None),
+                PreviousDifficulty::Legacy((id, customization, duration)) => (id, customization, duration, None, false, None),
             };
-            let changed = transaction.execute("UPDATE plan_workouts SET customization_json=?2,duration_min=?3,distance_m=CASE WHEN ?5 THEN ?6 ELSE distance_m END WHERE id=?1 AND done=0 AND status='planned' AND day>=?4 AND NOT EXISTS(SELECT 1 FROM calendar_completions WHERE workout_id=?1)", params![id, customization, duration, chrono::Local::now().date_naive().to_string(), restore_distance, distance])?;
+            let changed = transaction.execute("UPDATE plan_workouts SET customization_json=?2,duration_min=?3,distance_m=CASE WHEN ?5 THEN ?6 ELSE distance_m END,title=COALESCE(?7,title) WHERE id=?1 AND done=0 AND status='planned' AND day>=?4 AND NOT EXISTS(SELECT 1 FROM calendar_completions WHERE workout_id=?1)", params![id, customization, duration, chrono::Local::now().date_naive().to_string(), restore_distance, distance, title])?;
             if changed != 1 { return Err(AppError::Other("A session changed; this adjustment can no longer be undone.".into())); }
         }
         transaction.execute(Self::REV_BUMP_PLAN, params![plan_id])?;

@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle } from "../lib/ipc";
 import { gamificationStats, type Achievement } from "../lib/flow";
 import type { PlanSyncProgress, Settings } from "../lib/types";
-import { IconLoader2, IconCheck, IconX } from "@tabler/icons-react";
+import { IconLoader2, IconCheck, IconClock, IconX } from "@tabler/icons-react";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
 import { Notification, NotificationViewport } from "./overlays";
 import { Button, Dialog } from "./ui";
@@ -89,17 +89,13 @@ function scheduleNoticeDismissal(node: HTMLElement | null, dismiss: () => void) 
   };
 }
 
-/// One mirror report from the backend's `plan://stage` channel. `target`
-/// "op" is the operation itself: its settle means no new line can arrive.
-type StageEvent = { op: string; target: string; state: "working" | "done" | "error"; detail?: string | null };
-type StageLine = { target: string; state: "working" | "done" | "error"; detail?: string | null };
-type StageOp = { lines: StageLine[]; settled: boolean };
-/// What the runner reads for each mirror. The order the backend opens the
-/// lines in (DB first, then calendar, gist, watch) is kept as-is: it is the
-/// chronological order the work actually happens in.
+type StageEvent = { op: string; target: string; state: "working" | "done" | "error" | "skipped"; detail?: string | null; targets?: string[]; lines?: StageLine[] };
+type StageLine = { target: string; state: "waiting" | "working" | "done" | "error"; detail?: string | null };
+type StageOp = { lines: StageLine[]; settled: boolean; planned: boolean };
 const STAGE_LABELS: Record<string, string> = { db: t("local DB"), calendar: "calendar", gist: "gist", coros: t("COROS calendar"), strava: "Strava" };
 function stageText(line: StageLine): string {
   const label = text(STAGE_LABELS[line.target] ?? line.target);
+  if (line.state === "waiting") return t("Waiting to update {{value0}}", { value0: label });
   if (line.state === "working") return t("Updating {{value0}}…", { value0: label });
   if (line.target === "strava" && line.detail) return line.state === "error" ? t("Updating Strava failed: {{value0}}", { value0: line.detail }) : text(line.detail);
   return line.state === "done" ? t("Updated {{value0}}", { value0: label }) : t("Updating {{value0}} failed", { value0: label });
@@ -119,8 +115,23 @@ export function SetupFeedback({ children }: { children: ReactNode }) {
 
 function AchievementCelebrations() {
   const [queue, setQueue] = useState<Achievement[]>([]);
+  const [opening, setOpening] = useState(() => document.documentElement.hasAttribute("data-brand-launch"));
   const reduced = useReducedMotion();
-  const badge = queue[0];
+  const badge = opening ? undefined : queue[0];
+  useEffect(() => {
+    const root = document.documentElement;
+    let release = 0;
+    const update = () => {
+      window.clearTimeout(release);
+      if (root.hasAttribute("data-brand-launch")) setOpening(true);
+      // Let the input that dismissed the splash finish before opening a dialog.
+      else release = window.setTimeout(() => setOpening(false), 0);
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-brand-launch"] });
+    update();
+    return () => { observer.disconnect(); window.clearTimeout(release); };
+  }, []);
   useEffect(() => {
     const unlocked = (event: Event) => setQueue(previous => [...previous, ...(event as CustomEvent<Achievement[]>).detail]);
     window.addEventListener("runalytics:achievements-unlocked", unlocked);
@@ -156,6 +167,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   });
   const noticeRef = useRef<HTMLDivElement>(null);
   const [stageOps, setStageOps] = useState<Record<string, StageOp>>({});
+  const dismissedStageOps = useRef(new Set<string>());
   const stagesRef = useRef<HTMLDivElement>(null);
   const [acting, setActing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -202,15 +214,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (result?.discarded) setNotice({ text: t("The Gist changed on another device. Its latest plan replaced unpublished local changes.") });
     });
     register("plan://checked", () => setPlanCheck(value => value + 1));
-    register<StageEvent>("plan://stage", event => setStageOps(previous => {
-      const current = previous[event.op] ?? { lines: [], settled: false };
-      if (event.target === "op") return { ...previous, [event.op]: { lines: event.state === "working" ? [] : current.lines, settled: event.state !== "working" } };
-      const lines = current.lines.slice();
-      const index = lines.findIndex(line => line.target === event.target);
-      const line: StageLine = { target: event.target, state: event.state, detail: event.detail ?? null };
-      if (index >= 0) lines[index] = line; else lines.push(line);
-      return { ...previous, [event.op]: { lines, settled: current.settled } };
-    }));
+    register<StageEvent>("plan://stage", event => {
+      if (event.target === "op" && event.state === "working") dismissedStageOps.current.delete(event.op);
+      else if (dismissedStageOps.current.has(event.op)) return;
+      setStageOps(previous => {
+        const current = previous[event.op] ?? { lines: [], settled: false, planned: false };
+        if (event.lines) {
+          const settled = event.target === "op" ? event.state !== "working" : current.settled;
+          return { ...previous, [event.op]: { lines: settled ? event.lines.filter(line => line.state !== "waiting") : event.lines, settled, planned: true } };
+        }
+        if (event.target === "op") {
+          if (event.state === "working") return { ...previous, [event.op]: { lines: (event.targets ?? []).map(target => ({ target, state: "waiting" })), settled: false, planned: Array.isArray(event.targets) } };
+          return { ...previous, [event.op]: { ...current, lines: current.lines.filter(line => line.state !== "waiting"), settled: true } };
+        }
+        const index = current.lines.findIndex(line => line.target === event.target);
+        if (event.state === "skipped") return { ...previous, [event.op]: { ...current, lines: current.lines.filter(line => line.target !== event.target) } };
+        if (index < 0 && current.planned) return previous;
+        const lines = current.lines.slice();
+        const line: StageLine = { target: event.target, state: event.state, detail: event.detail ?? null };
+        if (index >= 0) lines[index] = line; else lines.push(line);
+        return { ...previous, [event.op]: { ...current, lines } };
+      });
+    });
     void tauri.syncStatus().then(value => { if (!disposed && !receivedEvent) setSyncing(value); }).catch(() => undefined);
     return () => { disposed = true; stops.forEach(stop => stop()); };
   }, []);
@@ -285,19 +310,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!notice || acting) return;
     return scheduleNoticeDismissal(noticeRef.current, () => setNotice(null));
   }, [notice, acting]);
-  // The stage toast keeps itself open while any line is still working, and
-  // while the operation itself has not returned (a mirror that was never
-  // attempted emits nothing, so only the op settle proves the list is
-  // final). Once every line has a verdict it self-dismisses on the same
-  // hover-hold clock as the plain notice.
   const stageEntries = useMemo(() => Object.entries(stageOps).filter(([, op]) => op.lines.length > 0), [stageOps]);
-  const stagesQuiet = stageEntries.length > 0 && stageEntries.every(([, op]) => op.settled && op.lines.every(line => line.state !== "working"));
+  const stagesQuiet = stageEntries.length > 0 && stageEntries.every(([, op]) => op.settled && op.lines.every(line => line.state !== "working" && line.state !== "waiting"));
   useEffect(() => {
     if (!stagesQuiet) return;
     return scheduleNoticeDismissal(stagesRef.current, () => setStageOps({}));
   }, [stagesQuiet, stageOps]);
   const activeSyncStage = stageOps.sync?.lines.slice().reverse().find(line => line.state === "working");
-  return <Context.Provider value={{ revision, planCheck, syncing, syncStage: activeSyncStage ? stageText(activeSyncStage) : null, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true), setSetupPending: pending => { setupPendingRef.current = pending; setSetupPending(pending); if (pending) setNotices([]); else setStageOps({}); } }}>
+  return <Context.Provider value={{ revision, planCheck, syncing, syncStage: activeSyncStage ? stageText(activeSyncStage) : null, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true), setSetupPending: pending => { setupPendingRef.current = pending; setSetupPending(pending); if (pending) setNotices([]); else setStageOps(previous => Object.fromEntries(Object.entries(previous).filter(([, op]) => op.planned && !op.settled))); } }}>
     {children}
     {!setupPending && <><AchievementCelebrations />
     <NotificationViewport>
@@ -307,9 +327,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         catch (error) { setNotices(previous => [{ text: String(error) }, ...previous.slice(1)]); }
         finally { setActing(false); }
       }}>{notice.action.label}</button>}><Change identity={text(notice.text)}><span>{text(notice.text)}</span></Change></Notification>}</Presence>
-    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => setStageOps({})} countdown={stagesQuiet}>
+    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => { Object.keys(stageOps).forEach(op => dismissedStageOps.current.add(op)); setStageOps({}); }} countdown={stagesQuiet}>
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
-        {line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
+        {line.state === "waiting" ? <IconClock size={16} aria-hidden="true" /> : line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
         <span>{stageText(line)}</span>
       </li>))}</ul>
     </Notification>}</Presence>

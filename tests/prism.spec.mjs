@@ -4,6 +4,63 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+async function expectControlContrast(page, control) {
+  await control.scrollIntoViewIfNeeded();
+  const labels = await control.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const labels = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const parent = node.parentElement;
+      if (!node.textContent.trim() || parent.closest('.sr-only, .control-tooltip') || !parent.checkVisibility()) continue;
+      const style = getComputedStyle(parent);
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) {
+        if (rect.width < 1 || rect.height < 1) continue;
+        labels.push({ text: node.textContent.trim(), color: style.color, x: rect.x - bounds.x, y: rect.y - bounds.y, width: rect.width, height: rect.height, minimum: 4.5 });
+      }
+    }
+    if (!labels.length && element.querySelector("svg")) {
+      const icon = element.querySelector("svg");
+      const rect = icon.getBoundingClientRect();
+      labels.push({ text: element.getAttribute("aria-label"), color: getComputedStyle(icon).color, x: rect.x - bounds.x, y: rect.y - bounds.y, width: rect.width, height: rect.height, minimum: 3 });
+    }
+    return labels;
+  });
+  // Computed fill alone misses the gradients and surfaces visible through glass.
+  const background = await control.screenshot({ style: '* { forced-color-adjust: none !important; -webkit-text-fill-color: transparent !important; text-shadow: none !important; text-decoration-color: transparent !important; } svg { visibility: hidden !important; }' });
+  const contrast = await page.evaluate(async ({ source, labels }) => {
+    const image = new Image();
+    image.src = source;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const luminance = rgb => rgb.slice(0, 3).reduce((sum, value, index) => {
+      const channel = value / 255;
+      return sum + (channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4) * [.2126, .7152, .0722][index];
+    }, 0);
+    return labels.map(label => {
+      const ink = document.createElement("canvas").getContext("2d");
+      ink.fillStyle = label.color;
+      ink.fillRect(0, 0, 1, 1);
+      const foreground = luminance([...ink.getImageData(0, 0, 1, 1).data]);
+      let ratio = Infinity;
+      for (const x of [.1, .5, .9]) for (const y of [.25, .5, .75]) {
+        const background = luminance([...context.getImageData(Math.max(0, Math.min(image.width - 1, Math.floor(label.x + label.width * x))), Math.max(0, Math.min(image.height - 1, Math.floor(label.y + label.height * y))), 1, 1).data]);
+        ratio = Math.min(ratio, (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05));
+      }
+      return { text: label.text, ratio, minimum: label.minimum };
+    });
+  }, { source: `data:image/png;base64,${background.toString("base64")}`, labels });
+  expect(contrast.length).toBeGreaterThan(0);
+  for (const label of contrast) expect(label.ratio, `${label.text} contrast against rendered glass`).toBeGreaterThanOrEqual(label.minimum);
+}
+
 for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
   test(`inline messages share a surface ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
@@ -61,7 +118,7 @@ test("mobile touch clicks give one light haptic for buttons and cards", async ({
   await page.touchscreen.tap(disabledBounds.x + disabledBounds.width / 2, disabledBounds.y + disabledBounds.height / 2);
   expect(await calls()).toHaveLength(1);
   await long.evaluate(element => { element.disabled = false; });
-  await page.getByRole("heading", { name: "Health", exact: true }).tap();
+  await page.getByRole("heading", { name: "Pace insights", exact: true, level: 1 }).tap();
   expect(await calls()).toHaveLength(1);
   const bounds = await long.boundingBox();
   const touch = await context.newCDPSession(page);
@@ -149,6 +206,9 @@ test("training toolbar tooltips escape clipping on hover and keyboard focus", as
   await expect(toolbar).toHaveCSS("z-index", "30");
   const geometry = await tooltip.evaluate(element => ({ tooltip: element.getBoundingClientRect().bottom, toolbar: element.closest(".desk-toolbar").getBoundingClientRect().bottom }));
   expect(geometry.tooltip).toBeGreaterThan(geometry.toolbar);
+  await tooltip.hover();
+  await expect(tooltip).toBeVisible();
+  expect(await tooltip.evaluate(element => { const bounds = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)); })).toBe(true);
   await page.mouse.move(0, 0);
   await page.keyboard.press("Tab");
   await button.focus();
@@ -156,6 +216,15 @@ test("training toolbar tooltips escape clipping on hover and keyboard focus", as
   await expect(toolbar).toHaveCSS("z-index", "30");
   await page.keyboard.press("Escape");
   await expect(tooltip).toBeHidden();
+  await page.goto("/desk.html#journal/1");
+  const zoom = page.getByRole("button", { name: "Zoom in", exact: true });
+  const mapTooltip = zoom.locator(".control-tooltip");
+  await zoom.hover();
+  await expect(mapTooltip).toBeVisible();
+  await mapTooltip.hover();
+  await expect(mapTooltip).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(mapTooltip).toBeHidden();
 });
 
 for (const theme of ["light", "dark"]) {
@@ -623,6 +692,64 @@ for (const theme of ["light", "dark"]) {
     expect(await control.evaluate(element => getComputedStyle(element, "::after").content)).toBe("none");
   });
 
+  for (const width of [320, 1440]) test(`all web button families use the training-plan glass ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/desk.html?theme=${theme}#settings/watch`);
+    const reference = page.getByRole("link", { name: "Open your training plan", exact: true });
+    await expect(reference).toBeVisible();
+    const material = control => control.evaluate(element => {
+      const style = getComputedStyle(element);
+      const context = document.createElement("canvas").getContext("2d");
+      context.fillStyle = style.backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      return { face: style.backgroundColor, image: style.backgroundImage, shadow: style.boxShadow, border: style.borderColor, alpha: context.getImageData(0, 0, 1, 1).data[3] / 255 };
+    });
+    const resting = await material(reference);
+    expect(resting.alpha).toBeGreaterThan(0);
+    expect(resting.alpha).toBeLessThan(1);
+    const destructive = page.getByRole("button", { name: "Disconnect", exact: true });
+    expect(await material(destructive)).toEqual(resting);
+    await expectControlContrast(page, reference);
+    await expectControlContrast(page, destructive);
+    expect(await destructive.evaluate(element => {
+      const style = getComputedStyle(element);
+      const context = document.createElement("canvas").getContext("2d");
+      context.fillStyle = style.color;
+      const actual = context.fillStyle;
+      context.fillStyle = style.getPropertyValue("--desk-danger").trim();
+      return actual === context.fillStyle;
+    })).toBe(true);
+    for (const [route, selector] of [["training/week", ".session-tile"], ["training/plan", ".roadmap-row"], ["journal", ".activity-row"], ["journal/1/execution", ".lap-pace-column"], ["settings", ".settings-task-list a"], ["settings/watch", "button.desk-button"]]) {
+      await page.goto(`/desk.html?theme=${theme}#${route}`);
+      await page.mouse.move(0, 0);
+      const control = page.locator(selector).filter({ visible: true }).first();
+      await expect(control).toBeVisible();
+      const normal = page.locator(`${selector}:not([aria-pressed="true"]):not([aria-current]):not(:disabled)`).filter({ visible: true }).first();
+      await expect(normal).toBeVisible();
+      expect(await material(normal)).toEqual(resting);
+      await expect(normal).toHaveCSS("font-family", /system-ui/);
+      await expectControlContrast(page, normal);
+      await page.evaluate(() => document.fonts.ready);
+      await normal.scrollIntoViewIfNeeded();
+      const bounds = await normal.boundingBox();
+      await normal.hover();
+      await expect(normal).toHaveCSS("backdrop-filter", /blur\(12px\)/);
+      await expect.poll(() => normal.evaluate(element => getComputedStyle(element, "::after").opacity)).toBe("0.8");
+      await page.mouse.move(0, 0);
+      await normal.focus();
+      await expect(normal).toHaveCSS("outline-style", "solid");
+      await expect(normal).toHaveCSS("backdrop-filter", /blur\(12px\)/);
+      expect(await normal.boundingBox()).toEqual(bounds);
+      await page.emulateMedia({ contrast: "more" });
+      expect((await material(normal)).alpha).toBe(1);
+      await expect(normal).toHaveCSS("backdrop-filter", "none");
+      await expect(normal).toHaveCSS("box-shadow", "none");
+      await normal.evaluate(element => element.blur());
+      await page.emulateMedia({ contrast: "no-preference" });
+      await page.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-")}-glass.png`) });
+    }
+  });
+
   for (const width of [320, 390, 1440]) test(`reference button selection remains distinct from hover ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/desk.html?theme=${theme}#health/pace`);
@@ -648,18 +775,29 @@ for (const theme of ["light", "dark"]) {
     expect(selectedMaterial.shadow).not.toContain("inset");
     expect(inactiveMaterial.shadow).toContain("inset");
     expect(inactiveMaterial.image).toContain("linear-gradient");
-    expect(selectedMaterial.border).toBe("rgba(0, 0, 0, 0)");
+    expect(selectedMaterial.border).not.toBe("rgba(0, 0, 0, 0)");
     expect(inactiveMaterial.radius).toBe("999px");
-    expect(selectedMaterial.ink).toBe(theme === "dark" ? "rgb(150, 196, 255)" : "rgb(41, 104, 186)");
-    if (theme === "dark") {
-      expect(selectedMaterial.face).toBe("rgb(57, 62, 75)");
-      expect(inactiveMaterial.face).toBe("rgb(43, 46, 54)");
+    await expect(speed).toHaveCSS("text-decoration-line", "none");
+    await expectControlContrast(page, speed);
+    await expectControlContrast(page, long);
+    for (const control of [speed, long]) {
+      const alpha = await control.evaluate(element => {
+        const context = document.createElement("canvas").getContext("2d");
+        context.fillStyle = getComputedStyle(element).backgroundColor;
+        context.fillRect(0, 0, 1, 1);
+        return context.getImageData(0, 0, 1, 1).data[3] / 255;
+      });
+      expect(alpha).toBeGreaterThan(0);
+      expect(alpha).toBeLessThan(1);
     }
     await group.screenshot({ path: testInfo.outputPath("speed-selected.png") });
     for (const [control, label] of [[speed, "speed"], [long, "long"]]) {
       await control.hover();
       await expect.poll(() => rim(control)).toBe("0.8");
       await expect(speed).toHaveAttribute("aria-pressed", "true");
+      await expect(speed).toHaveCSS("background-color", selectedMaterial.face);
+      await expect(speed).toHaveCSS("text-decoration-line", "none");
+      await expectControlContrast(page, control);
       await expect(speed.locator(".selection-marker")).toBeVisible();
       await group.screenshot({ path: testInfo.outputPath(`${label}-hovered.png`) });
     }
@@ -670,6 +808,64 @@ for (const theme of ["light", "dark"]) {
     await expect(long.locator(".selection-marker")).toBeVisible();
     expect(await group.boundingBox()).toEqual(dimensions);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+
+  for (const width of [320, 1440]) test(`accessible glass selection across palettes ${theme} ${width}px`, async ({ page }) => {
+    test.setTimeout(60000);
+    await page.setViewportSize({ width, height: 900 });
+    for (const palette of ["reference", "carnival", "electric", "sorbet", "regatta", "meadow"]) {
+      await page.goto(`/desk.html?theme=${theme}&palette=${palette}#health/pace`);
+      const modes = page.getByRole("group", { name: "Pace workout type" });
+      const selected = modes.getByRole("button", { name: "Speed", exact: true });
+      const inactive = modes.getByRole("button", { name: "Long", exact: true });
+      await expect(selected).toHaveAttribute("aria-pressed", "true");
+      await expectControlContrast(page, selected);
+      await expectControlContrast(page, inactive);
+      const fill = await selected.evaluate(element => getComputedStyle(element).backgroundColor);
+      await selected.hover();
+      await expect(selected).toHaveCSS("background-color", fill);
+      await expect(selected).toHaveCSS("text-decoration-line", "none");
+      await expectControlContrast(page, selected);
+      await page.keyboard.press("Tab");
+      await selected.focus();
+      await expect(selected).toHaveCSS("outline-style", "solid");
+      await expect(selected).toHaveCSS("background-color", fill);
+      await inactive.press("Space");
+      await expect(inactive).toHaveAttribute("aria-pressed", "true");
+      await expect(selected).toHaveAttribute("aria-pressed", "false");
+      await expectControlContrast(page, inactive);
+    }
+  });
+
+  test(`accessible glass fallbacks retain readable disabled controls ${theme}`, async ({ page, browserName }) => {
+    await page.goto(`/desk.html?theme=${theme}#settings/thresholds`);
+    const control = page.getByRole("button", { name: "Restore defaults", exact: true });
+    await expectControlContrast(page, control);
+    await control.evaluate(element => { element.disabled = true; });
+    await expect(control).toHaveCSS("opacity", "1");
+    await expect(control).toHaveCSS("border-style", "dashed");
+    await expectControlContrast(page, control);
+    await control.evaluate(element => { element.disabled = false; });
+    for (const preferences of [{ contrast: "more", forcedColors: "none" }, { contrast: "no-preference", forcedColors: "active" }]) {
+      await page.emulateMedia(preferences);
+      await control.hover();
+      await expect(control).toHaveCSS("backdrop-filter", "none");
+      await expect(control).toHaveCSS("background-image", "none");
+      await expectControlContrast(page, control);
+      await control.focus();
+      await expect(control).toHaveCSS("outline-style", "solid");
+    }
+    if (browserName === "chromium") {
+      await page.emulateMedia({ contrast: "no-preference", forcedColors: "none" });
+      const session = await page.context().newCDPSession(page);
+      await session.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+      expect(await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches)).toBe(true);
+      await control.hover();
+      await expect(control).toHaveCSS("backdrop-filter", "none");
+      await expect(control).toHaveCSS("background-image", "none");
+      await expectControlContrast(page, control);
+      await session.detach();
+    }
   });
 
   test(`reference buttons restore selected fill after touch ${theme}`, async ({ browser }, testInfo) => {
@@ -712,14 +908,15 @@ for (const theme of ["light", "dark"]) {
     });
     await expect(control).toBeVisible();
     await page.mouse.move(0, 0);
-    await expect.poll(alpha).toBe(1);
+    await expect.poll(alpha).toBeGreaterThan(0);
+    await expect.poll(alpha).toBeLessThan(1);
     await control.hover();
-    await expect.poll(alpha).toBe(1);
+    await expect.poll(alpha).toBeLessThan(1);
     await expect(control).toHaveCSS("backdrop-filter", /blur\(12px\)/);
     const hoveredShadow = await control.evaluate(element => getComputedStyle(element).boxShadow);
     await page.mouse.down();
     await expect(control).toHaveCSS("scale", "0.98");
-    await expect.poll(alpha).toBe(1);
+    await expect.poll(alpha).toBeLessThan(1);
     await expect(control).not.toHaveCSS("box-shadow", hoveredShadow);
     await page.mouse.move(0, 0);
     await page.mouse.up();
@@ -912,7 +1109,7 @@ for (const theme of ["light", "dark"]) {
     await expect(navigation).toHaveAttribute("aria-current", "page");
     await expect(navigation).toHaveCSS("--aura-strength", "0%");
     await expect(control).toHaveCSS("--aura-strength", "0%");
-    await expect(control).toHaveCSS("box-shadow", "none");
+    await expect(control).toHaveCSS("box-shadow", /inset/);
     await context.close();
   });
 
@@ -927,15 +1124,11 @@ for (const theme of ["light", "dark"]) {
     for (const control of controls) {
       await page.mouse.move(0, 0);
       await expect(control).toHaveCSS("--aura-strength", "0%");
-      if (await control.evaluate(element => element.matches(".desk-button, .desk-navigation a"))) {
-        const selected = await control.evaluate(element => element.matches('[aria-current], [aria-pressed="true"]'));
-        if (selected) expect(await control.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("inset");
-        else await expect(control).toHaveCSS("box-shadow", /inset/);
-        await expect(control).toHaveCSS("backdrop-filter", "none");
-        if (!selected) expect(await control.evaluate(element => getComputedStyle(element).backgroundImage)).toContain("linear-gradient");
-      } else {
-        await expect(control).toHaveCSS("box-shadow", "none");
-      }
+      const selected = await control.evaluate(element => element.matches('[aria-current], [aria-pressed="true"]'));
+      if (selected) expect(await control.evaluate(element => getComputedStyle(element).boxShadow)).not.toContain("inset");
+      else await expect(control).toHaveCSS("box-shadow", /inset/);
+      await expect(control).toHaveCSS("backdrop-filter", "none");
+      if (!selected) expect(await control.evaluate(element => getComputedStyle(element).backgroundImage)).toContain("linear-gradient");
       await control.hover();
       await expect(control).not.toHaveCSS("background-image", "none");
       await expect(control).not.toHaveCSS("box-shadow", "none");
@@ -1196,6 +1389,29 @@ for (const theme of ["light", "dark", "system"]) {
   });
 }
 
+for (const width of [320, 1440]) test(`race estimate spacing and dialog focus at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto("/desk.html#pace");
+  const estimates = page.getByRole("region", { name: "Training race estimates", exact: true });
+  const table = estimates.locator(".data-table-scroll");
+  const basis = estimates.getByRole("button", { name: "Estimate basis", exact: true });
+  await expect(basis).toBeVisible();
+  const tableBounds = await table.boundingBox();
+  const basisBounds = await basis.boundingBox();
+  expect(basisBounds.y - (tableBounds.y + tableBounds.height)).toBeGreaterThanOrEqual(16);
+  await estimates.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("race-estimates.png") });
+  await basis.click();
+  const dialog = page.getByRole("dialog", { name: "Estimate basis", exact: true });
+  const close = dialog.getByRole("button", { name: "Close Estimate basis", exact: true });
+  await expect(close).toBeFocused();
+  await expect(dialog.getByRole("heading")).not.toHaveAttribute("tabindex");
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(basis).toBeFocused();
+});
+
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 768, 1440, 2560]) {
     test(`Prism overlay controls and corner alignment ${theme} ${width}px`, async ({ page }, testInfo) => {
@@ -1204,14 +1420,18 @@ for (const theme of ["light", "dark"]) {
       const status = page.locator(".adjustment-status");
       await expect(status).toHaveText("No pending adjustments");
       await expect(status).toHaveCSS("font-size", "13px");
+      const estimates = page.getByRole("region", { name: "Training race estimates", exact: true });
+      const tableBounds = await estimates.locator(".data-table-scroll").boundingBox();
+      const basisBounds = await estimates.getByRole("button", { name: "Estimate basis", exact: true }).boundingBox();
+      expect(basisBounds.y - (tableBounds.y + tableBounds.height)).toBeGreaterThanOrEqual(16);
       const opener = page.getByRole("button", { name: "About pace insights", exact: true });
       await opener.click();
       const dialog = page.getByRole("dialog", { name: "About pace insights", exact: true });
       const close = dialog.getByRole("button", { name: "Close About pace insights", exact: true });
-      await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).toBeFocused();
-      await expect(close.locator(".control-tooltip")).toHaveCSS("visibility", "hidden");
-      await page.keyboard.press("Tab");
       await expect(close).toBeFocused();
+      await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).not.toHaveAttribute("tabindex");
+      await page.keyboard.press("Tab");
+      expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
       await expect(opener).toBeFocused();
@@ -1244,7 +1464,7 @@ for (const theme of ["light", "dark"]) {
       await page.screenshot({ path: testInfo.outputPath("dialog.png") });
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
       await expect(notice).toHaveCount(0);
-      await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).toBeFocused();
+      await expect(close).toBeFocused();
       await close.click();
       await expect(opener).toBeFocused();
       await page.goto(`/desk.html?theme=${theme}#training`);
@@ -1263,23 +1483,140 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
+for (const width of [320, 1199, 1200, 1440]) {
+  test(`Prism Pace overview ordering and populated forecast ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/desk.html#health/pace");
+    const pace = page.getByRole("region", { name: "Pace insights", exact: true });
+    const overview = pace.locator(".pace-overview");
+    const progress = overview.locator(":scope > .pace-progress");
+    const forecast = overview.locator(":scope > .pace-forecast");
+    await expect(overview).toHaveCSS("display", "grid");
+    expect(await overview.evaluate(element => [...element.children].slice(0, 2).map(child => [child.classList.contains("pace-progress"), child.classList.contains("pace-forecast")]))).toEqual([[true, false], [false, true]]);
+    await expect(progress.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible();
+    await expect(progress.locator(".pace-point-session")).toHaveCount(5);
+    await expect(progress.getByRole("group", { name: "Inspect pace session" }).getByRole("button")).toHaveCount(5);
+    await expect(progress.getByRole("region", { name: "Selected pace session" }).locator(".pace-rep-summary")).toHaveText("Measured reps within target: 1 / 2");
+    const estimates = forecast.getByRole("region", { name: "Training race estimates", exact: true });
+    await expect(estimates).toBeVisible();
+    const table = estimates.locator("table");
+    await expect(table).toHaveCount(1);
+    for (const name of ["Distance", "Today", "Race day projection"]) {
+      await expect(table.getByRole("columnheader", { name, exact: true })).toHaveCount(1);
+    }
+    expect(await table.locator("thead").evaluate(element => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return (box.width <= 1 && box.height <= 1) || style.clip === "rect(0px, 0px, 0px, 0px)" || style.clipPath === "inset(50%)";
+    })).toBe(true);
+    const rows = table.locator("tbody tr");
+    await expect(rows).toHaveCount(4);
+    for (const [index, distance] of ["5 km", "10 km", "Half marathon", "Marathon"].entries()) {
+      const row = rows.nth(index);
+      const heading = row.getByRole("rowheader", { name: distance, exact: true });
+      await expect(heading).toBeVisible();
+      const cells = row.locator("td");
+      await expect(cells).toHaveCount(2);
+      await expect(row.getByRole("cell")).toHaveCount(2);
+      const headingBox = await heading.boundingBox();
+      for (const [cellIndex, label] of ["Today", "Race day projection"].entries()) {
+        const cell = cells.nth(cellIndex);
+        await expect(cell.getByText(label, { exact: true })).toBeVisible();
+        const cellBox = await cell.boundingBox();
+        expect(cellBox.y).toBeGreaterThanOrEqual(headingBox.y + headingBox.height - 1);
+      }
+      if (index > 0) {
+        const previous = await rows.nth(index - 1).boundingBox();
+        const current = await row.boundingBox();
+        expect(current.y).toBeGreaterThanOrEqual(previous.y + previous.height - 1);
+      }
+    }
+    await expect(rows.first().locator("td[data-seconds]")).toHaveAccessibleName("21m 02s");
+    await page.evaluate(() => document.fonts.ready);
+    const progressBox = await progress.boundingBox();
+    const forecastBox = await forecast.boundingBox();
+    if (width >= 1200) {
+      expect(forecastBox.x).toBeGreaterThanOrEqual(progressBox.x + progressBox.width - 1);
+      expect(Math.abs(forecastBox.y - progressBox.y)).toBeLessThanOrEqual(1);
+    } else {
+      expect(forecastBox.y).toBeGreaterThanOrEqual(progressBox.y + progressBox.height - 1);
+      expect(Math.abs(forecastBox.x - progressBox.x)).toBeLessThanOrEqual(1);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    if ([320, 1440].includes(width)) {
+      await progress.getByRole("heading", { name: "Recent sessions", exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("pace-overview-populated.png") });
+      await progress.getByRole("region", { name: "Selected pace session" }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("pace-selection-populated.png") });
+      await rows.first().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("pace-forecast-top-populated.png") });
+      await rows.last().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("pace-forecast-bottom-populated.png") });
+    }
+  });
+}
+
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 768, 1440]) {
-    test(`Prism Health tabs and unified Pace layout ${theme} ${width}px`, async ({ page }, testInfo) => {
+    test(`Prism Pace workspace navigation and layout ${theme} ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 844 });
-      await page.goto(`/desk.html?theme=${theme}#health`);
-      const tabs = page.getByRole("navigation", { name: "Health view" });
-      if (width <= 390) {
-        await expect.poll(() => tabs.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
-        await tabs.evaluate(element => { element.scrollLeft = element.scrollWidth; });
-        await expect.poll(() => tabs.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
-        await expect(tabs.getByRole("link", { name: "Milestones", exact: true })).toBeInViewport();
-      }
-      await tabs.getByRole("link", { name: "Pace insights", exact: true }).focus();
+      await page.goto(`/desk.html?theme=${theme}#training`);
+      const navigation = page.getByRole("navigation", { name: "Workspaces" });
+      const paceLink = navigation.getByRole("link", { name: "Pace insights", exact: true });
+      await paceLink.focus();
+      await expect(paceLink).toBeFocused();
       await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/#pace$/);
+      await expect(paceLink).toHaveAttribute("aria-current", "page");
       const pace = page.getByRole("region", { name: "Pace insights", exact: true });
       await expect(pace).toBeVisible();
-      await expect(pace).toHaveCSS("row-gap", "20px");
+      const picker = pace.getByRole("group", { name: "Inspect pace session" });
+      const dates = picker.getByRole("button");
+      await expect(dates).toHaveCount(5);
+      if (width <= 390) {
+        await expect.poll(() => picker.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+        await picker.evaluate(element => { element.scrollLeft = 0; });
+        await dates.first().focus();
+        await expect(dates.first()).toBeFocused();
+        await page.keyboard.press("Enter");
+        const measurements = await picker.evaluate(async element => {
+          const geometry = () => {
+            const bounds = element.getBoundingClientRect();
+            const last = element.querySelector("button:last-of-type").getBoundingClientRect();
+            return {
+              scrollLeft: element.scrollLeft,
+              maxScrollLeft: element.scrollWidth - element.clientWidth,
+              picker: { left: bounds.left + element.clientLeft, right: bounds.left + element.clientLeft + element.clientWidth, top: bounds.top, bottom: bounds.bottom },
+              last: { left: last.left, right: last.right, top: last.top, bottom: last.bottom },
+              viewport: { width: innerWidth, height: innerHeight },
+              workspaceScrollTop: document.getElementById("workspace").scrollTop,
+            };
+          };
+          const afterSelection = geometry();
+          element.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+          element.scrollLeft = element.scrollWidth;
+          const afterScroll = geometry();
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return { afterSelection, afterScroll, afterFrames: geometry() };
+        });
+        await testInfo.attach("pace-picker-scroll-geometry", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
+        const { afterScroll, afterFrames } = measurements;
+        const context = JSON.stringify(measurements);
+        await expect(dates.first()).toHaveAttribute("aria-pressed", "true");
+        expect(afterScroll.scrollLeft, context).toBeGreaterThan(0);
+        expect(afterScroll.scrollLeft, context).toBeGreaterThanOrEqual(afterScroll.maxScrollLeft - 1);
+        await expect.poll(() => picker.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+        expect(afterFrames.scrollLeft, context).toBeGreaterThanOrEqual(afterFrames.maxScrollLeft - 1);
+        expect(afterFrames.last.left, context).toBeGreaterThanOrEqual(afterFrames.picker.left - 1);
+        expect(afterFrames.last.right, context).toBeLessThanOrEqual(afterFrames.picker.right + 1);
+        await expect(dates.last()).toBeInViewport();
+        await dates.last().focus();
+        await expect(dates.last()).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(dates.last()).toHaveAttribute("aria-pressed", "true");
+      }
+      await expect(pace.locator(".pace-overview")).toHaveCSS("display", "grid");
+      await expect(pace.locator(".pace-progress")).toHaveCSS("row-gap", "16px");
       await expect(pace.locator(".pace-mode")).toHaveCSS("margin-bottom", "0px");
       await expect(pace.locator(".pace-session-picker")).toHaveCSS("margin-top", "0px");
       await expect(pace.locator(".pace-session-picker")).toHaveCSS("overflow-x", "auto");
@@ -1972,7 +2309,7 @@ for (const width of [320, 375, 390, 820, 1440]) {
     const icon = brand.locator(".desk-brand-icon");
     await expect(icon).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
+    await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-family", /^"?Young Serif"?, Georgia, serif$/);
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-size", "17px");
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-weight", "700");
     await expect(brand.locator(".desk-brand-name")).toHaveCSS("font-synthesis", "none");
@@ -2274,6 +2611,36 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
+for (const width of [320, 393, 820, 1440]) {
+  test(`activity date filters fit without overlap at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 852 });
+    await page.goto("/desk.html#journal");
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    const filters = page.locator("#activity-filters");
+    const from = filters.getByLabel("From", { exact: true });
+    const until = filters.getByLabel("Until", { exact: true });
+    await from.fill("2026-01-01");
+    await until.fill("2026-12-31");
+    for (const field of [from, until]) {
+      const geometry = await field.evaluate(element => {
+        const field = element.getBoundingClientRect();
+        const label = element.parentElement.getBoundingClientRect();
+        return { width: field.width, left: field.left - label.left, right: field.right - label.right };
+      });
+      expect(geometry.width).toBeGreaterThanOrEqual(180);
+      expect(geometry.left).toBeGreaterThanOrEqual(-1);
+      expect(geometry.right).toBeLessThanOrEqual(1);
+    }
+    const first = await from.boundingBox();
+    const second = await until.boundingBox();
+    expect(first.x + first.width <= second.x + 1 || first.y + first.height <= second.y + 1).toBe(true);
+    await filters.getByRole("button", { name: "Reset filters", exact: true }).click();
+    await expect(from).toHaveValue("");
+    await expect(until).toHaveValue("");
+    if (width === 393) await filters.screenshot({ path: testInfo.outputPath("activity-date-filters.png") });
+  });
+}
+
 test("Prism preview uses native date shapes and populated initial progress", async ({ page }) => {
   await page.goto("/desk.html#training");
   await expect(page.locator(".session-tile:visible").first()).toBeVisible();
@@ -2375,7 +2742,7 @@ for (const theme of ["light", "dark"]) {
     expect(rendering.auras).toBeGreaterThan(0);
     expect(rendering.auras).toBeLessThanOrEqual(8);
     expect(rendering.boundedAuras).toBe(true);
-    expect(rendering.fontRequests.some(resource => resource.url.includes("outfit"))).toBe(true);
+    expect(rendering.fontRequests.some(resource => resource.url.includes("young-serif"))).toBe(true);
     const screenshot = await page.screenshot({ path: testInfo.outputPath("settled.png") });
     const pixels = await page.evaluate(async source => {
       const image = new Image();
@@ -2444,12 +2811,12 @@ for (const width of [390, 820, 1440]) {
         return {
           overflow: document.documentElement.scrollWidth > innerWidth,
           font: getComputedStyle(document.querySelector("h1")).fontFamily,
-          loaded: [...document.fonts].some(font => font.family === "Outfit" && font.status === "loaded"),
+          loaded: [...document.fonts].some(font => font.family === "Young Serif" && font.status === "loaded"),
           separated: workspace.left >= rail.right,
         };
       });
       expect(geometry.overflow).toBe(false);
-      expect(geometry.font).toContain("Outfit");
+      expect(geometry.font).toContain("Young Serif");
       expect(geometry.loaded).toBe(true);
       if (width > 800) expect(geometry.separated).toBe(true);
       await page.screenshot({ path: testInfo.outputPath("reference.png"), fullPage: true });

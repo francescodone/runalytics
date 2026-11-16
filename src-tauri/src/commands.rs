@@ -36,8 +36,9 @@ fn get_provider(state: &AppState, kind: ProviderKind) -> Result<Arc<dyn Provider
 // interaction that can move one of them (create, sync, erase, abort, move a
 // session) reports each mirror as `working` then `done`/`error` on the
 // `plan://stage` event, so the toast can show every line and only start its
-// self-dismiss countdown once all of them have settled. The frontend owns
-// the labels; `target` is the stable contract.
+// self-dismiss countdown once all of them have settled. Full sync announces
+// its applicable targets at the start; a target skipped later is removed.
+// The frontend owns the labels; `target` is the stable contract.
 
 #[derive(Clone, Copy)]
 enum Stage {
@@ -66,6 +67,13 @@ impl Stage {
     }
 }
 
+#[derive(serde::Serialize)]
+struct SyncStageLine {
+    target: &'static str,
+    state: &'static str,
+    detail: Option<String>,
+}
+
 /// Marks the operation open on the toast for the lifetime of the command.
 /// `commit` before returning `Ok`; the `Drop` covers every early `?` so the
 /// toast always learns the operation has finished, even on failure paths
@@ -74,6 +82,7 @@ struct OpGuard {
     app: tauri::AppHandle,
     op: &'static str,
     ok: bool,
+    sync_lines: Option<Vec<SyncStageLine>>,
 }
 
 impl OpGuard {
@@ -83,7 +92,47 @@ impl OpGuard {
             app: app.clone(),
             op,
             ok: false,
+            sync_lines: None,
         }
+    }
+
+    fn with_targets(app: &tauri::AppHandle, op: &'static str, targets: &[Stage]) -> Self {
+        let guard = Self {
+            app: app.clone(),
+            op,
+            ok: false,
+            sync_lines: Some(targets.iter().map(|target| SyncStageLine {
+                target: target.target(),
+                state: "waiting",
+                detail: None,
+            }).collect()),
+        };
+        guard.emit(Stage::Op, "working", None);
+        guard
+    }
+
+    fn emit(&self, target: Stage, state: &str, detail: Option<String>) {
+        if let Some(lines) = &self.sync_lines {
+            // A window joining mid-sync can reconstruct the complete list from any event.
+            let _ = self.app.emit(
+                "plan://stage",
+                serde_json::json!({ "op": self.op, "target": target.target(), "state": state, "detail": detail, "lines": lines }),
+            );
+        } else {
+            stage(&self.app, self.op, target, state, detail);
+        }
+    }
+
+    fn update(&mut self, target: Stage, state: &'static str, detail: Option<String>) {
+        if let Some(lines) = &mut self.sync_lines {
+            let Some(index) = lines.iter().position(|line| line.target == target.target()) else { return; };
+            if state == "skipped" {
+                lines.remove(index);
+            } else {
+                lines[index] = SyncStageLine { target: target.target(), state, detail: detail.clone() };
+            }
+        }
+        self.emit(target, state, detail);
     }
 
     fn commit(&mut self) {
@@ -91,15 +140,30 @@ impl OpGuard {
     }
 }
 
+fn sync_stage_targets(strava: bool, gist: bool) -> Vec<Stage> {
+    let mut targets = vec![Stage::Coros, Stage::Db, Stage::Calendar];
+    if strava { targets.push(Stage::Strava); }
+    if gist { targets.push(Stage::Gist); }
+    targets
+}
+
+#[cfg(test)]
+mod sync_stage_tests {
+    use super::sync_stage_targets;
+
+    #[test]
+    fn sync_stage_targets_include_only_applicable_integrations_in_work_order() {
+        let targets = |strava, gist| sync_stage_targets(strava, gist).into_iter().map(|target| target.target()).collect::<Vec<_>>();
+        assert_eq!(targets(false, false), ["coros", "db", "calendar"]);
+        assert_eq!(targets(true, false), ["coros", "db", "calendar", "strava"]);
+        assert_eq!(targets(false, true), ["coros", "db", "calendar", "gist"]);
+        assert_eq!(targets(true, true), ["coros", "db", "calendar", "strava", "gist"]);
+    }
+}
+
 impl Drop for OpGuard {
     fn drop(&mut self) {
-        stage(
-            &self.app,
-            self.op,
-            Stage::Op,
-            if self.ok { "done" } else { "error" },
-            None,
-        );
+        self.emit(Stage::Op, if self.ok { "done" } else { "error" }, None);
     }
 }
 
@@ -264,7 +328,10 @@ pub async fn run_full_sync(
     // Only one sync at a time; a second caller gets the first one's result
     // by simply waiting on the same lock below.
     let _guard = state.sync_lock.lock().await;
-    let mut op = OpGuard::new(app, "sync");
+    let strava_stage = crate::strava::sync_stage_enabled(&state.store);
+    let gist_stage = plan_sync::automatic_push_will_run(state);
+    let targets = sync_stage_targets(strava_stage, gist_stage);
+    let mut op = OpGuard::with_targets(app, "sync", &targets);
     state.syncing.store(true, Ordering::SeqCst);
     let _ = app.emit("sync://started", ());
     if plan_sync::refresh(state).await.unwrap_or(false) {
@@ -273,17 +340,17 @@ pub async fn run_full_sync(
     // The download streams straight into the database, so both the provider
     // read and the local write are in flight for the whole inner sync; they
     // settle together when it returns.
-    stage(app, "sync", Stage::Coros, "working", None);
-    stage(app, "sync", Stage::Db, "working", None);
+    op.update(Stage::Coros, "working", None);
+    op.update(Stage::Db, "working", None);
     let mut out = run_full_sync_inner(app, state, provider).await;
     match &out {
         Ok(_) => {
-            stage(app, "sync", Stage::Coros, "done", None);
-            stage(app, "sync", Stage::Db, "done", None);
+            op.update(Stage::Coros, "done", None);
+            op.update(Stage::Db, "done", None);
         }
         Err(error) => {
-            stage(app, "sync", Stage::Coros, "error", Some(error.to_string()));
-            stage(app, "sync", Stage::Db, "error", Some(error.to_string()));
+            op.update(Stage::Coros, "error", Some(error.to_string()));
+            op.update(Stage::Db, "error", Some(error.to_string()));
         }
     }
     // Every sync ends by republishing the calendar: regenerate the .ics
@@ -291,25 +358,25 @@ pub async fn run_full_sync(
     // publishing is configured. Report the outcome in the sync summary so
     // the user can see the calendar actually moved, not just that nothing
     // crashed.
-    stage(app, "sync", Stage::Calendar, "working", None);
+    op.update(Stage::Calendar, "working", None);
     let calendar_message = match calendar_publish::refresh(state).await {
         Err(error) => {
-            stage(app, "sync", Stage::Calendar, "error", Some(error.to_string()));
+            op.update(Stage::Calendar, "error", Some(error.to_string()));
             Some(format!("calendar refresh failed: {error}"))
         }
         Ok(_) => {
             let config = calendar_publish::load(&state.data_dir).ok();
             match config.as_ref().and_then(|config| config.last_error.clone()) {
                 Some(error) => {
-                    stage(app, "sync", Stage::Calendar, "error", Some(error.clone()));
+                    op.update(Stage::Calendar, "error", Some(error.clone()));
                     Some(format!("calendar publish failed: {error}"))
                 }
                 None if config.as_ref().is_some_and(|config| config.enabled) => {
-                    stage(app, "sync", Stage::Calendar, "done", None);
+                    op.update(Stage::Calendar, "done", None);
                     Some("calendar published".into())
                 }
                 None => {
-                    stage(app, "sync", Stage::Calendar, "done", None);
+                    op.update(Stage::Calendar, "done", None);
                     None
                 }
             }
@@ -322,15 +389,18 @@ pub async fn run_full_sync(
             eprintln!("[calendar] {message}");
         }
     }
+    if strava_stage { op.update(Stage::Strava, "working", None); }
     match crate::strava::sync(&state.store).await {
-        Ok(message) => {
+        Ok((message, attempted)) => {
+            if strava_stage {
+                op.update(Stage::Strava, if attempted { "done" } else { "skipped" }, (!message.is_empty()).then(|| message.clone()));
+            }
             if !message.is_empty() {
-                stage(app, "sync", Stage::Strava, "done", Some(message.clone()));
                 if let Ok(report) = &mut out { report.messages.push(message); }
             }
         }
         Err(error) => {
-            stage(app, "sync", Stage::Strava, "error", Some(error.to_string()));
+            if strava_stage { op.update(Stage::Strava, "error", Some(error.to_string())); }
             if let Ok(report) = &mut out {
                 report.messages.push("Strava descriptions could not finish. Check the Strava connection in Settings.".into());
             }
@@ -341,10 +411,12 @@ pub async fn run_full_sync(
     // so the other device's next pull sees it. Silent when sync is off, and
     // idempotent: pushing an unchanged revision is what keeps the channel
     // honest about who is current.
+    if gist_stage { op.update(Stage::Gist, "working", None); }
     match plan_sync::try_push_if_enabled(state).await {
-        None => {}
-        Some(Ok(_)) => stage(app, "sync", Stage::Gist, "done", None),
-        Some(Err(error)) => stage(app, "sync", Stage::Gist, "error", Some(error.to_string())),
+        None if gist_stage => op.update(Stage::Gist, "skipped", None),
+        Some(Ok(_)) if gist_stage => op.update(Stage::Gist, "done", None),
+        Some(Err(error)) if gist_stage => op.update(Stage::Gist, "error", Some(error.to_string())),
+        _ => {}
     }
     state.syncing.store(false, Ordering::SeqCst);
     if out.is_ok() {

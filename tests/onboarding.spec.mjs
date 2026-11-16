@@ -347,7 +347,7 @@ for (const width of [320, 1440]) test(`wizard steps fit and remain reachable at 
     await page.reload();
     const heading = page.locator('.onboarding-step[data-step-state="present"] h1');
     await expect(heading).toBeVisible();
-    await expect(heading).toBeFocused();
+    await expect(page.locator('.onboarding-step[data-step-state="present"]')).toBeFocused();
     await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe(step);
     const next = page.locator(".onboarding-actions").getByRole("button", { name: /Continue|Build plan/ });
     await next.scrollIntoViewIfNeeded();
@@ -367,7 +367,11 @@ for (const width of [320, 1440]) test(`setup viewport reveals keep long previews
   await page.goto("/desk.html?noPlan#training");
   const heading = page.locator('.onboarding-step[data-step-state="present"] h1');
   if (width > 800) await expect(heading).toHaveAttribute("data-reveal", "settled");
-  else await expect(heading).toBeVisible();
+  else {
+    await expect(heading).toBeVisible();
+    await expect(heading).toHaveCSS("animation-name", "none");
+    await expect(page.locator('.onboarding-step[data-step-state="present"] p').first()).toHaveCSS("animation-name", "none");
+  }
   const week = page.locator(".onboarding-step details").nth(1);
   await week.locator("summary").click();
   const row = week.locator("li").last();
@@ -402,7 +406,8 @@ for (const width of [320, 1440]) test(`step transitions animate in and out while
   expect(values.old).toBe("none");
   expect(values.animations).toBeGreaterThan(0);
   await expect(outgoing).toHaveCount(0);
-  await expect(incoming.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(incoming).toHaveAccessibleName("Connect your watch");
+  await expect(incoming).toBeFocused();
   await expect(actions).toBeVisible();
   await expect(incoming).toHaveCSS("transform", "none");
   await expect.poll(() => incoming.evaluate(element => Number(getComputedStyle(element).opacity))).toBe(1);
@@ -421,7 +426,7 @@ test("setup choices use staggered blur on departure", async ({ page }) => {
   expect(timings.map(timing => timing.name)).toEqual(["setup-focus-out", "setup-focus-out", "setup-focus-out"]);
   expect(new Set(timings.map(timing => timing.delay)).size).toBe(3);
   await expect(outgoing).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Training method" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Training method", exact: true })).toBeFocused();
 });
 
 for (const step of ["transfer-config", "watch", "strava-config", "publishing", "calendar-config", "devices-config", "preview"]) test(`nested setup content fades when leaving ${step}`, async ({ page }) => {
@@ -442,7 +447,7 @@ for (const step of ["transfer-config", "watch", "strava-config", "publishing", "
     expect(await copy.evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).m42)).toBeLessThan(0);
   }
   await expect(outgoing).toHaveCount(0);
-  await expect(page.locator('.onboarding-step[data-step-state="present"] h1')).toBeFocused();
+  await expect(page.locator('.onboarding-step[data-step-state="present"]')).toBeFocused();
 });
 
 test("weekday choices stagger in top-to-bottom order", async ({ page }) => {
@@ -469,7 +474,7 @@ test("reduced motion switches steps immediately and preserves keyboard focus", a
   await page.getByLabel("Name", { exact: true }).fill("Ada");
   await page.getByRole("button", { name: "Continue", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Connect your watch", exact: true })).toBeFocused();
   await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveCount(0);
   await expect(page.locator('.onboarding-step[data-step-state="present"]')).toHaveCSS("opacity", "1");
 });
@@ -486,13 +491,15 @@ for (const width of [320, 1440]) test(`each wizard step transitions in both dire
     if (await page.getByLabel("Name", { exact: true }).isVisible()) await page.getByLabel("Name", { exact: true }).fill("Ada");
     await page.locator(".onboarding-actions").getByRole("button", { name: "Continue", exact: true }).click();
     if (width > 800) await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
-    await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("heading", { name: heading, exact: true })).toBeFocused();
+    await expect(page.locator('.onboarding-step[data-step-state="present"]')).toHaveAccessibleName(heading);
+    await expect(page.locator('.onboarding-step[data-step-state="present"]')).toBeFocused();
     await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveCount(0);
   }
   for (const heading of expected.slice(0, -1).reverse()) {
     await page.locator(".onboarding-actions").getByRole("button", { name: "Back", exact: true }).click();
     if (width > 800) await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveAttribute("inert", "");
-    await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("heading", { name: heading, exact: true })).toBeFocused();
+    await expect(page.locator('.onboarding-step[data-step-state="present"]')).toHaveAccessibleName(heading);
+    await expect(page.locator('.onboarding-step[data-step-state="present"]')).toBeFocused();
     await expect(page.locator('.onboarding-step[data-step-state="exiting"]')).toHaveCount(0);
   }
 });
@@ -507,7 +514,7 @@ test("configuration controls remain reachable on a short mobile viewport", async
   await expect(field).toBeInViewport();
   await expect(page.getByRole("button", { name: "Save calendar settings" })).toBeVisible();
   await page.locator(".onboarding-actions").getByRole("button", { name: "Not now" }).click();
-  await expect(page.getByRole("heading", { name: "Sync across devices?" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Sync across devices?", exact: true })).toBeFocused();
   expect(await page.locator(".onboarding-shell").evaluate(element => element.scrollTop)).toBe(0);
 });
 
@@ -533,7 +540,7 @@ test("mobile setup shows sync loading through calendar work and preserves the st
   await page.evaluate(() => window.__deskEmit("plan://stage", { op: "sync", target: "calendar", state: "working" }));
   await expect(page.locator(".onboarding-loading").getByRole("status")).toContainText("Updating calendar");
   await page.evaluate(() => window.__finishSync());
-  await expect(page.getByRole("heading", { name: "Connect your watch" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Connect your watch", exact: true })).toBeFocused();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
 });
 
@@ -562,7 +569,7 @@ test("background sync preserves an unfinished mobile answer", async ({ page }) =
   await expect(page.locator(".onboarding-loading").getByRole("status")).toBeVisible();
   await page.evaluate(() => window.__deskEmit("sync://completed", { ok: false }));
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Ada");
-  await expect(page.getByRole("heading", { name: "What should we call you?" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "What should we call you?", exact: true })).toBeFocused();
 });
 
 test("failed plan creation restores the preview after loading", async ({ page }) => {
@@ -584,7 +591,7 @@ test("failed plan creation restores the preview after loading", async ({ page })
   await expect(page.locator(".onboarding-loading").getByRole("status")).toContainText("Building your baseline");
   await page.evaluate(() => window.__finishCreate());
   await expect(page.getByRole("alert")).toContainText("Plan could not be saved");
-  await expect(page.getByRole("heading", { name: "Your plan preview" })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Your plan preview", exact: true })).toBeFocused();
   await expect(page.getByRole("button", { name: "Build plan" })).toBeEnabled();
 });
 

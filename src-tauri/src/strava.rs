@@ -654,11 +654,13 @@ async fn process_job(client: &mut Client, store: &Store, athlete: i64, job: &Job
     }
 }
 
-pub async fn sync(store: &Store) -> Result<String> {
+/// Returns the summary and whether description updates were attempted.
+pub async fn sync(store: &Store) -> Result<(String, bool)> {
     let Ok(_guard) = operation().try_lock() else {
-        return Ok(
+        return Ok((
             "Strava connection is busy. Pending descriptions will retry on the next sync.".into(),
-        );
+            false,
+        ));
     };
     let result = sync_inner(store).await;
     if result.is_err() {
@@ -671,16 +673,8 @@ pub async fn sync(store: &Store) -> Result<String> {
     result
 }
 
-async fn sync_inner(store: &Store) -> Result<String> {
-    housekeeping(store, Utc::now().timestamp())?;
-    let Some(mut config) = credentials()? else {
-        return Ok(String::new());
-    };
-    let Some(tokens) = config.tokens.as_ref() else {
-        return Ok("Strava is not connected. Connect in Settings to update descriptions.".into());
-    };
-    let athlete = tokens.athlete_id;
-    let cutoff: Option<i64> = store
+fn sync_cutoff(store: &Store, athlete: i64) -> Result<Option<i64>> {
+    Ok(store
         .conn
         .lock()
         .unwrap()
@@ -690,9 +684,28 @@ async fn sync_inner(store: &Store) -> Result<String> {
             |row| row.get(0),
         )
         .optional()?
-        .flatten();
-    let Some(cutoff) = cutoff else {
-        return Ok(String::new());
+        .flatten())
+}
+
+pub(crate) fn sync_stage_enabled(store: &Store) -> bool {
+    store.conn.lock().unwrap().query_row(
+        "SELECT EXISTS(SELECT 1 FROM strava_accounts WHERE enabled=1 AND enabled_at IS NOT NULL)",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(true)
+}
+
+async fn sync_inner(store: &Store) -> Result<(String, bool)> {
+    housekeeping(store, Utc::now().timestamp())?;
+    let Some(mut config) = credentials()? else {
+        return Ok((String::new(), false));
+    };
+    let Some(tokens) = config.tokens.as_ref() else {
+        return Ok(("Strava is not connected. Connect in Settings to update descriptions.".into(), false));
+    };
+    let athlete = tokens.athlete_id;
+    let Some(cutoff) = sync_cutoff(store, athlete)? else {
+        return Ok((String::new(), false));
     };
     let now = Utc::now().timestamp();
     let queue_failed = enqueue(store, athlete, cutoff, now).is_err();
@@ -721,7 +734,7 @@ async fn sync_inner(store: &Store) -> Result<String> {
                 "Could not prepare paired descriptions. Try another watch sync.",
             ))
         } else {
-            record_sync_result(store, athlete, now)
+            record_sync_result(store, athlete, now).map(|message| (message, true))
         };
     }
     if tokens.expires_at <= now + 120 {
@@ -758,7 +771,7 @@ async fn sync_inner(store: &Store) -> Result<String> {
     if client.defer_until > now {
         store.conn.lock().unwrap().execute("UPDATE strava_exports SET next_attempt_at=max(next_attempt_at,?2) WHERE athlete_id=?1 AND status IN ('pending','waiting','retry')", params![athlete,client.defer_until])?;
     }
-    record_sync_result(store, athlete, now)
+    record_sync_result(store, athlete, now).map(|message| (message, true))
 }
 
 fn record_sync_result(store: &Store, athlete: i64, now: i64) -> Result<String> {
@@ -930,7 +943,7 @@ fn description_change(existing: &str, payload: &str, reference: &str) -> Descrip
         return DescriptionChange::Review;
     }
     let separator = if existing.is_empty() { "" } else { "\n\n" };
-    DescriptionChange::Append(format!("{existing}{separator}{payload}\n\n{reference}"))
+    DescriptionChange::Append(format!("{existing}{separator}{payload}"))
 }
 
 #[cfg(test)]
@@ -960,6 +973,20 @@ mod tests {
 
     fn outcome(store: &Store) -> (String, Option<i64>, String, i64) {
         store.conn.lock().unwrap().query_row("SELECT status,target_id,payload,next_attempt_at FROM strava_exports WHERE athlete_id=42 AND source_key='coros:one'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap()
+    }
+
+    #[test]
+    fn sync_stage_cutoff_requires_an_enabled_account_with_a_start_time() {
+        let (store, _) = fixture();
+        assert!(sync_stage_enabled(&store));
+        assert_eq!(sync_cutoff(&store, 42).unwrap(), Some(1));
+        assert_eq!(sync_cutoff(&store, 99).unwrap(), None);
+        store.conn.lock().unwrap().execute("UPDATE strava_accounts SET enabled=0 WHERE athlete_id=42", []).unwrap();
+        assert!(!sync_stage_enabled(&store));
+        assert_eq!(sync_cutoff(&store, 42).unwrap(), None);
+        store.conn.lock().unwrap().execute("UPDATE strava_accounts SET enabled=1,enabled_at=NULL WHERE athlete_id=42", []).unwrap();
+        assert!(!sync_stage_enabled(&store));
+        assert_eq!(sync_cutoff(&store, 42).unwrap(), None);
     }
 
     #[test]
@@ -1129,7 +1156,7 @@ mod tests {
         .await;
         process_job(&mut client, &store, 42, &job).await.unwrap();
         let bodies = server.await.unwrap();
-        assert_eq!(bodies, vec![serde_json::json!({"description":description})]);
+        assert_eq!(bodies, vec![serde_json::json!({"description": format!("My notes\n\n{}", job.payload)})]);
         let (state, target, payload, _) = outcome(&store);
         assert_eq!(
             (state.as_str(), target, payload.as_str()),
@@ -1395,9 +1422,21 @@ mod tests {
         else {
             panic!("expected append")
         };
-        assert!(description.starts_with("My notes\n\n"));
+        assert_eq!(description, format!("My notes\n\n{payload}"));
+        assert_eq!(
+            description_change("", payload, &reference),
+            DescriptionChange::Append(payload.into())
+        );
+        assert_eq!(
+            description_change(&description, payload, &reference),
+            DescriptionChange::Present
+        );
         assert_eq!(
             description_change(&description, "Changed prescription", &reference),
+            DescriptionChange::Review
+        );
+        assert_eq!(
+            description_change(&format!("{description}\n\n{reference}"), "Changed prescription", &reference),
             DescriptionChange::Present
         );
         assert_eq!(

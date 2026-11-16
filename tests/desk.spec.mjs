@@ -5,6 +5,93 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+for (const width of [320, 1440]) {
+  const theme = width === 320 ? "light" : "dark";
+  test(`workspace actions avoid generic duplicates at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto(`/desk.html?theme=${theme}#training/plan`);
+    if (width <= 800) await page.getByRole("button", { name: "Show details", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Device plan", exact: true })).toContainText("Up to date");
+    await expect(page.getByRole("link", { name: "Manage device sync", exact: true })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("plan-actions.png"), fullPage: true });
+
+    await page.getByRole("button", { name: "Settings", exact: true }).press("Enter");
+    await page.locator('.settings-directory a[href="#settings/devices"]').click();
+    await expect(page.getByText("Plan up to date", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "More options", exact: true }).click();
+    const syncCalls = () => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length);
+    const beforeSync = await syncCalls();
+    await page.getByRole("button", { name: "Sync now", exact: true }).click();
+    await expect.poll(syncCalls).toBeGreaterThan(beforeSync);
+
+    await page.getByRole("link", { name: "Pace insights", exact: true }).click();
+    await expect(page.locator(".pace-next")).toContainText("Next speed workout");
+    await expect(page.getByRole("button", { name: "View plan", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open activity review", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("pace-actions.png"), fullPage: true });
+    await page.getByRole("button", { name: "Open activity review", exact: true }).click();
+    await expect(page).toHaveURL(/#journal\/1$/);
+    await expect(page.getByRole("complementary", { name: "Activity review", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByRole("link", { name: "Training", exact: true }).click();
+    await page.getByRole("link", { name: "Plan", exact: true }).click();
+    await expect(page.locator(".plan-studio")).toBeVisible();
+  });
+
+  test(`empty plan has one guarded create action at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.complete", "1"));
+    await page.goto(`/desk.html?noPlan=1&theme=${theme}#training/plan`);
+    await expect(page.getByRole("heading", { name: "Give your training a direction", exact: true })).toBeVisible();
+    const create = page.getByRole("button", { name: "Create plan", exact: true });
+    await expect(create).toHaveCount(1);
+    await expect(create).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath("empty-plan-actions.png"), fullPage: true });
+    await create.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Create training plan", exact: true });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(create).toBeFocused();
+
+    await page.goto(`/desk.html?noPlan=1&noWatch=1&theme=${theme}#training/plan`);
+    await expect(create).toHaveCount(1);
+    await expect(create).toBeDisabled();
+    await page.getByRole("button", { name: "Connect COROS", exact: true }).click();
+    await expect(page.locator(".settings-editor h2").first()).toHaveText("Watch connection");
+  });
+}
+
+for (const [language, separator] of [["en", "."], ["fr", ","]]) {
+  test(`numeric presentation uses at most one decimal in ${language}`, async ({ page }) => {
+    await page.addInitScript(language => {
+      localStorage.setItem("runalytics.language", language);
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        if (command === "all_activities") return [{ ...result[0], distanceM: 1234.56789, durationS: 1234.56789 }];
+        if (command === "activity_detail") return { ...result, load: { ...result.load, ratio: 1.23456 } };
+        return result;
+      };
+    }, language);
+    await page.goto("/desk.html#health/milestones");
+    const milestone = page.locator(".milestone-list article").filter({ has: page.locator("progress[max='5']") }).first();
+    await expect(milestone.locator("small")).toContainText(`1${separator}2 / 5`);
+    expect(await milestone.locator("progress").evaluate(element => element.value)).toBeCloseTo(1.23456789, 8);
+    await expect(page.locator(".milestone-list article").filter({ has: page.locator("progress[max='21.1']") }).first().locator("small")).toContainText(`1${separator}2 / 21${separator}1`);
+    await expect(page.locator(".milestone-list article").filter({ has: page.locator("progress[max='10']") }).filter({ hasText: language === "en" ? "Ten hours logged" : "Dix heures enregistrées" }).locator("small")).toContainText(`0${separator}3 / 10`);
+    const values = await page.evaluate(async () => {
+      const { decimal, number, trainingMessage } = await import("/src/desk/i18n.ts");
+      return [decimal(12), decimal(12.34567), decimal(0), number(12.345, 2), trainingMessage("Recent load is 1.13×; Load ratio is 1.256. Version 1.234.")];
+    });
+    expect(values).toEqual(["12", `12${separator}3`, "0", `12${separator}3`, `Recent load is 1${separator}1×; Load ratio is 1${separator}3. Version 1.234.`]);
+    await page.goto("/desk.html#journal/1");
+    await expect(page.locator(".activity-review .desk-metric").first().locator("dd")).toContainText(`1${separator}2`);
+    await page.goto("/desk.html#journal/1/context");
+    await expect(page.locator(".activity-review .desk-metric").first().locator("dd")).toHaveText(`1${separator}2`);
+  });
+}
+
 for (const width of [320, 390, 820, 1440]) for (const setup of [false, true]) {
   test(`brand splash morphs into ${setup ? "setup" : "workspace"} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
@@ -13,7 +100,7 @@ for (const width of [320, 390, 820, 1440]) for (const setup of [false, true]) {
     const splash = page.locator(".brand-splash");
     await expect(splash).toHaveAttribute("data-phase", "intro");
     await expect(splash.locator(".brand-splash-wordmark > span")).toHaveCount(10);
-    await expect(splash.locator(".brand-splash-wordmark")).toHaveCSS("font-family", /^Outfit, "?Avenir Next"?, sans-serif$/);
+    await expect(splash.locator(".brand-splash-wordmark")).toHaveCSS("font-family", /^"?Young Serif"?, Georgia, serif$/);
     expect(await splash.locator("svg").innerHTML()).toBe(await page.locator("#desk-root .desk-brand-icon svg").innerHTML());
     await page.waitForFunction(() => {
       const letter = document.querySelector(".brand-splash-wordmark > span:nth-child(6)");
@@ -119,6 +206,37 @@ test("brand splash defers notifications without consuming their countdown", asyn
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("Background sync failed.");
   await expect(notice).toHaveCount(0, { timeout: 3000 });
+});
+
+for (const width of [320, 1440]) for (const ending of ["completion", "interruption"]) test(`brand splash defers achievement celebrations until ${ending} at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: width === 320 ? "light" : "dark" });
+  await page.addInitScript(() => {
+    window.__launchHidden = true;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => window.__launchHidden });
+    window.__celebrationVibrations = [];
+    navigator.vibrate = pattern => { window.__celebrationVibrations.push(pattern); return true; };
+  });
+  await page.goto(`/desk.html?theme=${width === 320 ? "light" : "dark"}#training`);
+  await expect(page.locator(".desk-appbar")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("runalytics:achievements-unlocked", { detail: [
+    { id: "launch-one", name: "First mile", desc: "Log your first run", icon: "<svg></svg>" },
+    { id: "launch-two", name: "Second mile", desc: "Keep running", icon: "<svg></svg>" },
+  ] })));
+  const dialog = page.getByRole("dialog", { name: "Earned" });
+  await expect(page.locator(".brand-splash")).toHaveAttribute("data-phase", "intro");
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.__celebrationVibrations.length)).toBe(0);
+  if (ending === "completion") await page.screenshot({ path: testInfo.outputPath("achievement-deferred.png") });
+  if (ending === "interruption") await page.keyboard.press("Escape");
+  else await page.evaluate(() => { window.__launchHidden = false; document.dispatchEvent(new Event("visibilitychange")); });
+  await expect(page.locator(".brand-splash")).toHaveCount(0);
+  await expect(dialog.locator("h3")).toHaveText("First mile");
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.locator("h3")).toHaveText("Second mile");
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.__celebrationVibrations.length)).toBe(2);
 });
 
 test("brand splash survives a viewport resize during launch", async ({ page }) => {
@@ -290,7 +408,7 @@ for (const width of [320, 1440]) test(`pacing evidence appears in pace insights 
   await page.getByRole('link', { name: 'Pace insights' }).click();
   await expect(page.getByRole('heading', { name: 'Pacing evidence' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Review changes', exact: true })).toBeVisible();
-  const alignment = await page.locator('.pace-insights').evaluate(section => {
+  const alignment = await page.locator('.pace-progress').evaluate(section => {
     const parent = section.getBoundingClientRect();
     const selector = section.querySelector('.pace-mode').getBoundingClientRect();
     return Math.abs((parent.left + parent.right - selector.left - selector.right) / 2);
@@ -304,14 +422,21 @@ for (const width of [320, 1440]) test(`pacing evidence appears in pace insights 
   await expect(mode.getByRole('button', { name: 'Speed', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
-for (const width of [320, 1440]) test(`race estimates compare watch and plan with race day at ${width}px`, async ({ page }, testInfo) => {
+for (const width of [320, 1440]) test(`race estimates blend watch and plan with race day at ${width}px`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 844 });
   await page.goto('/desk.html#pace');
   const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
-  await expect(estimates.getByRole('columnheader', { name: 'Watch · Today' })).toBeVisible();
-  await expect(estimates.getByRole('columnheader', { name: 'Plan · Today' })).toBeVisible();
+  await expect(estimates.getByRole('columnheader', { name: 'Watch', exact: true })).toHaveCount(0);
+  await expect(estimates.getByRole('columnheader', { name: 'Today', exact: true })).toBeAttached();
+  await expect(estimates.getByText('Plan · Today', { exact: true })).toHaveCount(0);
   await expect(estimates.getByRole('columnheader', { name: 'Race day projection' })).toBeAttached();
-  await expect(estimates.getByRole('row', { name: /5 km/ }).locator('td').first().locator('.sr-only')).toHaveText('20m 00s');
+  await expect(estimates.getByText('Watch predictions reflect the latest sync and may not be from today.')).toHaveCount(0);
+  await estimates.getByRole('button', { name: 'Estimate basis' }).click();
+  await expect(page.getByRole('dialog', { name: 'Estimate basis' }).getByText('Watch predictions reflect the latest sync and may not be from today.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(estimates.getByRole('row', { name: /5 km/ }).getByRole('cell')).toHaveCount(2);
+  await expect(estimates.getByRole('row', { name: /5 km/ }).locator('td[data-seconds]')).toHaveAccessibleName('21m 02s');
+  expect(await estimates.locator('td[data-seconds]').evaluateAll(cells => cells.map(cell => Number(cell.dataset.seconds)))).toEqual([1262, 2629, 5743, 12044]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
   await estimates.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath(`race-estimates-${width}.png`), fullPage: true });
@@ -324,12 +449,80 @@ for (const width of [320, 1440]) test(`race estimates compare watch and plan wit
   })).toEqual([294, 6408, null, null, null, null]);
 });
 
-test('missing watch prediction does not hide plan estimates', async ({ page }) => {
+test('estimate basis explains the equal blend of a fifteen-minute watch gap without changing the plan', async ({ page }, testInfo) => {
+  await page.setViewportSize({width:320, height:844});
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      return command === 'plan_defaults' ? {...result, thresholdSecKm:250, predictMarathonS:13348} : result;
+    };
+  });
+  await page.goto('/desk.html?offset=-5#pace');
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  const marathon = estimates.getByRole('row').filter({has: page.getByRole('rowheader', {name:'Marathon', exact:true})});
+  await expect(marathon.locator('td[data-seconds]')).toHaveAccessibleName('3h 34m');
+  await expect(marathon.locator('td[data-seconds]')).toHaveAttribute('data-seconds', '12898');
+  const basis = estimates.getByRole('button', {name:'Estimate basis', exact:true});
+  await basis.click();
+  const dialog = page.getByRole('dialog', {name:'Estimate basis', exact:true});
+  await expect(dialog).toContainText('equally (50% each), rounded to the nearest second');
+  await expect(dialog).toContainText('If one is unavailable or invalid, only the other is used.');
+  await expect(dialog).toContainText('saved plan threshold plus accepted pace adjustments (4:35/km), not the latest watch threshold');
+  await expect(dialog).toContainText('does not model your individual marathon endurance and can be optimistic');
+  await expect(dialog).toContainText('one-hour effort pace');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await page.screenshot({path:testInfo.outputPath('estimate-basis-320.png')});
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(basis).toBeFocused();
+  await expect(marathon.locator('td[data-seconds]')).toHaveAttribute('data-seconds', '12898');
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => ['create_plan', 'apply_proposal', 'adjust_plan_difficulty', 'save_settings'].includes(call.command)))).toEqual([]);
+});
+
+test('missing watch prediction falls back per distance without hiding plan estimates', async ({ page }) => {
   await page.goto('/desk.html?noWatchPredictions#pace');
-  const row = page.getByRole('region', { name: 'Training race estimates', exact: true }).getByRole('row', { name: /5 km/ });
-  await expect(row.locator('td').first()).toHaveText('Not available');
-  await expect(row.locator('td[data-seconds]')).not.toHaveText('Not available');
-  await expect(page.getByText('Watch predictions reflect the latest sync and may not be from today.')).toBeVisible();
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  const row = estimates.getByRole('row', { name: /5 km/ });
+  await expect(row.getByRole('cell')).toHaveCount(2);
+  await expect(row.locator('td[data-seconds]')).toHaveAccessibleName('22m 03s');
+  expect(await estimates.locator('td[data-seconds]').evaluateAll(cells => cells.map(cell => Number(cell.dataset.seconds)))).toEqual([1323, 2629, 5743, 12044]);
+});
+
+test('current race interpolation validates both sources and rounds the combined time', async ({ page }) => {
+  await page.goto('/desk.html#pace');
+  expect(await page.evaluate(async () => {
+    const { currentRaceTime } = await import('/src/desk/race-estimates.tsx');
+    return [[1201, 1200], [1200, 1800], [1800, 1200], [0, 1200.6], [NaN, 1200], [Infinity, 1200], [-10, 1200], [1200, null], [1200, undefined], [1200, 0], [1200, -10], [1200, NaN], [1200, Infinity], [0, null], [NaN, Infinity]].map(([heuristic, watch]) => currentRaceTime(heuristic, watch));
+  })).toEqual([1201, 1500, 1500, 1201, 1200, 1200, 1200, 1200, 1200, 1200, 1200, 1200, 1200, 0, 0]);
+});
+
+test('current race estimates use watch-only values or show unavailable when neither source is valid', async ({ page }) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      if (command === 'current_plan' && result) return [{...result[0], thresholdSecKm: 0}, result[1]];
+      if (command === 'plan_defaults') return {...result, predict10kS: Infinity, predictHalfS: -30, predictMarathonS: 0};
+      return result;
+    };
+  });
+  await page.goto('/desk.html#pace');
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  await expect(estimates.getByRole('row', { name: /5 km/ }).locator('td[data-seconds]')).toHaveAccessibleName('20m 00s');
+  await expect(estimates.locator('td[data-seconds="0"]')).toHaveCount(3);
+  for (const cell of await estimates.locator('td[data-seconds="0"]').all()) await expect(cell).toContainText('Not available');
+});
+
+test('current race estimates retain heuristic values when watch data cannot be loaded', async ({ page }) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = (command, args) => command === 'plan_defaults' ? Promise.reject(new Error('Synthetic offline watch data')) : invoke(command, args);
+  });
+  await page.goto('/desk.html#pace');
+  const estimates = page.getByRole('region', { name: 'Training race estimates', exact: true });
+  await expect(estimates.locator('td[data-seconds]')).toHaveCount(4);
+  expect(await estimates.locator('td[data-seconds]').evaluateAll(cells => cells.map(cell => Number(cell.dataset.seconds)))).toEqual([1323, 2758, 6085, 12688]);
 });
 
 for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]) test(`pace and milestones navigation ${theme} ${width}`, async ({ page }) => {
@@ -527,6 +720,29 @@ for (const width of [320, 390, 820, 1440]) for (const theme of ["light", "dark"]
   await page.screenshot({ path: testInfo.outputPath(`feedback-${theme}-${width}.png`), fullPage: true });
 });
 
+test("packaged compact content appears without reveal animation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.route("**/assets/*", async route => {
+    const name = new URL(route.request().url()).pathname.split("/").pop();
+    const contentType = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "application/octet-stream";
+    await route.fulfill({ body: await readFile(new URL(`../dist/assets/${name}`, import.meta.url)), contentType });
+  });
+  await page.route("**/desk.html", async route => route.fulfill({ body: await readFile(new URL("../dist/desk.html", import.meta.url)), contentType: "text/html" }));
+  await page.addInitScript(() => {
+    window.__packagedReveals = [];
+    document.addEventListener("desk:reveal", event => {
+      if (event.target.dataset.reveal === "visible") window.__packagedReveals.push(event.target.className);
+    });
+  });
+  await page.goto("/desk.html#pace");
+  const counter = page.locator(".pace-summary .motion-number").first();
+  await expect(counter).toHaveAttribute("data-count-state", "settled");
+  await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(await counter.locator(".sr-only").textContent());
+  await expect(page.locator('[data-reveal="visible"], [data-reveal="waiting"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__packagedReveals)).toEqual([]);
+});
+
 for (const reducedMotion of ["reduce", "no-preference"]) test(`packaged motion preserves CSS time units with ${reducedMotion} motion`, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion });
@@ -611,7 +827,7 @@ for (const reducedMotion of ["reduce", "no-preference"]) {
       const final = counter.locator("..").locator(".sr-only");
       await expect(final).not.toBeEmpty();
       await expect.poll(async () => counter.textContent()).toBe(await final.textContent());
-      if (route === "health" && reducedMotion === "no-preference") {
+      if (route === "health" && reducedMotion === "no-preference" && page.viewportSize().width > 800) {
         expect(new Set(await page.evaluate(() => window.__counterValues)).size).toBeGreaterThan(1);
         expect(await page.evaluate(() => window.__counterTimes.at(-1) - window.__counterTimes[0])).toBeGreaterThan(200);
       }
@@ -697,13 +913,14 @@ for (const width of [390, 1440]) for (const reducedMotion of ["reduce", "no-pref
     await expect(counter).toBeAttached();
     const final = await counter.locator("..").locator(".sr-only").textContent();
     await page.evaluate(async () => { for (let frame = 0; frame < 65; frame++) await new Promise(requestAnimationFrame); });
-    await expect(counter).toHaveText(reducedMotion === "reduce" ? final : "0");
+    const immediate = reducedMotion === "reduce" || width <= 800;
+    await expect(counter).toHaveText(immediate ? final : "0");
     await counter.scrollIntoViewIfNeeded();
     await expect(counter).toBeInViewport();
     await expect(counter).toHaveText(final);
     const values = new Set(await page.evaluate(() => window.__viewportCounts));
-    expect(values.size).toBeGreaterThan(reducedMotion === "reduce" ? 0 : 2);
-    if (reducedMotion === "reduce") expect(values.size).toBe(1);
+    expect(values.size).toBeGreaterThan(immediate ? 0 : 2);
+    if (immediate) expect(values.size).toBe(1);
     await page.evaluate(() => document.getElementById("workspace").scrollTo({ top: 0, behavior: "instant" }));
     await counter.scrollIntoViewIfNeeded();
     await expect(counter).toHaveText(final);
@@ -857,10 +1074,15 @@ for (const width of [320, 820, 1440]) for (const theme of ["light", "dark"]) {
     const progressBox = await progress.boundingBox();
     const status = page.locator(".app-update [role=status]");
     const statusBox = await status.boundingBox();
-    const releasesBox = await page.getByRole("button", { name: "Browse releases" }).boundingBox();
+    const releases = page.locator(".about-releases button");
     expect(progressBox.y - actionBox.y - actionBox.height).toBeGreaterThanOrEqual(12);
     expect(statusBox.y - progressBox.y - progressBox.height).toBeGreaterThanOrEqual(12);
-    expect(releasesBox.y - statusBox.y - statusBox.height).toBeGreaterThanOrEqual(16);
+    if (width <= 800) {
+      await expect(releases).toBeHidden();
+    } else {
+      const releasesBox = await releases.boundingBox();
+      expect(releasesBox.y - statusBox.y - statusBox.height).toBeGreaterThanOrEqual(16);
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.evaluate(() => window.__deskUpdateEvent({ event: "Finished" }));
     await expect(status).toHaveText("Download complete. Installing...");
@@ -873,6 +1095,17 @@ for (const width of [320, 820, 1440]) for (const theme of ["light", "dark"]) {
     expect(errors).toEqual([]);
   });
 }
+
+test("release browsing follows the compact breakpoint", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.goto("/desk.html#settings/about");
+  const releases = page.locator(".about-releases");
+  await expect(releases).toBeHidden();
+  await page.setViewportSize({ width: 801, height: 900 });
+  await expect(releases.getByRole("button", { name: "Browse releases" })).toBeVisible();
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect(releases).toBeHidden();
+});
 
 test("desktop updater failures clear stale progress and allow retry", async ({ page }) => {
   await page.goto("/desk.html#settings/about");
@@ -1119,20 +1352,172 @@ test.describe("Strava settings", () => {
 });
 
 test.describe("motion system", () => {
+  for (const width of [320, 390, 800]) test(`compact content reveals and counters are immediate at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    const theme = width === 390 ? "dark" : "light";
+    await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
+    await page.addInitScript(() => {
+      window.__compactReveals = [];
+      document.addEventListener("desk:reveal", event => {
+        if (event.target.dataset.reveal === "visible") window.__compactReveals.push(event.target.className);
+      });
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.id = "compact-reveal-probe-style";
+        style.textContent = ".pace-summary { margin-top: 1400px; }";
+        document.head.append(style);
+      }, { once: true });
+    });
+    await page.goto(`/desk.html?theme=${theme}#pace`);
+    const figure = page.locator(".pace-insights-figure");
+    await expect(figure).toHaveAttribute("data-reveal", "settled");
+    const counter = page.locator('.pace-summary .sr-only + [aria-hidden="true"]').first();
+    const final = await counter.locator("..").locator(".sr-only").textContent();
+    await expect(counter).toHaveText(final);
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveText(final);
+    expect(await page.evaluate(() => window.__compactReveals)).toEqual([]);
+    await expect(page.locator('[data-reveal="visible"], [data-reveal="waiting"]')).toHaveCount(0);
+    await page.evaluate(() => {
+      document.getElementById("compact-reveal-probe-style").remove();
+      document.getElementById("workspace").scrollTo({ top: 0, behavior: "instant" });
+    });
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({ path: testInfo.outputPath(`compact-content-${width}.png`) });
+
+    const selector = page.getByRole("button", { name: "Long", exact: true });
+    await selector.evaluate(element => element.scrollIntoView({ block: "center", behavior: "instant" }));
+    await expect(selector).toBeVisible();
+    const bounds = await selector.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await expect.poll(() => selector.evaluate(element => getComputedStyle(element).scale)).toBe("0.98");
+    await page.mouse.up();
+    await expect(selector).toHaveAttribute("aria-pressed", "true");
+    if (width === 390) {
+      await page.getByRole("button", { name: "About pace insights" }).click();
+      const dialog = page.getByRole("dialog", { name: "About pace insights" });
+      await expect(dialog).toBeVisible();
+      expect(await dialog.evaluate(element => element.getAnimations().some(animation => Number(animation.effect?.getTiming().duration) > 0))).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => window.__compactReveals)).toEqual([]);
+  });
+
+  test("crossing the compact breakpoint settles active and pending reveals", async ({ page }) => {
+    await page.setViewportSize({ width: 801, height: 740 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = ".pace-summary { margin-top: 1400px; }";
+      document.head.append(style);
+    }, { once: true }));
+    await page.goto("/desk.html#pace");
+    await expect(page.locator(".pace-mode")).toHaveAttribute("data-reveal", "settled");
+    const counter = page.locator(".pace-summary .motion-number").first();
+    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    await page.evaluate(() => {
+      const root = document.createElement("section");
+      root.id = "breakpoint-reveal-probe";
+      Object.assign(root.style, { position: "fixed", top: "120px", left: "10px", width: "280px", height: "100px", overflow: "auto", zIndex: "9999" });
+      root.innerHTML = '<div id="breakpoint-visible" data-entrance style="height: 60px; opacity: .8; transform: translateX(3px)">Visible</div><div style="height: 300px"></div><div id="breakpoint-waiting" data-entrance style="height: 60px">Below the fold</div>';
+      document.body.append(root);
+    });
+    const visible = page.locator("#breakpoint-visible");
+    const waiting = page.locator("#breakpoint-waiting");
+    await expect(visible).toHaveAttribute("data-reveal", "visible");
+    await expect(waiting).toHaveAttribute("data-reveal", "waiting");
+    await page.setViewportSize({ width: 800, height: 740 });
+    await expect(visible).toHaveAttribute("data-reveal", "settled");
+    await expect(waiting).toHaveAttribute("data-reveal", "settled");
+    await expect(counter).toHaveAttribute("data-count-state", "settled");
+    const final = await counter.locator(".sr-only").textContent();
+    await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(final);
+    expect(await visible.evaluate(element => ({ animations: element.getAnimations().length, opacity: element.style.opacity, transform: element.style.transform }))).toEqual({ animations: 0, opacity: "0.8", transform: "translateX(3px)" });
+    await page.setViewportSize({ width: 801, height: 740 });
+    await expect(visible).toHaveAttribute("data-reveal", "settled");
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveAttribute("data-count-state", "settled");
+    await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(final);
+    await page.evaluate(() => {
+      const leaf = document.createElement("div");
+      leaf.id = "breakpoint-new";
+      leaf.dataset.entrance = "";
+      leaf.textContent = "New desktop content";
+      document.querySelector("#breakpoint-reveal-probe").prepend(leaf);
+    });
+    await expect(page.locator("#breakpoint-new")).toHaveAttribute("data-reveal", "visible");
+    await expect(page.locator("#breakpoint-new")).toHaveAttribute("data-reveal", "settled");
+  });
+
+  test("compact reveal policy preserves touch navigation feedback", async ({ browser, baseURL }) => {
+    const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "no-preference" });
+    const page = await context.newPage();
+    try {
+      await installDeskFixture(page);
+      await page.addInitScript(() => {
+        window.__touchFeedback = 0;
+        const animate = Element.prototype.animate;
+        Element.prototype.animate = function (frames, options) {
+          if (this.matches('.desk-navigation a[href="#journal"]')) window.__touchFeedback++;
+          return animate.call(this, frames, options);
+        };
+      });
+      await page.goto("/desk.html#training/week");
+      await expect(page.locator(".mobile-date-ribbon")).toBeVisible();
+      await expect(page.locator(".brand-splash")).toHaveCount(0);
+      await page.getByRole("link", { name: "Activities", exact: true }).tap();
+      await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+      expect(await page.evaluate(() => window.__touchFeedback)).toBeGreaterThan(0);
+      await expect(page.locator('[data-reveal="visible"], [data-reveal="waiting"]')).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("compact resizing stops an active number reveal at its final value", async ({ page }) => {
+    await page.setViewportSize({ width: 801, height: 740 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = ".pace-summary { margin-top: 1400px; }";
+      document.head.append(style);
+    }, { once: true }));
+    await page.goto("/desk.html#pace");
+    const counter = page.locator(".pace-summary .motion-number").first();
+    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    await counter.scrollIntoViewIfNeeded();
+    await expect(counter).toHaveAttribute("data-count-state", "counting");
+    await page.setViewportSize({ width: 800, height: 740 });
+    await expect(counter).toHaveAttribute("data-count-state", "settled");
+    const final = await counter.locator(".sr-only").textContent();
+    const values = await counter.evaluate(async element => {
+      const values = [];
+      for (let index = 0; index < 55; index++) {
+        values.push(element.querySelector('.sr-only + [aria-hidden="true"]').textContent);
+        await new Promise(requestAnimationFrame);
+      }
+      return values;
+    });
+    expect(new Set(values)).toEqual(new Set([final]));
+  });
+
   test("all action tones share bounded press feedback without moving their labels", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.goto("/desk.html#health");
-    const action = page.getByRole("button", { name: "Log pain", exact: true });
-    await expect(page.locator(".desk-toolbar")).toHaveAttribute("data-reveal", "settled");
+    await page.goto("/desk.html#settings/watch");
+    const action = page.getByRole("button", { name: "Disconnect", exact: true });
+    await expect(page.locator(".form-actions").first()).toHaveAttribute("data-reveal", "settled");
     const rest = await action.boundingBox();
     await action.hover({ position: { x: rest.width / 2, y: rest.height / 2 } });
     await expect(action.locator(".button-content")).toHaveCSS("transform", "none");
-    await expect(action).toHaveCSS("scale", "1.015");
+    await expect(action).toHaveCSS("scale", "1");
     const hovered = await action.boundingBox();
-    expect(hovered.width / rest.width).toBeCloseTo(1.015, 2);
+    expect(hovered.width / rest.width).toBeCloseTo(1, 2);
     expect(hovered.x + hovered.width / 2).toBeCloseTo(rest.x + rest.width / 2, 1);
-    for (const control of [action, page.getByRole("button", { name: "Settings", exact: true })]) {
+    for (const control of [action, page.getByRole("button", { name: "Sync history", exact: true }), page.getByRole("button", { name: "Settings", exact: true })]) {
       await control.hover();
       await page.mouse.down();
       await expect(control).toHaveCSS("scale", "0.98");
@@ -1145,11 +1530,11 @@ test.describe("motion system", () => {
     await action.hover();
     await page.mouse.down();
     await expect(action).toHaveCSS("scale", "1");
-    await page.mouse.move(20, 200);
+    await page.mouse.move(0, 0);
     await page.mouse.up();
     await action.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: "Log pain" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Disconnect COROS?" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(action).toBeFocused();
   });
@@ -1333,7 +1718,7 @@ test.describe("motion system", () => {
         await page.goto("/desk.html#health/overview");
         const verdict = page.locator(".health-verdict");
         await expect(verdict).toBeVisible();
-        if (reducedMotion === "no-preference") {
+        if (reducedMotion === "no-preference" && width > 800) {
           await expect.poll(() => page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict" && event.type === "end").length)).toBe(1);
           const events = await page.evaluate(() => window.__contentReveals.filter(event => event.className === "health-verdict"));
           expect(events[1].width).toBeCloseTo(events[0].width, 3);
@@ -1400,13 +1785,16 @@ test.describe("motion system", () => {
       const events = await page.evaluate(() => window.__unlockEvents);
       const starts = events.filter(event => event.state === "visible");
       const ends = events.filter(event => event.state === "settled");
-      expect(starts.length).toBeGreaterThan(5);
-      expect(new Set(starts.map(event => event.delay)).size).toBeGreaterThan(2);
-      expect(ends.length).toBe(starts.length);
-      const shellArrival = Math.max(...starts.filter(event => event.shell).map(event => event.time + event.delay * 1000));
-      const contentArrival = Math.min(...starts.filter(event => !event.shell).map(event => event.time + event.delay * 1000));
-      expect(contentArrival).toBeGreaterThanOrEqual(shellArrival - 25);
-      expect(Math.max(...ends.map(event => event.time)) - Math.min(...starts.map(event => event.time))).toBeLessThan(Math.max(...starts.map(event => event.delay)) * 1000 + 700);
+      if (width <= 800) expect(events).toEqual([]);
+      else {
+        expect(starts.length).toBeGreaterThan(5);
+        expect(new Set(starts.map(event => event.delay)).size).toBeGreaterThan(2);
+        expect(ends.length).toBe(starts.length);
+        const shellArrival = Math.max(...starts.filter(event => event.shell).map(event => event.time + event.delay * 1000));
+        const contentArrival = Math.min(...starts.filter(event => !event.shell).map(event => event.time + event.delay * 1000));
+        expect(contentArrival).toBeGreaterThanOrEqual(shellArrival - 25);
+        expect(Math.max(...ends.map(event => event.time)) - Math.min(...starts.map(event => event.time))).toBeLessThan(Math.max(...starts.map(event => event.delay)) * 1000 + 700);
+      }
       const brandEvents = events.filter(event => event.className === "desk-brand-name").length;
       await page.getByRole("link", { name: "Activities", exact: true }).click();
       await expect(page.locator(".activity-row")).toHaveCount(9);
@@ -1425,14 +1813,17 @@ test.describe("motion system", () => {
       await page.getByRole("link", { name: "Pace insights", exact: true }).click();
       await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
       await page.getByRole("link", { name: "Overview", exact: true }).click();
-      const landing = page.locator('.health-verdict[data-entrance-kind="component"]');
-      await expect(landing).toHaveAttribute("data-reveal", "visible");
+      const landing = page.locator(".health-verdict");
+      if (width > 800) {
+        await expect(landing).toHaveAttribute("data-entrance-kind", "component");
+        await expect(landing).toHaveAttribute("data-reveal", "visible");
+      }
       await expect(landing).toHaveAttribute("data-reveal", "settled");
       expect(await page.locator(".desk-navigation").boundingBox()).toEqual(navigation);
       await page.getByRole("link", { name: "Activities", exact: true }).click();
       await expect(page.locator(".activity-row")).toHaveCount(9);
       await page.getByRole("link", { name: "Health", exact: true }).click();
-      await expect(page.locator('.health-verdict[data-entrance-kind="component"]')).toHaveAttribute("data-reveal", "settled");
+      await expect(page.locator(".health-verdict")).toHaveAttribute("data-reveal", "settled");
       expect(await page.evaluate(() => document.querySelectorAll('[data-reveal]:not([data-reveal="container"]) [data-reveal]:not([data-reveal="container"])').length)).toBe(0);
     });
   }
@@ -1552,7 +1943,7 @@ test.describe("motion system", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     if (native) await page.addInitScript(() => { window.isTauri = true; });
     await page.goto("/desk.html#pace");
-    await expect(page.locator(".race-estimates")).toHaveAttribute("data-reveal", "settled");
+    await expect(page.locator(".pace-mode")).toHaveAttribute("data-reveal", "settled");
     await page.evaluate(() => {
       const root = document.createElement("section");
       root.id = "viewport-motion-probe";
@@ -1568,9 +1959,14 @@ test.describe("motion system", () => {
       document.body.append(root);
     });
     const leaves = page.locator("#viewport-motion-probe > div");
-    await expect.poll(() => leaves.evaluateAll(elements => elements.filter(element => element.getAnimations().length).length)).toBe(3);
-    expect(await leaves.evaluateAll(elements => elements.map(element => element.getAnimations()[0].effect.getTiming().delay))).toEqual([120, 0, 60]);
-    await expect(leaves.first()).toHaveAttribute("data-reveal", "settled");
+    if (width <= 800) {
+      await expect(leaves.first()).toHaveAttribute("data-reveal", "settled");
+      expect(await leaves.evaluateAll(elements => elements.every(element => element.dataset.reveal === "settled" && element.getAnimations().length === 0))).toBe(true);
+    } else {
+      await expect.poll(() => leaves.evaluateAll(elements => elements.filter(element => element.getAnimations().length).length)).toBe(3);
+      expect(await leaves.evaluateAll(elements => elements.map(element => element.getAnimations()[0].effect.getTiming().delay))).toEqual([120, 0, 60]);
+      await expect(leaves.first()).toHaveAttribute("data-reveal", "settled");
+    }
     await page.evaluate(() => {
       const late = document.createElement("div");
       late.id = "late-visible-leaf";
@@ -1579,8 +1975,11 @@ test.describe("motion system", () => {
       Object.assign(late.style, { order: "-1", height: "40px", flex: "none" });
       document.querySelector("#viewport-motion-probe").append(late);
     });
-    await expect(page.locator("#late-visible-leaf")).toHaveAttribute("data-reveal", "visible");
-    expect(await page.locator("#late-visible-leaf").evaluate(element => element.getAnimations()[0].effect.getTiming().delay)).toBe(0);
+    if (width <= 800) await expect(page.locator("#late-visible-leaf")).toHaveAttribute("data-reveal", "settled");
+    else {
+      await expect(page.locator("#late-visible-leaf")).toHaveAttribute("data-reveal", "visible");
+      expect(await page.locator("#late-visible-leaf").evaluate(element => element.getAnimations()[0].effect.getTiming().delay)).toBe(0);
+    }
     await page.evaluate(() => {
       const clipped = document.createElement("div");
       clipped.id = "clipped-leaf";
@@ -1590,7 +1989,7 @@ test.describe("motion system", () => {
       document.querySelector("#viewport-motion-probe").append(clipped);
     });
     const clipped = page.locator("#clipped-leaf");
-    await expect(clipped).toHaveAttribute("data-reveal", "waiting");
+    await expect(clipped).toHaveAttribute("data-reveal", width <= 800 ? "settled" : "waiting");
     await page.locator("#viewport-motion-probe").evaluate(element => { element.scrollTop = element.scrollHeight; });
     await expect(clipped).toHaveAttribute("data-reveal", "settled");
     await page.locator("#viewport-motion-probe").evaluate(element => { element.scrollTop = 0; });
@@ -1616,7 +2015,7 @@ test.describe("motion system", () => {
     });
     expect(samples.at(-1).value).toBe(samples.at(-1).final);
     expect(Math.max(...samples.map(sample => sample.width)) - Math.min(...samples.map(sample => sample.width))).toBeLessThanOrEqual(.5);
-    if (reducedMotion === "reduce") expect(samples.every(sample => sample.value === sample.final)).toBe(true);
+    if (reducedMotion === "reduce" || width <= 800) expect(samples.every(sample => sample.value === sample.final)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`counter-${width}-${reducedMotion}.png`) });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(counter.locator('.sr-only + [aria-hidden="true"]')).toHaveText(await counter.locator(".sr-only").textContent());
@@ -1667,18 +2066,18 @@ test.describe("motion system", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.addInitScript(() => {
       const style = document.createElement("style");
-      style.textContent = ".race-estimates { margin-top: 1100px !important; }";
+      style.textContent = ".pace-summary { margin-top: 1100px !important; }";
       document.addEventListener("DOMContentLoaded", () => document.head.append(style), { once: true });
     });
     await page.goto("/desk.html#pace");
-    const counter = page.locator('.race-estimates .motion-number').first();
-    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    const counter = page.locator('.pace-summary .motion-number').first();
+    await expect(counter).toHaveAttribute("data-count-state", width <= 800 ? "settled" : "waiting");
     await counter.scrollIntoViewIfNeeded();
     await expect(counter).toHaveAttribute("data-count-state", "settled");
     await page.getByRole("link", { name: "Activities", exact: true }).click();
     await expect(page.locator(".activity-row").first()).toBeVisible();
     await page.getByRole("link", { name: "Pace insights", exact: true }).click();
-    await expect(counter).toHaveAttribute("data-count-state", "waiting");
+    await expect(counter).toHaveAttribute("data-count-state", width <= 800 ? "settled" : "waiting");
     await counter.scrollIntoViewIfNeeded();
     await expect(counter).toHaveAttribute("data-count-state", "settled");
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -2240,7 +2639,7 @@ test('graded performance proposals preview race estimates and only change them a
     const cells = preview.getByRole('row').filter({has:page.getByRole('rowheader',{name:distance,exact:true})}).locator('td');
     for (const cell of await cells.all()) {
       const seconds = Number(await cell.getAttribute('data-seconds'));
-      await expect(cell).toHaveText(`${Math.floor(seconds/60)}m ${String(seconds%60).padStart(2,'0')}s`);
+      await expect(cell).toHaveAccessibleName(`${Math.floor(seconds/60)}m ${String(seconds%60).padStart(2,'0')}s`);
     }
   }
   expect(await page.evaluate(async () => {
@@ -2266,7 +2665,7 @@ test('graded performance proposals preview race estimates and only change them a
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const estimates=page.getByRole('region',{name:'Training race estimates',exact:true});
   await expect(estimates).toBeVisible();
-  expect(await estimates.locator('tbody td[data-seconds]').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map(values=>values[1]));
+  expect(await estimates.locator('tbody td[data-seconds]').evaluateAll(cells=>cells.map(cell=>Number(cell.dataset.seconds)))).toEqual(times.map((values, index)=>Math.round((values[1] + [1200, 2500, 5400, 11400][index]) / 2)));
 });
 
 for (const width of [320,1440]) {
@@ -2276,7 +2675,7 @@ for (const width of [320,1440]) {
       await page.goto(`/desk.html?theme=${theme}&palette=amethyst#health`);
       await expect(page.locator('.trend-chart[data-percent]')).toHaveCount(5);
       await page.evaluate(()=>document.fonts.ready);
-      expect(await page.evaluate(()=>[...document.fonts].some(font=>font.family==='Outfit' && font.status==='loaded'))).toBe(true);
+      expect(await page.evaluate(()=>[...document.fonts].some(font=>font.family==='Young Serif' && font.status==='loaded'))).toBe(true);
       const charts=await page.locator('.trend-chart[data-percent]').evaluateAll(figures=>figures.map(figure=>({
         label:figure.querySelector('figcaption span').textContent,
         latest:figure.querySelector('figcaption strong').textContent,
@@ -2315,10 +2714,10 @@ for (const width of [320, 1440]) {
     await page.setViewportSize({width,height:1000});
     for (const theme of ['light','dark']) {
       await page.goto(`/desk.html?theme=${theme}#health/pace`);
-      await expect(page.getByRole('heading',{name:'Pace on point',exact:true})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'Recent sessions',exact:true})).toBeVisible();
       const points = page.locator('.pace-point-session');
       await expect(points).toHaveCount(5);
-      await expect(page.locator('.pace-summary')).toHaveText('2/4 sessions within target');
+      await expect(page.locator('.pace-summary .sr-only')).toHaveText('2/4 sessions within target');
       await expect(page.getByText('Next speed workout in 3 days', {exact:true})).toBeVisible();
       const geometry = await points.evaluateAll(groups => groups.map(group => ({
         top:Number(group.querySelector('.pace-point-range').getAttribute('y1')),
@@ -2343,6 +2742,7 @@ for (const width of [320, 1440]) {
       await picker.getByRole('button').nth(2).focus();
       await page.keyboard.press('Enter');
       await expect(page.getByRole('region',{name:'Selected pace session'})).toContainText('Continuous tempo');
+      await page.getByRole('button',{name:'Show rep details',exact:true}).click();
       await expect(page.getByRole('region',{name:'Pace insight repetitions'}).locator('tbody tr')).toHaveCount(1);
       await picker.getByRole('button').first().click();
       await expect(page.getByRole('region',{name:'Selected pace session'})).toContainText('Outdated: excluded from current pace status');
@@ -2365,6 +2765,188 @@ for (const width of [320, 1440]) {
     await expect(page.getByRole('heading',{name:'Session execution',exact:true})).toBeVisible();
   });
 }
+
+test('pace insights update selected rep counts, including target boundaries and outdated sessions', async ({page}) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      const result = await invoke(command, args);
+      if (command !== 'pace_insights' || !result) return result;
+      const speed = result.speed.map((session, index) => index !== 4 ? session : {
+        ...session,
+        reps: [
+          {...session.reps[0], actualSKm: 275, relativePace: 1},
+          {...session.reps[1], actualSKm: 285, relativePace: -1},
+          {...session.reps[1], index: 6, actualSKm: 286, relativePace: -1.2},
+        ],
+      });
+      return {...result, speed};
+    };
+  });
+  await page.goto('/desk.html#health/pace');
+  const picker = page.getByRole('group', {name: 'Inspect pace session'});
+  const detail = page.getByRole('region', {name: 'Selected pace session'});
+  const repSummary = detail.locator('.pace-rep-summary');
+  await expect(picker.getByRole('button')).toHaveCount(5);
+  await expect(detail).toContainText('Interval session 4');
+  await expect(repSummary).toHaveText('Measured reps within target: 2 / 3');
+  await page.getByRole('button', {name: 'Show rep details', exact: true}).click();
+  const reps = page.getByRole('region', {name: 'Pace insight repetitions'});
+  await expect(reps.locator('tbody tr')).toHaveCount(3);
+  await expect(reps.getByRole('cell', {name: 'Within target', exact: true})).toHaveCount(2);
+  await expect(reps.getByRole('cell', {name: 'Slower than target', exact: true})).toHaveCount(1);
+
+  await picker.getByRole('button').nth(1).click();
+  await expect(repSummary).toHaveText('Measured reps within target: 2 / 2');
+  await picker.getByRole('button').nth(2).click();
+  await expect(detail).toContainText('Continuous tempo');
+  await expect(repSummary).toHaveText('Measured reps within target: 1 / 1');
+  await expect(reps.locator('tbody tr')).toHaveCount(1);
+  await picker.getByRole('button').first().click();
+  await expect(detail).toContainText('Outdated: excluded from current pace status');
+  await expect(repSummary).toHaveText('Measured reps within target: 0 / 2');
+  await expect(reps.locator('tbody tr')).toHaveCount(2);
+  await expect(page.locator('.pace-summary .sr-only')).toHaveText('2/4 sessions within target');
+  await page.getByRole('button', {name: 'Long', exact: true}).click();
+  await expect(detail).toContainText('Race-pace long run');
+  await expect(repSummary).toHaveText('Measured reps within target: 2 / 2');
+  await page.getByRole('button', {name: 'Speed', exact: true}).click();
+  await expect(detail).toContainText('Interval session 4');
+  await expect(repSummary).toHaveText('Measured reps within target: 2 / 3');
+});
+
+for (const language of ['it', 'de', 'ja']) test(`localized Pace summary and forecast remain reachable at 320px in ${language}`, async ({page}, testInfo) => {
+  const messages = JSON.parse(await readFile(new URL(`../src/desk/locales/${language}.json`, import.meta.url), 'utf8'));
+  await page.setViewportSize({width: 320, height: 844});
+  await page.addInitScript(language => localStorage.setItem('runalytics.language', language), language);
+  await page.goto('/desk.html#pace');
+  await expect(page.locator('html')).toHaveAttribute('lang', language);
+  const pace = page.getByRole('region', {name: messages['Pace insights'], exact: true});
+  const detail = pace.getByRole('region', {name: messages['Selected pace session'], exact: true});
+  await expect(pace.getByRole('heading', {name: messages['Recent sessions'], exact: true})).toBeVisible();
+  await expect(pace.getByText(messages['Target range'], {exact: true})).toBeVisible();
+  const summary = messages['Measured reps within target: {{value0}} / {{value1}}'].replace('{{value0}}', '1').replace('{{value1}}', '2');
+  const expectReachable = async locator => {
+    await expect(locator).toBeVisible();
+    await locator.scrollIntoViewIfNeeded();
+    await expect(locator).toBeInViewport({ratio: 1});
+  };
+  const measureOverflow = () => page.evaluate(() => {
+    const workspace = document.getElementById('workspace');
+    return {page: document.documentElement.scrollWidth - innerWidth, workspace: workspace.scrollWidth - workspace.clientWidth};
+  });
+  await expectReachable(detail.getByText(summary, {exact: true}));
+  const show = detail.getByRole('button', {name: messages['Show rep details'], exact: true});
+  await expectReachable(show);
+  await expect(show).toHaveAttribute('aria-expanded', 'false');
+  await show.press('Enter');
+  const hide = detail.getByRole('button', {name: messages['Hide rep details'], exact: true});
+  await expectReachable(hide);
+  await expect(hide).toHaveAttribute('aria-expanded', 'true');
+  const reps = detail.getByRole('region', {name: messages['Pace insight repetitions'], exact: true});
+  await expect(reps).toBeVisible();
+  await expect(reps.getByRole('rowheader')).toHaveCount(2);
+  const expandedOverflow = await measureOverflow();
+  await hide.press('Space');
+  await expect(show).toHaveAttribute('aria-expanded', 'false');
+  await expect(reps).toHaveCount(0);
+
+  const estimates = pace.getByRole('region', {name: messages['Training race estimates'], exact: true});
+  const row = estimates.getByRole('row').filter({has: page.getByRole('rowheader', {name: '5 km', exact: true})});
+  const cells = row.getByRole('cell');
+  await expect(cells).toHaveCount(2);
+  await expect(cells.nth(0)).toHaveAccessibleName(/\d/);
+  await expect(estimates.getByRole('columnheader', {name: messages.Watch, exact: true})).toHaveCount(0);
+  for (const [index, label] of [messages.Today, messages['Race day projection']].entries()) {
+    await expectReachable(cells.nth(index).getByText(label, {exact: true}));
+  }
+  const collapsedOverflow = await measureOverflow();
+  for (const [state, overflow] of [['expanded', expandedOverflow], ['collapsed', collapsedOverflow]]) {
+    expect(overflow.page, state).toBeLessThanOrEqual(1);
+    expect(overflow.workspace, state).toBeLessThanOrEqual(1);
+  }
+  await page.screenshot({path: testInfo.outputPath(`blended-forecast-${language}-320.png`)});
+  await estimates.getByRole('button', {name: messages['Estimate basis'], exact: true}).click();
+  const basis = page.getByRole('dialog', {name: messages['Estimate basis'], exact: true});
+  await expect(basis).toContainText(messages['Today blends the plan heuristic and latest synced watch prediction equally (50% each), rounded to the nearest second. If one is unavailable or invalid, only the other is used.']);
+});
+
+for (const width of [320, 1440]) test(`pace rep disclosure supports keyboard operation at ${width}px`, async ({page, browserName}) => {
+  await page.setViewportSize({width, height: 844});
+  await page.goto('/desk.html#health/pace');
+  const toggle = page.getByRole('button', {name: /^(Show|Hide) rep details$/});
+  await expect(toggle).toHaveAccessibleName('Show rep details');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  const controls = await toggle.getAttribute('aria-controls');
+  expect(controls).toBeTruthy();
+  const disclosure = page.locator(`[id="${controls}"]`);
+  await expect(disclosure).toHaveClass(/\bmotion-disclosure\b/);
+  await expect(disclosure).toHaveAttribute('aria-hidden', 'true');
+  await expect(disclosure).toHaveAttribute('inert', '');
+  const reps = page.getByRole('region', {name: 'Pace insight repetitions'});
+  await expect(reps).toHaveCount(0);
+
+  // macOS WebKit uses Option+Tab for non-text controls by default.
+  const macWebKit = browserName === 'webkit' && process.platform === 'darwin';
+  const previous = page.getByRole('group', {name: 'Inspect pace session'}).getByRole('button').last();
+  await toggle.focus();
+  await page.keyboard.press(macWebKit ? 'Alt+Shift+Tab' : 'Shift+Tab');
+  await expect(previous).toBeFocused();
+  await page.keyboard.press(macWebKit ? 'Alt+Tab' : 'Tab');
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAccessibleName('Hide rep details');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(toggle).toHaveAttribute('aria-controls', controls);
+  await expect(toggle).toBeFocused();
+  await expect(disclosure).not.toHaveAttribute('inert', '');
+  await expect(disclosure).toHaveAttribute('aria-hidden', 'false');
+  await expect(disclosure.getByRole('region', {name: 'Pace insight repetitions'})).toBeVisible();
+  await expect(reps).toHaveAttribute('tabindex', '0');
+  await expect(reps.locator('tbody tr')).toHaveCount(2);
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAccessibleName('Show rep details');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toBeFocused();
+  await expect(disclosure).toHaveAttribute('inert', '');
+  await expect(disclosure).toHaveAttribute('aria-hidden', 'true');
+  await expect(reps).toHaveCount(0);
+});
+
+for (const width of [320, 1440]) test(`pace session scroller reveals the selected latest session at ${width}px`, async ({page}) => {
+  await page.setViewportSize({width, height: 844});
+  await page.goto('/desk.html#health/pace');
+  const picker = page.getByRole('group', {name: 'Inspect pace session'});
+  await expect(picker.getByRole('button')).toHaveCount(5);
+  const selected = picker.locator('button[aria-pressed="true"]');
+  const expectLatestVisible = async () => {
+    await expect(picker.getByRole('button').last()).toHaveAttribute('aria-pressed', 'true');
+    await expect(selected).toHaveAccessibleName(/^\d{2}\/\d{2}\/\d{4}: Interval session 4$/);
+    await expect.poll(() => selected.evaluate(button => {
+      const scroller = button.parentElement;
+      const viewport = scroller.getBoundingClientRect();
+      const item = button.getBoundingClientRect();
+      const left = viewport.left + scroller.clientLeft;
+      const top = viewport.top + scroller.clientTop;
+      const right = left + scroller.clientWidth;
+      const bottom = top + scroller.clientHeight;
+      return item.width > 0 && item.height > 0 && item.left >= left - 1 && item.right <= right + 1 && item.top >= top - 1 && item.bottom <= bottom + 1;
+    })).toBe(true);
+  };
+  if (width === 320) await expect.poll(() => picker.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+  await expectLatestVisible();
+  if (width === 1440) {
+    const latestName = await selected.getAttribute('aria-label');
+    await page.setViewportSize({width: 320, height: 844});
+    await expect(selected).toHaveAccessibleName(latestName);
+    await expectLatestVisible();
+  }
+  await picker.getByRole('button').first().click();
+  await expect(selected).toHaveAccessibleName(/^\d{2}\/\d{2}\/\d{4}: Interval session 0, Outdated$/);
+  await page.getByRole('button', {name: 'Long', exact: true}).click();
+  await page.getByRole('button', {name: 'Speed', exact: true}).click();
+  await expectLatestVisible();
+});
 
 test('pace insights cap chart and inspection at five recent sessions regardless of outdated status', async ({page}) => {
   await page.addInitScript(() => {
@@ -2406,6 +2988,11 @@ test('pace insights cap chart and inspection at five recent sessions regardless 
 });
 
 test('pace insights handle no plan, empty history and retry without changing the plan', async ({page}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('runalytics.onboarding.complete', '1');
+    // The two navigations use different synthetic plans; avoid unrelated celebrations.
+    localStorage.removeItem('runalytics.earned-achievements');
+  });
   await page.goto('/desk.html?noPlan=1#health/pace');
   await expect(page.getByText('Create a training plan and link completed runs to see pace insights.')).toBeVisible();
   await expect(page.locator('.pace-point-session')).toHaveCount(0);
@@ -2489,6 +3076,7 @@ for (const session of ['intervals', 'tempo']) {
     await buttons.nth(1).focus();
     await page.keyboard.press('Enter');
     await expect(buttons.nth(1)).toHaveAttribute('aria-pressed','true');
+    await expect(page.locator('.lap-execution-table .lap-row-button[aria-pressed="true"]')).toHaveCSS('text-decoration-line', 'none');
     await expect(page.locator('.lap-pace-selection')).toContainText('4:35 - 4:45/km');
     await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Time',exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Recorded laps'}).getByRole('columnheader',{name:'Pace',exact:true})).toBeVisible();
@@ -2562,6 +3150,7 @@ for (const width of [320,1440]) {
 
 test('ending a plan requires confirmation and keeps recorded history',async ({page})=>{
   await page.goto('/plan.html');
+  await page.getByRole('button',{name:'Show details',exact:true}).click();
   await page.getByRole('button',{name:'End current plan',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('Other saved plans are kept.');
   expect(await page.evaluate(()=>window.__deskCalls.filter(call=>call.command==='abort_plan'))).toEqual([]);
@@ -2638,6 +3227,39 @@ for (const theme of ['light','dark']) {
       expect(errors).toEqual([]);
     });
   }
+}
+
+for (const width of [320, 1440]) {
+  test(`sync icon reverses its arrows and rotation at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#training");
+    const button = page.getByRole("button", { name: "Sync activities" });
+    await expect(button).toBeEnabled();
+    const icon = page.locator(".desk-utilities .sync-icon");
+    await expect(icon).toHaveCSS("transform", "matrix(-1, 0, 0, 1, 0, 0)");
+    await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plugin:event|listen").map(call => call.args.event))).toContain("sync://started");
+    await page.evaluate(() => window.__deskEmit("sync://started", null));
+    await expect(page.getByRole("button", { name: "Syncing activities" })).toBeDisabled();
+    const direction = await icon.evaluate(element => {
+      const svg = element.querySelector("svg");
+      const animation = svg.getAnimations()[0];
+      animation.pause();
+      const mirror = new DOMMatrix(getComputedStyle(element).transform);
+      animation.currentTime = 0;
+      const start = mirror.multiply(new DOMMatrix(getComputedStyle(svg).transform));
+      animation.currentTime = 250;
+      const end = mirror.multiply(new DOMMatrix(getComputedStyle(svg).transform));
+      return end.multiply(start.inverse()).b;
+    });
+    expect(direction).toBeGreaterThan(.99);
+    await page.screenshot({ path: testInfo.outputPath("sync-icon.png") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(icon.locator("svg")).toHaveCSS("animation-name", "none");
+    await expect(icon).toHaveCSS("transform", "matrix(-1, 0, 0, 1, 0, 0)");
+    await page.evaluate(() => window.__deskEmit("sync://completed", { ok: true }));
+    await expect(button).toBeEnabled();
+  });
 }
 
 test("native sync completion refreshes evidence and watch progress is visible", async ({page}) => {
@@ -2745,15 +3367,36 @@ test("schedule mutations retain intent and Undo restores the original date", asy
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='set_workout_skipped').map(call=>call.args.skipped))).toEqual([true,false]);
 });
 
-test("week summary shows run mileage against the plan's planned mileage", async ({page}) => {
+for (const horizon of ["week", "month"]) test(`${horizon} summary counts only scheduled sessions and their planned distance`, async ({page}) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "current_plan") {
+        const [plan, workouts] = await invoke(command, args);
+        const now = new Date();
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7, 12);
+        const date = offset => { const day = new Date(monday); day.setDate(day.getDate() + offset); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; };
+        return [plan, [
+          {...workouts[0], id: "summary-done", date: date(0), kind: "easy", distanceM: 5000, done: true},
+          {...workouts[0], id: "summary-pending", date: date(1), kind: "easy", distanceM: 8000, done: false},
+          {...workouts[0], id: "summary-skipped", date: date(2), kind: "easy", distanceM: 7000, done: false, status: "skipped"},
+          {...workouts[0], id: "summary-rest", date: date(3), kind: "rest", distanceM: null, done: false},
+        ]];
+      }
+      if (command === "calendar_events") {
+        const events = await invoke(command, args);
+        const [, workouts] = await window.__TAURI_INTERNALS__.invoke("current_plan");
+        return events.map(event => event.id === "summary-done" ? {...event, distanceM: 12000} : event).concat({id: "extra", workoutId: null, activityId: 99, date: workouts[0].date, kind: "completed", title: "Extra run", distanceM: 9000, notes: "", status: "planned"});
+      }
+      return invoke(command, args);
+    };
+  });
   await page.setViewportSize({width:1440,height:1000});
-  await page.goto('/desk.html');
+  await page.goto(`/desk.html#training/${horizon}`);
   const strip = page.locator('.schedule-summary');
-  await expect(strip).toBeVisible();
-  // The km reading carries the plan's denominator: "X km / Y km done", so a
-  // week at 38 run of 30 planned reads as 38/30 rather than a bare 38.
-  await expect(strip.locator('span').nth(1)).toContainText("/");
-  await expect(strip.locator('span').nth(1)).toContainText("done");
+  await expect(strip).toContainText("1/3 sessions done");
+  await expect(strip).toContainText("5.0 km / 20.0 km done");
+  await expect(page.getByText("Extra run").first()).toBeVisible();
 });
 
 test("reset week undoes a scheduled benchmark and a moved session", async ({page}) => {
@@ -3064,18 +3707,19 @@ for (const theme of ["light", "dark"]) {
   for (const width of [320, 390, 768, 1440]) {
     test(`training method chooser ${theme} ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1000 });
-      await page.goto(`/desk.html?noPlan=1&theme=${theme}`);
+      await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.complete", "1"));
+      await page.goto(`/desk.html?noPlan=1&theme=${theme}#training/plan`);
       await page.getByRole("button", { name: "Create plan", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Create training plan" });
       const norwegian = dialog.getByRole("radio", { name: "Norwegian method", exact: true });
-      const runna = dialog.getByRole("radio", { name: "Runna-like", exact: true });
+      const runna = dialog.getByRole("radio", { name: "Runalytics method", exact: true });
       await expect(norwegian).toBeChecked();
       await expect(norwegian).toHaveAccessibleDescription(/Controlled sub-threshold repeats/);
       await expect(runna).toHaveAccessibleDescription(/varied mix of intervals, tempo and long runs/);
       await norwegian.focus();
       await page.keyboard.press("ArrowDown");
       await expect(runna).toBeChecked();
-      await expect(dialog.locator(".composer-summary")).toContainText("Runna-like");
+      await expect(dialog.locator(".composer-summary")).toContainText("Runalytics method");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       await dialog.screenshot({ path: `test-results/training-method-${theme}-${width}.png`, animations: "disabled" });
@@ -3084,15 +3728,17 @@ for (const theme of ["light", "dark"]) {
       await expect(runna).toBeChecked();
       await dialog.getByRole("button", { name: "Continue", exact: true }).click();
       await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(dialog.getByRole("button", { name: "Build plan", exact: true })).toBeFocused();
+      await expect(dialog.getByRole("heading", { name: "Ready to build your plan" })).not.toHaveAttribute("tabindex");
       await page.evaluate(() => { window.__deskFail = "create_plan"; });
       await dialog.getByRole("button", { name: "Build plan", exact: true }).click();
       await expect(dialog.getByRole("alert")).toContainText("Unable to save right now");
-      await expect(dialog.locator(".composer-summary")).toContainText("Runna-like");
+      await expect(dialog.locator(".composer-summary")).toContainText("Runalytics method");
       await page.evaluate(() => { window.__deskFail = ""; });
       await dialog.getByRole("button", { name: "Build plan", exact: true }).click();
       await expect(dialog).toHaveCount(0);
       expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "create_plan").pop().args.request.trainingMethod)).toBe("runna_like");
-      await expect(page.locator(".metrics-line")).toContainText("Runna-like");
+      await expect(page.locator(".metrics-line")).toContainText("Runalytics method");
     });
   }
 }
@@ -3319,6 +3965,59 @@ test("activity splits display signed net elevation", async ({ page }) => {
   const cells = page.getByRole("region", { name: "Kilometre splits" }).locator("tbody tr td:nth-of-type(3)");
   await expect(cells).toHaveText(["+12 m", "-8 m", "0 m", "Not recorded"]);
 });
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+  test(`activity history virtualizes long lists at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    if (viewport.width > 800) await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.addInitScript(() => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        if (command !== "all_activities") return result;
+        return Array.from({ length: 200 }, (_, index) => ({ ...result[index % result.length], id: 1000 + index, startTime: new Date(Date.UTC(2026, 10, 1) - index * 86400000).toISOString(), sport: index % 2 ? "Bike" : "Run" }));
+      };
+    });
+    await page.goto("/desk.html#journal");
+    const rows = page.locator(".activity-row");
+    const scroller = page.locator(viewport.width <= 800 ? "#workspace" : ".activity-library");
+    await expect(page.locator(".journal-count")).toContainText("200");
+    await expect(rows.first()).toHaveAttribute("data-activity-id", "1000");
+    expect(await rows.count()).toBeLessThan(25);
+    const nextId = await rows.last().evaluate(row => { row.focus({ preventScroll: true }); return Number(row.dataset.activityId) + 1; });
+    await page.keyboard.press("Tab");
+    await expect(page.locator(`[data-activity-id="${nextId}"]`)).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator(`[data-activity-id="${nextId - 1}"]`)).toBeFocused();
+    await page.addStyleTag({ content: '[data-activity-id="1199"] { min-height: 180px; }' });
+    await scroller.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect(rows.last()).toHaveAttribute("data-activity-id", "1199");
+    await expect.poll(() => rows.last().evaluate(row => {
+      const viewport = row.closest(getComputedStyle(document.querySelector(".activity-library")).overflowY === "visible" ? "#workspace" : ".activity-library").getBoundingClientRect();
+      const bounds = row.getBoundingClientRect();
+      return bounds.top >= viewport.top && bounds.bottom <= viewport.bottom;
+    })).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("virtual-history.png") });
+    expect(await rows.count()).toBeLessThan(25);
+    await expect(page.locator('[data-activity-id="1000"]')).toHaveCount(0);
+    await rows.last().click();
+    await expect(page.getByRole("complementary", { name: "Activity review" })).toBeVisible();
+    if (viewport.width > 800) {
+      await scroller.evaluate(element => { element.scrollTop = 0; });
+      await expect(page.locator('[data-activity-id="1199"]')).toHaveCount(0);
+    }
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page.locator('[data-activity-id="1199"]')).toBeFocused();
+    await scroller.evaluate(element => { element.scrollTop = 0; });
+    await expect(rows.first()).toHaveAttribute("data-activity-id", "1000");
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
+    await expect(page.locator(".journal-count")).toContainText("100");
+    await scroller.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect(rows.last()).toHaveAttribute("data-activity-id", "1198");
+    expect(await rows.count()).toBeLessThan(25);
+  });
+}
 
 test("Activities list hides filters until revealed and opens recorded splits", async ({ page }) => {
   await page.goto("/desk.html#journal");
@@ -3964,6 +4663,118 @@ for (const width of [320, 1440]) {
 
 const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
 
+for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
+  test(`preplanned sync shows every applicable step with its current state ${width}px ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/desk.html?theme=${theme}`);
+    const toast = page.getByRole("status", { name: "Plan sync progress" });
+    const targets = ["coros", "db", "calendar", "strava", "gist"];
+    await emitStage(page, { op: "sync", target: "op", state: "working", lines: targets.map(target => ({ target, state: "waiting" })) });
+    await expect(toast.locator(".stage-line")).toHaveText([
+      "Waiting to update COROS calendar", "Waiting to update local DB", "Waiting to update calendar", "Waiting to update Strava", "Waiting to update gist",
+    ]);
+    await expect(toast.locator(".stage-waiting > .tabler-icon-clock")).toHaveCount(5);
+    await toast.locator(".stage-line").evaluateAll(elements => { window.__syncRows = elements; });
+    await emitStage(page, { op: "sync", target: "coros", state: "working" });
+    await emitStage(page, { op: "sync", target: "db", state: "working" });
+    await emitStage(page, { op: "sync", target: "coros", state: "done" });
+    await emitStage(page, { op: "sync", target: "db", state: "error", detail: "Database unavailable" });
+    await emitStage(page, { op: "sync", target: "calendar", state: "working" });
+    await expect(toast.locator(".stage-done > .tabler-icon-check")).toHaveCount(1);
+    await expect(toast.locator(".stage-error > .tabler-icon-x")).toHaveCount(1);
+    await expect(toast.locator(".stage-working > .spinner")).toHaveCount(1);
+    await expect(toast.locator(".stage-waiting > .tabler-icon-clock")).toHaveCount(2);
+    expect(await toast.locator(".stage-line").evaluateAll(elements => elements.every((element, index) => element === window.__syncRows[index]))).toBe(true);
+    await expect(toast.locator(".stage-ring")).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const box = await toast.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect((await new AxeBuilder({ page }).include(".notification-viewport").analyze()).violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath("preplanned-sync.png") });
+    for (const target of ["calendar", "strava", "gist"]) {
+      await emitStage(page, { op: "sync", target, state: "working" });
+      await emitStage(page, { op: "sync", target, state: "done" });
+    }
+    await emitStage(page, { op: "sync", target: "op", state: "done" });
+    await expect(toast.locator(".stage-line")).toHaveCount(5);
+    await expect(toast.locator(".stage-ring")).toBeVisible();
+  });
+}
+
+test("preplanned sync excludes skipped steps and does not reopen after dismissal", async ({ page }) => {
+  await page.goto("/desk.html");
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["coros", "db", "calendar", "gist"] });
+  await expect(toast.locator(".stage-line")).toHaveCount(4);
+  await emitStage(page, { op: "sync", target: "strava", state: "working" });
+  await expect(toast).not.toContainText("Strava");
+  await emitStage(page, { op: "sync", target: "coros", state: "done" });
+  await emitStage(page, { op: "sync", target: "db", state: "error" });
+  await emitStage(page, { op: "sync", target: "gist", state: "skipped" });
+  await emitStage(page, { op: "sync", target: "op", state: "error" });
+  await expect(toast.locator(".stage-line")).toHaveText(["Updated COROS calendar", "Updating local DB failed"]);
+  await expect(toast.locator(".stage-ring")).toBeVisible();
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["db", "calendar"] });
+  await toast.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(toast).toHaveCount(0);
+  await emitStage(page, { op: "sync", target: "db", state: "working" });
+  await emitStage(page, { op: "sync", target: "db", state: "done" });
+  await emitStage(page, { op: "sync", target: "op", state: "done" });
+  await expect(toast).toHaveCount(0);
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["db"] });
+  await expect(toast.getByText("Waiting to update local DB")).toBeVisible();
+});
+
+test("preplanned sync reconstructs every step when a window joins late", async ({ page }) => {
+  await page.goto("/desk.html");
+  await expect(page.getByRole("heading", { name: "Training", exact: true })).toBeVisible();
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  const lines = [
+    { target: "coros", state: "done" }, { target: "db", state: "error", detail: "Database unavailable" },
+    { target: "calendar", state: "working" }, { target: "gist", state: "waiting" },
+  ];
+  await emitStage(page, { op: "sync", target: "calendar", state: "working", lines });
+  await expect(toast.locator(".stage-line")).toHaveText(["Updated COROS calendar", "Updating local DB failed", "Updating calendar…", "Waiting to update gist"]);
+  await toast.locator(".stage-line").evaluateAll(elements => { window.__syncRows = elements; });
+  lines[2].state = "done";
+  lines[3].state = "working";
+  await emitStage(page, { op: "sync", target: "gist", state: "working", lines });
+  await expect(toast.locator(".stage-working > .spinner")).toHaveCount(1);
+  expect(await toast.locator(".stage-line").evaluateAll(elements => elements.every((element, index) => element === window.__syncRows[index]))).toBe(true);
+  lines.pop();
+  await emitStage(page, { op: "sync", target: "gist", state: "skipped", lines });
+  await emitStage(page, { op: "sync", target: "op", state: "error", lines });
+  await expect(toast.locator(".stage-line")).toHaveCount(3);
+  await expect(toast.locator(".stage-ring")).toBeVisible();
+});
+
+test("preplanned sync survives initial workspace loading", async ({ page }) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    const gate = new Promise(resolve => { window.__releaseInitialPlan = resolve; });
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "current_plan") await gate;
+      return invoke(command, args);
+    };
+  });
+  await page.goto("/desk.html");
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "plugin:event|listen" && call.args.event === "plan://stage"))).toBe(true);
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["coros", "db", "calendar"] });
+  await emitStage(page, { op: "sync", target: "coros", state: "working" });
+  await expect(page.getByRole("status", { name: "Plan sync progress" })).toHaveCount(0);
+  await page.evaluate(() => window.__releaseInitialPlan());
+  const toast = page.getByRole("status", { name: "Plan sync progress" });
+  await expect(toast.locator(".stage-line")).toHaveText(["Updating COROS calendar…", "Waiting to update local DB", "Waiting to update calendar"]);
+});
+
+test("preplanned sync localizes the waiting state", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("runalytics.language", "fr"));
+  await page.goto("/desk.html");
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["db"] });
+  await expect(page.locator(".stage-waiting")).toHaveText("En attente de la mise à jour de base de données locale");
+});
+
 test("sync countdown survives an unavailable startup duration token", async ({ page }) => {
   await page.addInitScript(() => {
     const original = CSSStyleDeclaration.prototype.getPropertyValue;
@@ -4366,7 +5177,7 @@ test("design system primitives share type, control geometry and bounded glass", 
   }));
   expect(controls.length).toBeGreaterThan(10);
   for (const control of controls) {
-    expect(control.font).toContain("Outfit");
+    expect(control.font).toContain("Young Serif");
     expect(control.radius).toBe(control.button ? "999px" : "14px");
     expect(control.height).toBe(44);
     expect(control.blur).toBe("none");

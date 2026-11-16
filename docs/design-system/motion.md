@@ -46,8 +46,8 @@ such as `--motion-landing`, `--motion-surface`, `--motion-count`, and
 ## Lifecycle
 
 `MotionSystem` provides Motion configuration, one reveal observer and shared
-interaction listeners. Startup reveals use Motion's native mini API with a
-560ms Bezier landing response. Visible leaves begin 14px below their final
+interaction listeners. Above 800px, startup reveals use Motion's native mini API
+with a 560ms Bezier landing response. Visible leaves begin 14px below their final
 position at full size. Each newly visible sibling advances the cascade by 60ms.
 One animation-frame batch collects eligible units across observer callbacks and
 sorts them by rendered top edge, then left edge, with DOM order as a tie-breaker.
@@ -55,21 +55,26 @@ This also handles responsive grids whose visual order differs from their DOM.
 Offscreen, clipped, hidden, inert, settled and already running units do not consume
 new stagger slots. Later scroll entries and asynchronously mounted content start
 a fresh batch at zero; they do not inherit delays from previously revealed content.
-Eligibility intersects the viewport with every clipping or scrolling ancestor.
+At compact widths up to 800px, registered content settles immediately, including
+later scroll entries, disclosures and asynchronously mounted content. Resizing
+into compact mode settles pending and running reveals; widening does not replay
+already settled content. Press, selection, surface and other interaction motion
+is unchanged. Eligibility intersects the viewport with every clipping or
+scrolling ancestor.
 Tall content uses the scrollport-sized visibility threshold rather than waiting
 for an impossible percentage of the entire element. Route changes end startup mode.
 There is no animated blur on large surfaces or repeated rows.
 
-Reveals register before paint and wait for viewport entry. Ordinary rerenders
-do not replay them. Each view change gets the same fresh, scoped landing.
+Reveals register before paint; desktop reveals wait for viewport entry. Ordinary
+rerenders do not replay them. Each desktop view change gets a fresh, scoped landing.
 Headings, metric groups, setup controls, lists, tables, forms and opened disclosures
 use the shared registration path. Native details register their contents on opening.
 Nested reveal targets animate as one outer visual unit, including its borders
 and controls, instead of revealing only their innermost content. Elements
 containing dialogs, inspectors or notification viewports are not transformed.
 Pointer-down and keyboard focus on controls settle an entrance immediately.
-Programmatic heading focus preserves the heading's reveal. Workspace headings
-replay when their persistent host changes route; navigation chrome does not.
+Workspace headings replay when their persistent host changes route; navigation
+chrome does not. Route changes focus the workspace rather than the heading.
 Preference
 changes cancel native playback and restore the original inline styles.
 Observers, listeners and detached-element animations are cleaned up on removal.
@@ -79,10 +84,11 @@ Observers, listeners and detached-element animations are cleaned up on removal.
 leaves 14px upward while fading. The wrapper remains untransformed and opaque
 until its final leaf finishes, so fixed inspectors remain viewport-relative and
 no competing parent fade hides the cascade. Compact view changes update the
-same host immediately and dispatch `desk:view-arrive` for its content. Retained
-views replay their soft landing without remounting; nested requests are batched
-so the same element never plays twice. Persistent navigation does not replay.
-Compact views never wait for an exit. Changing the responsive breakpoint does
+same host immediately and dispatch `desk:view-arrive` for its content; their
+content does not replay an entrance. Retained desktop views replay their soft
+landing without remounting; nested requests are batched so the same element
+never plays twice. Persistent navigation does not replay. Compact views never
+wait for an exit. Changing the responsive breakpoint does
 not replace the active workspace or discard its inspector state.
 
 Native Tauri views use the same immediate, stable-host handoff as compact views,
@@ -114,36 +120,43 @@ playback and restore inline transforms. Reduced motion opens directly at final
 size. Native overlay surfaces use the opaque material fallback instead of moving
 a backdrop-filtered layer; the stationary scrim retains blur. Dialogs enter the
 top layer and establish focus and scroll locks before paint.
-Removed rows remain mounted until
-their opacity exit completes. Disclosure contents use the viewport scheduler;
+For activity histories with more than 18 results, only the visible range and a
+three-row buffer are mounted; scrolling out of that range removes rows immediately
+rather than playing a departure. Shorter histories retain the existing row-presence
+behavior, including opacity exits. The virtual list measures row heights, follows
+both the desktop list scrollport and compact workspace scrollport, and restores
+focus to a review's originating activity if it was unmounted while the review was
+open. Disclosure contents use the viewport scheduler;
 collapse waits for the visible children's exit cascade. Desktop setup steps retain
 their outgoing inert leaves through the same cascade before the incoming question
 appears. Compact setup steps fade as whole units without depending on viewport
-reveals, and waiting setup chrome remains visible. Setup headings and choices add
-a small staggered blur during the handoff; reduced motion skips it. Step wrappers
-stay untransformed.
+reveals, and waiting setup chrome remains visible. Desktop setup headings and
+choices use a small staggered blur during the handoff. Compact setup skips the
+individual entrance blur while retaining the step fade and departure feedback;
+reduced motion skips the blur. Step wrappers stay untransformed.
 `SelectionGroup` scopes shared selection indicators
 without adding DOM wrappers or nested focus targets.
 
-`CountUp` uses the 650ms `--motion-count` duration and the shared
+On desktop, `CountUp` uses the 650ms `--motion-count` duration and the shared
 `cubic-bezier(.22, 1, .36, 1)` curve. Playback waits until the counter enters
 the clipped viewport, including inside owned scroll containers and opened disclosures,
 and starts with its containing reveal's delay rather than counting behind it.
 It runs once per view visit, not on ordinary data rerenders or scrolling away
 and back. Returning to a retained view rearms its counters for viewport entry.
 Observers and playback are disposed when hidden or unmounted.
-Numeric metrics animate by default. Formatted training, pace, milestone and race
-summaries pass their numeric source to the same counter. A hidden final-value
-reserve and tabular numerals prevent width changes while counting. Dates, editable
-values, identifiers and table indices are not interpolated.
-Screen readers always receive the final value;
-reduced motion displays it immediately. Press, hover and selection feedback
+Numeric metrics animate by default on desktop. Formatted training, pace, milestone
+and race summaries pass their numeric source to the same counter. A hidden
+final-value reserve and tabular numerals prevent width changes while counting.
+Dates, editable values, identifiers and table indices are not interpolated.
+Screen readers always receive the final value; compact layouts and reduced motion
+display it immediately. Widening a compact layout keeps existing counters settled
+until a subsequent view visit. Press, hover and selection feedback
 retain their immediate interaction feedback; selection-marker travel uses the
 shared Bezier tween. Gesture tracking remains one-to-one with the pointer.
 
 ## Opening Brand Handoff
 
-`BrandSplash` preserves the original logo and uses the local Outfit wordmark.
+`BrandSplash` preserves the original logo and uses the local Young Serif wordmark.
 It runs once per document opening, outside route and setup-step presence. The
 logo and staggered letters resolve using the shared 560ms arrival and 60ms
 stagger, then move to the measured header logo and wordmark over 560ms. Compact
@@ -167,8 +180,14 @@ A bounded startup deadline exposes loading or errors if no header becomes ready;
 fonts, delayed data and setup do not create an indefinite splash. Notifications
 are hidden during the handoff, including when their viewport is in the browser
 top layer. Their dismissal timers and countdown rings pause until the splash ends.
+Achievement celebration dialogs and their haptic feedback are queued until the
+handoff finishes or is interrupted; the input that interrupts it finishes before
+the first dialog opens.
 
 ## Accessibility And Performance
+
+The header sync icon uses mirrored refresh arrows and spins clockwise while sync
+is active. Reduced motion keeps the mirrored icon static.
 
 `prefers-reduced-motion` removes spatial entrances, layout projection, shared
 indicator travel and surface gestures. Semantic selection, color, outline and

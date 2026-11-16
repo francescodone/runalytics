@@ -4,7 +4,7 @@ import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChev
 import { animate, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
 import { animate as animateNative } from "motion/mini";
 import { isTauri } from "@tauri-apps/api/core";
-import { actionOrigin, markActionOrigin, Presence, tempo, useSurfaceMotion } from "./interaction";
+import { actionOrigin, markActionOrigin, Presence, tempo, useCompactLayout, useSurfaceMotion } from "./interaction";
 import { lockPageScroll } from "./overlays";
 import { motionVisible } from "./motion";
 
@@ -77,11 +77,19 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     const element = dialog.current!;
     const unlock = lockPageScroll();
     element.showModal();
-    const initialFocus = element.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? element.querySelector<HTMLElement>(".dialog-surface > header h2");
+    const initialFocus = element.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? element.querySelector<HTMLElement>(".dialog-surface > header button");
     initialFocus?.focus({ preventScroll: true });
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current(); };
+    const keys = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || event.target instanceof Element && event.target.closest("dialog") !== element) return;
+      const focusable = [...element.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')].filter(node => node.getClientRects().length && !node.closest('[inert], [hidden]'));
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
     element.addEventListener("cancel", cancel);
-    return () => { element.removeEventListener("cancel", cancel); element.close(); unlock(); const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.querySelector<HTMLElement>(".workspace-heading h1"); target?.focus({ preventScroll: true }); };
+    element.addEventListener("keydown", keys);
+    return () => { element.removeEventListener("cancel", cancel); element.removeEventListener("keydown", keys); element.close(); unlock(); const target = opener?.isConnected && !opener.closest('[inert]') ? opener : document.getElementById("workspace"); target?.focus({ preventScroll: true }); };
   }, []);
   return <motion.dialog ref={dialog} aria-label={title} className={`desk-dialog ${wide ? "wide" : ""}`} data-native-surface={isTauri() || undefined} data-state={present ? "open" : "closing"}
     initial={surface.initial} animate={surface.animate} exit={surface.exit}
@@ -89,7 +97,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     onDragEnd={(_, info) => { if (info.offset.y > 96 || info.offset.y > 24 && info.velocity.y > 650) onClose(); }}
     onClick={event => { if (present && event.target === dialog.current) onClose(); }}>
     <div className="dialog-grip" aria-hidden="true" onPointerDown={event => { if (surface.compact && !surface.reduced) drag.start(event); }}><span /></div>
-    <div className="dialog-surface"><header><h2 tabIndex={-1}>{title}</h2><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
+    <div className="dialog-surface"><header><h2>{title}</h2><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
   </motion.dialog>;
 }
 export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {
@@ -97,7 +105,7 @@ export function InfoDialog({ title, children, wide = false, className = "" }: { 
   return <div className={`dialog-action ${className}`}><Button aria-haspopup="dialog" onClick={() => setOpen(true)}><span>{title}</span><IconChevronRight size={18} aria-hidden="true" /></Button><Presence>{open && <Dialog title={title} wide={wide} onClose={() => setOpen(false)}>{children}</Dialog>}</Presence></div>;
 }
 
-export function Inspector({ title, children, onClose, modal = false, origin }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean; origin?: HTMLElement | null }) {
+export function Inspector({ title, children, onClose, modal = false, origin, restoreMissingOrigin }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean; origin?: HTMLElement | null; restoreMissingOrigin?: () => void }) {
   const host = useRef<HTMLElement>(null);
   const close = useRef(onClose);
   const surface = useSurfaceMotion("inspector", host);
@@ -152,8 +160,8 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     };
     update(); mobile.addEventListener("change", update); element.addEventListener("keydown", keys); element.focus({ preventScroll: true });
-    return () => { restore(); mobile.removeEventListener("change", update); element.removeEventListener("keydown", keys); if (opener?.isConnected) opener.focus({ preventScroll: true }); };
-  }, [title, modal, origin]);
+    return () => { restore(); mobile.removeEventListener("change", update); element.removeEventListener("keydown", keys); if (opener?.isConnected) opener.focus({ preventScroll: true }); else restoreMissingOrigin?.(); };
+  }, [title, modal, origin, restoreMissingOrigin]);
   return <>{modal && <div className="inspector-backdrop" aria-hidden="true" data-state={present ? "open" : "closing"} onClick={() => { if (present) onClose(); }} />}
   <motion.aside className="desk-inspector" role={modal ? "dialog" : undefined} aria-modal={modal || undefined} aria-label={title} ref={host} tabIndex={-1} data-native-surface={isTauri() || undefined} data-state={present ? "open" : "closing"}
     initial={morph ? false : surface.initial} animate={morph ? undefined : surface.animate} exit={surface.exit}
@@ -166,12 +174,17 @@ export function Inspector({ title, children, onClose, modal = false, origin }: {
 }
 export function CountUp({ format }: { format: (progress: number) => string }) {
   const reduced = useReducedMotion();
+  const compact = useCompactLayout();
+  const immediate = reduced || compact;
+  const wasCompact = useRef(compact);
   const host = useRef<HTMLSpanElement>(null);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState(immediate ? 1 : 0);
   useLayoutEffect(() => {
-    if (reduced) { setProgress(1); return; }
+    const resumedFromCompact = wasCompact.current && !compact;
+    wasCompact.current = compact;
     const element = host.current;
     if (!element) return;
+    if (immediate) { element.dataset.countState = "settled"; setProgress(1); return; }
     let animation: ReturnType<typeof animate> | undefined;
     let started = false;
     let frame = 0;
@@ -200,14 +213,15 @@ export function CountUp({ format }: { format: (progress: number) => string }) {
     };
     const arrive = (event: Event) => { if (event.target instanceof HTMLElement && event.target.contains(element)) watch(); };
     const reveal = (event: Event) => { if (event.target instanceof HTMLElement && event.target.contains(element)) schedule(); };
-    watch();
+    if (resumedFromCompact) { started = true; element.dataset.countState = "settled"; }
+    else watch();
     document.addEventListener("desk:view-arrive", arrive);
     document.addEventListener("desk:reveal", reveal);
     document.addEventListener("scroll", schedule, { capture: true, passive: true });
     window.addEventListener("resize", schedule);
     return () => { observer.disconnect(); animation?.stop(); cancelAnimationFrame(frame); document.removeEventListener("desk:view-arrive", arrive); document.removeEventListener("desk:reveal", reveal); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
-  }, [reduced]);
-  return <span ref={host} className="motion-number"><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(reduced ? 1 : progress)}</span><span aria-hidden="true" data-count-reserve>{format(1)}</span></span>;
+  }, [immediate, compact]);
+  return <span ref={host} className="motion-number"><span className="sr-only">{format(1)}</span><span aria-hidden="true">{format(immediate ? 1 : progress)}</span><span aria-hidden="true" data-count-reserve>{format(1)}</span></span>;
 }
 export function Metric({ label, value, unit, count }: { label: string; value: ReactNode; unit?: string; count?: { value: number; format?: (value: number) => string } }) {
   return <div className="desk-metric"><dt>{label}</dt><dd>{count && Number.isFinite(count.value) ? <CountUp format={progress => count.format ? count.format(count.value * progress) : number(count.value * progress)} /> : typeof value === "number" && Number.isFinite(value) ? <CountUp format={progress => number(value * progress)} /> : typeof value === "string" ? text(value) : value}{unit && <small>{text(unit)}</small>}</dd></div>;

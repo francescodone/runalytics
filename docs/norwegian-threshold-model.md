@@ -1,6 +1,6 @@
 # Norwegian-Inspired Threshold Engine
 
-New plans default to this method and can instead select the independent [Runna-like heuristic](runna-like-plan-model.md). The selected method is stored with the plan; the shared evidence and recovery safeguards apply to both.
+New plans default to this method and can instead select the independent [Runalytics method](runna-like-plan-model.md). The selected method is stored with the plan; the shared evidence and recovery safeguards apply to both.
 
 ## Purpose and Evidence
 
@@ -27,6 +27,10 @@ warm-up/cooldown distances, quality-time caps and harder-change weekly intensity
 limits remain enforced. Harder changes also require suitable pain, recovery and
 training-load evidence and do not increase recovery-week or taper work. Missing
 load evidence blocks harder changes, not feedback submission.
+
+Adjusted workout titles describe the updated work intervals, including a separately
+resized repetition. When harder work borrows distance from an easy run, that run's
+displayed distance is updated as well.
 
 Distance rounding and safety limits can leave some or all sessions unchanged;
 the action reports that result. Undo restores only unchanged, still-future,

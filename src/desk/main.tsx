@@ -85,7 +85,7 @@ function App() {
   useEffect(() => {
     if (initial.current) { initial.current = false; return; }
     document.getElementById("workspace")?.scrollTo({ top: 0, behavior: "instant" });
-    heading.current?.focus({ preventScroll: true });
+    document.getElementById("workspace")?.focus({ preventScroll: true });
     heading.current?.parentElement?.dispatchEvent(new Event("desk:view-arrive", { bubbles: true }));
   }, [route.workspace]);
   useEffect(() => {
@@ -149,13 +149,13 @@ function App() {
         <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");
           notify(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
-        })}><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></IconButton>
+        })}><span className="sync-icon"><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></span></IconButton>
         <IconButton label={t("help")} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
         <IconButton label={t("settings")} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
       </div>
     </header>
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
-      <div lang={locale} className="workspace-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1>{runnerName ? <span className="runner-greeting">{t("Hello, {{value0}}", { value0: runnerName })}</span> : <span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span>}</div>
+      <div lang={locale} className="workspace-heading"><h1 ref={heading}>{title}</h1>{runnerName ? <span className="runner-greeting">{t("Hello, {{value0}}", { value0: runnerName })}</span> : <span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span>}</div>
       <ErrorNotice error={command.error} />
       <FeedbackReminder />
       <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "pace" ? <PaceInsightsView /> : workspace === "milestones" ? <Milestones /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>

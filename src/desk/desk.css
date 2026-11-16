@@ -274,10 +274,12 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .onboarding-step-host { position: relative; min-width: 0; }
 .onboarding-step { min-width: 0; }
 .onboarding-step[data-step-state="exiting"] { pointer-events: none; }
-@media (prefers-reduced-motion: no-preference) {
+@media (prefers-reduced-motion: no-preference) and (min-width: 801px) {
    .onboarding-step :is(h1, p, .onboarding-options label, .onboarding-options legend), .onboarding-step > label { animation: setup-focus-in var(--motion-landing) var(--motion-ease-standard) both; }
-   .onboarding-step[data-step-state="exiting"] :is(h1, p, .onboarding-options label, .onboarding-options legend), .onboarding-step[data-step-state="exiting"] > label { animation: setup-focus-out calc(var(--motion-exit) - var(--motion-stagger)) var(--motion-ease-standard) both; }
    .onboarding-step.onboarding-step section p { animation-name: setup-text-in; }
+}
+@media (prefers-reduced-motion: no-preference) {
+   .onboarding-step[data-step-state="exiting"] :is(h1, p, .onboarding-options label, .onboarding-options legend), .onboarding-step[data-step-state="exiting"] > label { animation: setup-focus-out calc(var(--motion-exit) - var(--motion-stagger)) var(--motion-ease-standard) both; }
    .onboarding-step.onboarding-step[data-step-state="exiting"] section p { animation-name: setup-text-out; }
    .onboarding-step section p { animation-delay: calc(var(--motion-stagger) / 2); }
    .onboarding-step section p:nth-of-type(n + 2) { animation-delay: var(--motion-stagger); }
@@ -293,7 +295,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 @keyframes setup-text-in { from { opacity: 0; filter: blur(4px); transform: translateY(var(--motion-distance-enter)); } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
 @keyframes setup-text-out { from { opacity: 1; filter: blur(0); transform: translateY(0); } to { opacity: 0; filter: blur(4px); transform: translateY(var(--motion-distance-exit)); } }
 .onboarding-step h1 { margin: 0 0 var(--space-6); overflow-wrap: anywhere; }
-.onboarding-step h1:focus { outline: none; }
+.onboarding-step:focus { outline: none; }
 .onboarding-step > label { display: grid; gap: var(--space-2); max-width: 100%; }
 .onboarding-step > label > input, .onboarding-step > label > select { width: 100%; }
 .onboarding-step .form-actions { justify-content: flex-start; }
@@ -352,6 +354,8 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .filter-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: var(--space-2); padding: 0 var(--space-2); border-radius: var(--radius-pill); background: var(--desk-action); color: var(--desk-on-action); font-size: var(--text-caption); font-weight: var(--weight-bold); }
 .journal-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); padding-bottom: var(--space-6); border-bottom: 1px solid var(--desk-line); }
 .journal-tools > label { flex: 1 1 140px; font-size: var(--text-caption); }
+.journal-tools > label:has(input[type="date"]) { flex-basis: 12rem; min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.journal-tools input[type="date"] { width: 100%; }
 .search-field { position: relative; flex: 2 1 220px !important; }
 .search-field svg { position: absolute; top: 13px; left: 12px; color: var(--desk-muted); }
 .search-field input { width: 100%; padding-left: var(--space-10); }
@@ -410,6 +414,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .prescribed-session p { margin: 0; padding-block: var(--space-2); white-space: pre-line; overflow-wrap: anywhere; }
 .prescribed-session p + p { border-top: 1px solid var(--glass-border); }
 .data-table-scroll { overflow-x: auto; }
+.data-table-scroll + * { margin-top: var(--space-4); }
 /* The lap bars are drawn in the palette itself, so switching theme or palette
    recolours the chart the way it recolours the map line and the pace dots. */
 .lap-execution { --lap-fill: var(--desk-action); --lap-ink: var(--desk-on-action); --lap-edge: color-mix(in srgb, var(--desk-action) 60%, var(--desk-ink)); --lap-target: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface)); }
@@ -443,7 +448,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
    .lap-execution-table tr > :last-child { padding-inline-end: var(--space-3); }
 }
 .lap-row-button { display: inline-block; width: var(--control-size); height: var(--control-size); padding: 0; border: 0; color: var(--desk-muted); background: transparent; border-radius: var(--desk-radius); font-variant-numeric: tabular-nums; vertical-align: middle; }
-.lap-row-button[aria-pressed="true"] { color: var(--desk-action); font-weight: var(--weight-semibold); text-decoration: underline; text-underline-offset: 4px; }
+.lap-row-button[aria-pressed="true"] { color: var(--desk-action); font-weight: var(--weight-semibold); }
 .lap-row-pace { display: block; font-variant-numeric: tabular-nums; }
 .lap-row-target { font-variant-numeric: tabular-nums; }
 /* Biased toward the ink rather than the raw fill: the fill is a mid green that
@@ -480,7 +485,16 @@ tbody th { font-weight: var(--weight-medium); }
    visibly carries through to every toolbar selector. */
 .horizon-switch a[aria-current] { color: var(--desk-action); }
 .horizon-switch .selection-marker { background: color-mix(in srgb, var(--desk-action) 14%, var(--desk-surface)); }
-.pace-insights { display: grid; gap: var(--space-5); min-width: 0; max-width: 940px; font-size: var(--text-body); --pace-mark: var(--desk-action); --pace-band: color-mix(in srgb, var(--desk-action) 16%, var(--desk-surface)); }
+.pace-insights { display: grid; gap: var(--space-6); min-width: 0; max-width: 1280px; font-size: var(--text-body); --pace-mark: var(--desk-action); --pace-band: color-mix(in srgb, var(--desk-action) 16%, var(--desk-surface)); }
+.pace-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-8); align-items: start; min-width: 0; }
+.pace-progress, .pace-forecast { display: grid; gap: var(--space-4); min-width: 0; }
+.pace-forecast { border-top: 1px solid var(--desk-line); padding-top: var(--space-6); }
+.pace-forecast:empty { display: none; }
+@media (min-width: 1200px) {
+  .pace-overview { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); }
+  .pace-overview:has(.pace-forecast:empty) { grid-template-columns: minmax(0, 1fr); }
+  .pace-forecast { border-top: 0; border-left: 1px solid var(--desk-line); padding: 0 0 0 var(--space-6); }
+}
 .pace-mode { display: flex; gap: var(--space-1); background: var(--desk-soft); padding: var(--space-1); max-width: 360px; border-radius: var(--desk-radius); margin-bottom: var(--space-6); }
 .pace-mode button { flex: 1; min-height: var(--control-size); border: 0; background: transparent; border-radius: var(--radius-small); color: var(--desk-muted); font-weight: var(--weight-medium); }
 .pace-mode button[aria-pressed="true"] { background: var(--desk-surface); color: var(--desk-ink); box-shadow: var(--shadow-control); }
@@ -492,10 +506,11 @@ tbody th { font-weight: var(--weight-medium); }
 .pace-insights h3 { margin: 0; font-size: var(--text-subtitle); line-height: var(--leading-heading); }
 .pace-insights .pace-mode { margin: 0 auto; width: 100%; padding: var(--space-2); }
 .pace-insights .pace-mode button { font-size: var(--text-label); }
-.pace-summary { color: var(--desk-muted); font-size: var(--text-detail); }
+.pace-summary strong { display: block; font-size: var(--text-subtitle); line-height: var(--leading-heading); }
+.pace-summary p { color: var(--desk-muted); font-size: var(--text-detail); margin: var(--space-2) 0 0; max-width: 68ch; }
 .pace-insights-figure { margin: 0; position: relative; }
-.pace-chart-frame { display: grid; grid-template-columns: minmax(0, 1fr) 48px; gap: var(--space-2); align-items: stretch; }
-.pace-axis-labels { display: flex; flex-direction: column; justify-content: space-between; padding-block: var(--space-4); font-size: var(--text-detail); color: var(--desk-muted); }
+.pace-chart-frame { display: grid; grid-template-columns: minmax(0, 1fr) fit-content(35%); gap: var(--space-2); align-items: stretch; }
+.pace-axis-labels { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; padding-block: var(--space-4); font-size: var(--text-detail); color: var(--desk-muted); overflow-wrap: anywhere; }
 .pace-insights-figure svg { display: block; width: 100%; height: auto; aspect-ratio: 15 / 7; max-height: 240px; }
 .pace-insights-figure svg text { fill: var(--desk-muted); font-size: var(--text-detail); }
 .pace-point-band, .pace-band-key { fill: var(--pace-band); background: var(--pace-band); }
@@ -513,11 +528,15 @@ tbody th { font-weight: var(--weight-medium); }
 .pace-session-picker { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(44px, 1fr); gap: var(--space-2); margin: var(--space-6) 0; }
 .pace-session-picker button { min-width: 0; min-height: 54px; padding: var(--space-2) var(--space-half); color: var(--desk-muted); background: transparent; border: 0; border-bottom: 2px solid var(--desk-line); font-size: var(--text-caption); }
 .pace-session-picker button[aria-pressed="true"] { color: var(--desk-action); border-color: var(--desk-action); font-weight: var(--weight-semibold); }
+.pace-progress .pace-session-picker button { flex: 1 0 76px; min-width: 76px; }
 .pace-session-picker small { display: block; font-size: var(--text-caption); font-weight: var(--weight-normal); }
 .pace-session-detail { display: grid; gap: var(--space-4); min-width: 0; padding-top: var(--space-5); border-top: 1px solid var(--desk-line); }
 .pace-session-detail > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .pace-session-detail > header > .motion-change { flex: 1 1 220px; min-width: 0; }
 .pace-session-detail p { margin: var(--space-2) 0 0; font-size: var(--text-detail); }
+.pace-session-detail .pace-rep-summary { color: var(--desk-ink); }
+.pace-session-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pace-session-actions [aria-expanded="true"] .disclosure-indicator { rotate: 180deg; }
 .pace-session-detail .data-table-scroll { width: 100%; }
 .pace-method { justify-self: start; margin: 0; font-size: var(--text-label); }
 .pace-insights > .adjustment-evidence { margin: 0; padding-top: var(--space-4); border-top: 1px solid var(--desk-line); }
@@ -579,6 +598,7 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .transfer-camera { display: block; width: 100%; max-height: 20rem; object-fit: contain; margin: 0; background: black; }
 .about-settings h3, .about-settings p, .about-settings .form-actions { margin: 0; }
 .about-settings h3 { margin-bottom: var(--space-4); }
+@media (max-width: 800px) { .about-releases { display: none; } }
 .app-update { display: grid; gap: var(--space-5); min-width: 0; }
 .app-update progress { display: block; width: 100%; max-width: 32rem; height: var(--space-3); accent-color: var(--desk-action); }
 .app-update [role="status"] { overflow-wrap: anywhere; }
@@ -611,9 +631,8 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .training-map .route-map { height: min(65vh, 650px); min-height: 340px; }.training-map .route-figure { margin: 0; }
 .health-history { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: var(--space-7); }
 .spinner { animation: desk-spin 1s linear infinite; }
-/* Wound backwards on purpose, and only on the sync button: pulling the past
-   in reads counter-clockwise, so the refresh glyph gives the time back while
-   the history arrives. */
+/* Mirroring reverses both the refresh arrows and the apparent spin direction. */
+.sync-icon { display: flex; transform: scaleX(-1); }
 .spinner-reverse { animation-direction: reverse; }
 @keyframes desk-spin { to { transform: rotate(360deg); } }
 @media (max-width: 800px) {
@@ -726,6 +745,13 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
   .form-grid { grid-template-columns: 1fr; gap: var(--space-4); }
   input, select, textarea { font-size: var(--text-body); }
 }
+@media (max-width: 480px) {
+   .roadmap-row { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-wrap: anywhere; }
+   .roadmap-row > span:first-child { grid-area: 1 / 1 / 2 / -1; }
+   .roadmap-row > strong:nth-of-type(1) { grid-area: 2 / 1; }
+   .roadmap-row > strong:nth-of-type(2) { grid-area: 2 / 2; }
+   .roadmap-row .roadmap-track { grid-area: 3 / 1 / 4 / -1; }
+}
 @media (max-width: 370px) { .desk-brand-name { display: none; } .training-toolbar .horizon-switch a, .training-toolbar .date-controls > .desk-button:not(.icon-button) { padding-inline: var(--space-1); } .training-toolbar .horizon-switch { gap: var(--space-1); } .training-toolbar .date-controls, .desk-toolbar.training-toolbar { gap: var(--space-2); } }
 @media (max-width: 480px) {
    .desk-toolbar.training-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
@@ -744,6 +770,14 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
 .race-estimates th, .race-estimates td { overflow-wrap: anywhere; }
 @media (max-width: 800px) { .race-estimates th, .race-estimates td { font-size: var(--text-detail); padding-inline: var(--space-1); } }
 .race-estimates tbody td:last-child { color: var(--desk-action); font-weight: var(--weight-semibold); }
+.race-estimates.pace-forecast-estimates { margin: 0; }
+.pace-forecast-estimates table, .pace-forecast-estimates tbody { display: block; }
+.pace-forecast-estimates tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-3); padding-block: var(--space-3); border-bottom: 1px solid var(--desk-line); }
+.pace-forecast-estimates tbody th, .pace-forecast-estimates tbody td { min-width: 0; padding: 0; border: 0; }
+.pace-forecast-estimates tbody th { grid-column: 1 / -1; color: var(--desk-ink); }
+.pace-forecast-estimates tbody td { font-size: var(--text-detail); }
+.pace-forecast-estimates tbody td:last-child:not([data-projection]) { color: var(--desk-muted); font-weight: var(--weight-normal); }
+.pace-estimate-label { display: block; color: var(--desk-muted); font-size: var(--text-caption); font-weight: var(--weight-normal); }
 .plan-basis .race-estimates { margin-block: var(--space-5); }
 .plan-basis .race-estimates + .data-table-scroll { margin-bottom: var(--space-4); }
 .plan-basis .data-table-scroll[aria-label="Device plan"] td { line-height: var(--leading-control); }

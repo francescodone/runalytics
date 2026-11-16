@@ -818,10 +818,11 @@ pub fn pending_changes(state: &AppState) -> Result<bool> {
     Ok(config.acknowledged_blob.is_some() && local_changed(state, &config)?)
 }
 
-/// `None` when the channel is
-/// not configured (nothing was attempted, so nothing to show), `Some` when a
-/// push actually ran. The staged toast in the commands layer uses this to
-/// decide whether to draw a gist line at all.
+pub(crate) fn automatic_push_will_run(state: &AppState) -> bool {
+    load_device(state).map(|config| config.enabled).unwrap_or(true)
+}
+
+/// `None` when the channel is not configured; `Some` when a push was attempted.
 pub async fn try_push_if_enabled(state: &AppState) -> Option<Result<PlanSync>> {
     let config = match load_device(state) { Ok(config) => config, Err(error) => return Some(Err(error)) };
     if !config.enabled {

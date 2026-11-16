@@ -1,3 +1,4 @@
+:is(button, input, select, textarea, summary, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, .toggle-setting) { font-family: var(--font-control); }
 button, a, input, select, textarea, summary, .choice-row label, .palette-options label, .toggle-setting {
   transition: background-color var(--motion-feedback) var(--motion-settle), border-color var(--motion-feedback) var(--motion-settle), color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle), scale var(--motion-feedback) var(--motion-settle), transform var(--motion-feedback) var(--motion-settle), translate var(--motion-feedback) var(--motion-settle);
 }
@@ -21,7 +22,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 .desk-button:disabled:not([aria-busy="true"]) { scale: 1; }
 .desk-button[aria-busy="true"] { border-color: color-mix(in srgb, currentColor 45%, transparent); }
-.desk-button.danger { --button-accent: var(--desk-danger); }
+.desk-button.danger { --button-accent: var(--desk-danger); --button-ink: var(--desk-danger); }
 .desk-button.danger:focus-visible { outline-color: var(--desk-danger); }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label)::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: var(--button-sheen); opacity: 1; transition: opacity var(--motion-change) var(--motion-settle); }
 .desk-button:focus-visible::before { opacity: 1; }
@@ -30,7 +31,9 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button.primary:active:not(:disabled) { background-color: var(--state-primary-pressed); }
 .desk-button .button-content { min-width: 0; }
 .button-content:has(.control-tooltip) { width: 100%; }
-.control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: var(--space-2) var(--space-3); background: var(--desk-ink); color: var(--desk-surface); border-radius: var(--radius-control); font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-control); pointer-events: none; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: var(--layer-tooltip); transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
+.control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: var(--space-2) var(--space-3); background: var(--desk-ink); color: var(--desk-surface); border-radius: var(--radius-control); font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-control); pointer-events: auto; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: var(--layer-tooltip); transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
+.control-tooltip::before { content: ""; position: absolute; inset: auto 0 100%; height: var(--space-2); }
+.route-controls .control-tooltip::before { inset: 0 auto 0 100%; width: var(--space-3); height: auto; }
 .desk-button:focus-visible .control-tooltip { opacity: 1; visibility: visible; translate: 0; }
 .desk-button:active .control-tooltip { opacity: 0; visibility: hidden; }
 .control-tooltip[data-dismissed="true"] { opacity: 0 !important; visibility: hidden !important; }
@@ -192,7 +195,7 @@ progress { accent-color: var(--desk-action); }
   background-position: center;
   background-repeat: no-repeat;
 }
-:is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) {
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) {
   --surface-tilt-strength: 4;
   --surface-perspective: 800px;
   transform-origin: center;
@@ -205,9 +208,9 @@ progress { accent-color: var(--desk-action); }
     --state-primary-hover: color-mix(in srgb, var(--button-primary-surface) 88%, transparent);
     --state-primary-pressed: color-mix(in srgb, var(--button-primary-surface) 94%, transparent);
   }
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):is(:focus-visible, :active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { -webkit-backdrop-filter: var(--button-glass-filter); backdrop-filter: var(--button-glass-filter); }
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:focus-visible, :active):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { -webkit-backdrop-filter: var(--button-glass-filter); backdrop-filter: var(--button-glass-filter); }
   @media (hover: hover) and (pointer: fine) {
-    :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):hover:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { -webkit-backdrop-filter: var(--button-glass-filter); backdrop-filter: var(--button-glass-filter); }
+    :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):hover:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { -webkit-backdrop-filter: var(--button-glass-filter); backdrop-filter: var(--button-glass-filter); }
   }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
@@ -222,8 +225,6 @@ progress { accent-color: var(--desk-action); }
   --card-fill: color-mix(in srgb, var(--session-color, var(--desk-action)) 4%, var(--control-surface));
   --surface-tilt-strength: 20;
   --surface-perspective: 650px;
-  --shadow-button-hover: inset 0 2px 0 color-mix(in srgb, var(--button-highlight) 75%, transparent), inset 0 -2px 0 color-mix(in srgb, var(--button-shade) 35%, transparent), 0 5px 7px -5px var(--button-shade);
-  --shadow-button-pressed: inset 0 3px 6px color-mix(in srgb, var(--button-shade) 70%, transparent), inset 0 -2px 0 var(--button-highlight);
   transform-origin: center;
 }
 :is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current) { --card-fill: var(--state-selected); }
@@ -262,38 +263,45 @@ progress { accent-color: var(--desk-action); }
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):hover:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):not(.is-dragging) { --aura-strength: 100%; }
 }
 :is(button, .desk-navigation a, .horizon-switch a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { box-shadow: none; }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
-  --state-hover: var(--button-surface);
-  --state-pressed: var(--button-surface);
-  --state-primary-hover: var(--button-selected-surface);
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
+  --state-hover: var(--button-fill, var(--button-surface));
+  --state-pressed: var(--button-selected-surface);
+  --state-primary-hover: var(--button-fill, var(--button-surface));
   --state-primary-pressed: var(--button-selected-surface);
-  background-color: var(--button-surface);
-  background-image: var(--button-sheen), var(--material-aura);
+  background-color: var(--button-fill, var(--button-surface));
+  background-image: var(--button-sheen), var(--button-aura), var(--material-aura);
   border: var(--control-border) solid var(--button-border-color);
-  border-radius: var(--radius-button);
-  color: var(--desk-muted);
+  color: var(--button-ink, var(--desk-ink));
   box-shadow: var(--shadow-button);
 }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)) {
-  background-color: var(--button-selected-surface);
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label) { position: relative; }
+:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { border-radius: var(--radius-button); }
+:is(.session-tile, .activity-row, .roadmap-row, .settings-task-list a, .lap-pace-column) { --button-ink: var(--desk-ink); }
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:disabled, [aria-disabled="true"], :has(:disabled)) { background-color: var(--desk-soft); background-image: none; border-color: var(--button-border-color); border-style: dashed; color: var(--desk-muted); box-shadow: none; opacity: 1; cursor: not-allowed; }
+.desk-button[aria-busy="true"] { cursor: progress; border-style: solid; color: var(--desk-ink); }
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)) {
+  --button-fill: var(--button-selected-surface);
+  background-color: var(--button-fill);
   background-image: none;
-  color: var(--button-accent, var(--desk-action));
+  color: var(--button-selected-ink);
   box-shadow: var(--shadow-button-selected);
+  font-weight: var(--weight-bold);
 }
-:is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(:active, :focus-visible, [data-aura-pressed="true"]) {
-  background-color: var(--button-surface);
-  background-image: var(--button-sheen), var(--material-aura);
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(:active, :focus-visible, [data-aura-pressed="true"]) {
+  background-color: var(--button-fill, var(--button-surface));
+  background-image: var(--button-sheen), var(--button-aura), var(--material-aura);
   border-color: var(--button-border-color);
 }
 @media (hover: hover) and (pointer: fine) {
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):hover {
-    background-color: var(--button-surface);
-    background-image: var(--button-sheen), var(--material-aura);
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):hover {
+    background-color: var(--button-fill, var(--button-surface));
+    background-image: var(--button-sheen), var(--button-aura), var(--material-aura);
     border-color: var(--button-border-color);
   }
 }
-:root:not([data-desk-theme="dark"]) :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(:active, [data-aura-pressed="true"]) {
-  background-color: color-mix(in srgb, var(--button-accent, var(--desk-action)) 18%, var(--desk-surface));
+:is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)):is(:active, [data-aura-pressed="true"]) {
+  background-color: var(--button-selected-surface);
+  box-shadow: var(--shadow-button-pressed);
 }
 :is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker, .mobile-date-ribbon) .selection-marker { background: transparent; box-shadow: none; }
 :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is(:hover, :active) > .selection-marker { background: transparent; }
@@ -303,7 +311,7 @@ progress { accent-color: var(--desk-action); }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label)::before { display: none; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
 @supports (mask-composite: exclude) or (-webkit-mask-composite: xor) {
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not(:where(:disabled, [aria-disabled="true"], :has(:disabled)))::after {
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):not(:where(:disabled, [aria-disabled="true"], :has(:disabled)))::after {
     content: "";
     position: absolute;
     inset: calc(-1 * var(--control-border));
@@ -318,11 +326,11 @@ progress { accent-color: var(--desk-action); }
     opacity: 0;
     transition: opacity var(--motion-change) var(--motion-settle);
   }
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):is(:focus-visible, :has(:focus-visible))::after { opacity: .8; }
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:focus-visible, :has(:focus-visible))::after { opacity: .8; }
   @media (hover: hover) and (pointer: fine) {
-    :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):hover::after { opacity: .8; }
+    :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):hover::after { opacity: .8; }
   }
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):is(:active, [data-aura-pressed="true"])::after { opacity: 1; transition-duration: var(--motion-press); }
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:active, [data-aura-pressed="true"])::after { opacity: 1; transition-duration: var(--motion-press); }
 }
 @media (min-width: 801px) {
   .notification-viewport { left: auto; right: max(calc(var(--shell-inset) + var(--space-4)), calc((100vw - var(--content-max)) / 2 + var(--shell-inset) + var(--space-4))); bottom: calc(var(--shell-inset) + var(--space-4)); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap) - 2 * var(--space-4))); }
@@ -351,10 +359,10 @@ progress { accent-color: var(--desk-action); }
   .activity-row:hover > svg:last-child, .settings-task-list a:hover > svg:last-child, .roadmap-row:hover > svg:last-child { translate: none; }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-  :root { --control-surface: var(--desk-surface); }
+  :root { --control-surface: var(--desk-surface); --button-glass-filter: none; }
   :is(button.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { --shadow-button: none; --button-glass-filter: none; --state-hover: var(--control-surface); --state-pressed: var(--desk-soft); --state-primary-hover: var(--button-primary-surface); --state-primary-pressed: var(--button-primary-surface); }
   :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):not([aria-current], [aria-selected="true"], [aria-pressed="true"], :has(:checked)):not(:hover):not(:active) { background-color: var(--desk-surface); }
-  .desk-button, .desk-button:is(:hover, :focus-visible, :active):not(:disabled) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label), :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:hover, :focus-visible, :active):not(:disabled) { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .desk-button:not(.primary) { background-color: var(--desk-surface); }
   .desk-button.primary { background-color: var(--desk-surface); }
   :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary) { --material-aura: none; }
@@ -362,5 +370,5 @@ progress { accent-color: var(--desk-action); }
   .desk-dialog::backdrop, .inspector-backdrop { animation: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .button-result > svg { animation-name: status-arrive; }
   :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label)::before { display: none; }
-  :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label)::after { display: none; }
+  :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label)::after { display: none; }
 }

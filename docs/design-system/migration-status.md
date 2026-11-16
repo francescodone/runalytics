@@ -1,3 +1,348 @@
+## Race-Day Estimates Across Distances, 2026-11-16
+
+An eligible race plan now projects each displayed distance using the existing
+plan-based race-day threshold and Riegel estimate. The same eligibility guards
+and training model remain in place. Sync freshness is explained in Estimate
+basis rather than below the table; the target-only notice was removed.
+
+Verification: production build, eight-catalog consistency check, and seven
+focused Chromium checks passed. These include 320px and 1440px forecasts,
+different target distances and missing-data cases using synthetic IPC. Native
+WebViews, physical devices and live providers were not tested. The referenced
+foundations and components documents are absent from this checkout.
+
+## Race Forecast and Heading Focus, 2026-11-16
+
+Race-day estimates now show all four distances using the existing projected
+plan threshold at the target race date. They remain estimates, not separate
+race-specific training predictions, and retain the existing eligibility and
+missing-data rules. The forecast moves watch freshness into Estimate basis and
+removes the obsolete target-only note. Content following scrollable tables has
+consistent spacing.
+
+Headings no longer receive programmatic focus. Dialogs focus an input or their
+close button, keep keyboard focus inside, and restore the opener; setup focuses
+its named step, and workspace navigation focuses the workspace. Plan review
+focuses its submit control. Entry URLs and training algorithms are unchanged.
+
+Verification: the production build and eight-catalog check passed. Fifty-five
+focused Chromium checks covered forecast calculations, dialog keyboard focus,
+setup, the route matrix at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024,
+1280, 1366, 1440, 1600, 1920 and 2560px in both themes, short viewports and
+200% text. Fourteen additional Chromium setup workflow checks and five focused
+plan-review, touch and forecast checks passed. Seven focused WebKit checks
+covered 320px and 1440px forecasts, dialog focus and setup recovery. Forecast
+screenshots at 320px and 1440px were inspected. The older overlay alignment
+workflow could not complete because its Health journal route resolves to Pace;
+the background-sync loading test also expected a loading state not set by the
+existing background sync implementation. Browser checks use synthetic IPC;
+physical devices, native WebViews and live watch data were not tested. The
+referenced foundations and components documents remain absent from this checkout.
+
+## Selected Controls Without Underlines, 2026-11-16
+
+Selected controls and lap table buttons no longer underline their labels. Their
+selected fill, weight, semantics and keyboard focus indicators remain intact.
+
+Verification: the production build and 44 Chromium checks passed, including
+selected controls at 320, 390 and 1440px in both themes, all six palettes at
+320 and 1440px, lap selection, and the route matrix at 320, 360, 375, 390,
+414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in
+both themes. Twelve focused WebKit checks passed. Selection screenshots at
+320px light and 1440px dark were inspected. Browser checks use synthetic IPC;
+native WebViews and physical devices were not tested.
+
+## Workspace Action Ownership
+
+Plan details retain the other device's plan status without a **Manage device
+sync** shortcut; connection actions remain in **Settings > Device sync**.
+Pace insights retain the next workout summary without a generic **View plan**
+button; **Training > Plan** remains the navigation path. The empty Plan view
+uses the single header **Create plan** action, with its existing loading,
+connection and history-sync guards. Contextual watch setup/recovery, Help links,
+specific activity reviews and destructive confirmations are unchanged. Entry
+URLs, IPC contracts, backend algorithms and translation catalogs are unchanged.
+
+Verification: the production build, eight-catalog localization check, 69 scoped
+synthetic-IPC Chromium checks and 10 focused WebKit checks passed. Coverage
+includes canonical settings navigation and sync, single-action plan creation,
+keyboard activation and focus return, disconnected recovery, activity reviews,
+benchmark scheduling and plan-ending/import confirmations. The existing
+plan-ending check now opens compact Plan details before accessing its action.
+The Prism matrix covered 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280,
+1366, 1440, 1600, 1920 and 2560px in both themes; 537x740, 913x480 and 667x375;
+and 200% text at 320, 820 and 1440px. Populated Plan, Pace insights and empty
+Plan screenshots at 320px light and 1440px dark were inspected. Browser checks
+use synthetic IPC, not native integration; physical devices, native WebViews
+and live providers were not tested. The referenced foundations and components
+documents are absent from this checkout; no visual-system changes were made.
+
+## Blended Current Race Estimates, 2026-11-16
+
+**Today** now shows one estimate per distance: the arithmetic mean of the
+plan's Riegel heuristic and the latest synced watch prediction, weighted 50/50
+and rounded to the nearest second. Finite positive times are eligible; a missing
+or invalid source falls back to the other. When neither is valid, the result is
+**Not available**. The source-specific Watch column is removed and the per-distance
+forecast uses two columns, Today and Race day projection. The basis dialog
+explains weighting, fallback, the saved effective threshold and model limitations
+in all eight languages; the watch sync-freshness warning remains visible.
+
+Race-day projections and Current / Proposed pace-adjustment previews remain
+plan-only. This is presentation-layer interpolation, not a change to stored
+thresholds, backend training algorithms, watch data or approval behavior.
+This supersedes the separate watch/heuristic presentation documented below.
+
+Verification: production build and eight-catalog checks passed, along with
+50 Chromium checks (including the 35-check Prism matrix) and 15 focused WebKit
+checks. Cases cover the exact mean and rounding, per-distance fallback, invalid
+sources, failed watch loading, the accepted threshold, unchanged projections
+and proposal approval. The matrix covered 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light and dark
+themes, plus 537x740, 913x480 and 667x375. Populated forecasts were checked at
+320, 1199, 1200 and 1440px; Italian, German and Japanese forecast labels and
+blend explanations were checked at 320px. English forecasts at 320x844 and
+1440x844, the 320x844 basis dialog and the Italian 320x844 forecast screenshots
+were inspected. Browser checks use synthetic IPC, not native integration;
+physical devices, native WebViews and live watch data were not tested.
+
+## Today Race Estimate Basis, 2026-11-16
+
+The heuristic estimate is labelled **Today** in both the table headers and the
+per-distance forecast labels. Proposal previews retain **Current / Proposed**.
+Estimate basis now displays the effective saved plan threshold, including the
+accepted pace offset, and distinguishes it from the latest watch threshold.
+This explanation is available in all eight languages.
+
+Review confirmed that the one-hour Riegel estimate (exponent 1.06) agrees with
+the backend race-pace formula and that the watch marathon field is parsed
+separately from the half-marathon field. The heuristic does not model individual
+marathon endurance and can be optimistic; the saved threshold can also differ
+from the latest watch assessment. The reported 15-minute gap cannot be attributed
+to a specific cause without the actual values. Neither model nor training paces
+were retuned merely to force agreement.
+
+Verification: production build, eight-catalog checks, 11 focused Chromium tests,
+seven focused WebKit tests, six existing marathon backend tests and the 35-check
+Prism matrix passed. The matrix covered 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light and dark themes,
+plus 537x740, 913x480 and 667x375. Forecast screenshots at 320x844 and 1440x844
+and the basis dialog at 320x844 were inspected. A focused synthetic case retains
+an exact 900-second watch/heuristic gap while showing the accepted threshold;
+opening the explanation does not modify the plan. Browser checks use synthetic
+IPC, not native integration. Live watch values and native devices were not tested.
+
+## Accessible Optical Controls, 2026-11-16
+
+Shared web buttons, navigation, choice labels and native form controls use the
+platform sans-serif control font; Young Serif remains the reading and brand
+face. Glass buttons have a lighter translucent fill, restrained palette washes,
+a brighter surface sheen and defined neutral edges. Selected controls retain
+their fill on hover and focus, with stronger ink and weight so selection does
+not depend on color alone. Disabled controls keep readable ink
+and use a dashed edge instead of dimming their labels. Opaque fallbacks respect
+reduced transparency, increased contrast and forced colors in both themes.
+Blur remains interaction-only; shared press physics, confirmations and action
+footprints are unchanged. Toolbar and map tooltips can be hovered across their
+gap and dismissed with Escape. Compact plan rows reflow their heading and
+measurements to remain readable with enlarged text.
+
+Verification: the production build and 71 scoped synthetic-IPC Chromium checks
+passed, including the 32-case route matrix at 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px in both themes;
+537x740, 913x480 and 667x375 viewports; and 200% text at 320, 820 and 1440px.
+Twenty-three scoped WebKit checks passed. The final tooltip and normal, primary
+and destructive press checks were also rerun successfully in both browsers.
+Rendered-background checks cover 4.5:1 text contrast and 3:1 icon contrast on
+representative controls; selected, hovered and keyboard-operated modes cover
+all six current palettes at 320 and 1440px in both themes. Axe checks passed
+for the existing 820px detail/settings matrix. Reduced transparency was emulated
+in Chromium; increased contrast and forced colors were checked in both engines.
+The 320px light watch settings, 1440px dark training, 320px dark selection and
+320px 200%-text plan screenshots were inspected. These are browser checks with
+synthetic IPC, not native integration tests or a full accessibility certification.
+Native WebViews, physical devices and live providers were not tested.
+
+## Pace Insights Hierarchy, 2026-11-16
+
+Pace insights starts with recent target-relative execution and the selected
+session's measured-rep count. The session summary excludes outdated sessions
+and requires all measured reps in a counted session to be within their own
+targets; outdated sessions can still be inspected. The chart retains the five
+most recent eligible sessions and the date selector keeps
+the selected session visible, including after a viewport resize, without
+interrupting manual scrolling. Detailed rep
+values are available in a shared keyboard-operable disclosure; the activity
+review remains a separate action.
+
+At 1200px and above, progress and race estimates share the workspace in two
+columns. Below that width they stack in reading order: progress, selected
+session, predictions, and the next workout. Estimates are grouped by distance
+without a wide mobile table. Watch values are labelled as the latest sync, while
+the race-day projection is explicitly limited to an eligible target race.
+Pacing evidence and its approval flow remain below the overview.
+
+Verification: production build, eight-catalog localization checks, 29 focused
+Chromium and 22 focused WebKit checks passed, including race estimates,
+no-plan/retry states, keyboard disclosure and proposal review. The date
+picker's manual scrolling was additionally checked 40 times in each browser at
+320 and 390px across both themes. The synthetic-IPC Chromium Prism route matrix
+passed at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440,
+1600, 1920 and 2560px in light and dark themes, plus 537x740, 913x480 and
+667x375. All eight languages were checked at 320px for chart fit and rep
+disclosure. Populated English 320x844 and 1440x844 and German 320x844
+screenshots were inspected. The broader i18n suite still contains unrelated
+tests for the retired Health route and the previous no-plan flow; the focused
+locale checks passed. Browser checks use synthetic IPC; native WebViews,
+physical devices and live providers were not tested.
+
+## Compact Content Reveals, 2026-11-16
+
+Content and numeric reveals settle immediately at widths up to 800px, including
+asynchronous and offscreen content. Switching into the compact layout settles
+active and pending reveals; switching back does not replay settled content.
+Compact setup removes the individual entrance blur while retaining the step
+transition and departure feedback. Presses, selection and surfaces retain their
+interaction motion.
+
+Verification: the production build passed. Synthetic-IPC Chromium checks covered
+320, 390, 800, 801 and 1440px, including offscreen and retained content, active
+counter cancellation, live breakpoint changes, dialog and touch feedback, and
+disclosure and setup transitions. The packaged compact build was also checked.
+The same compact and setup checks, plus touch navigation, passed in WebKit. The
+32-case Prism route matrix passed at 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light and dark themes; 537x740,
+913x480 and 667x375 short/intermediate viewports also passed. The 320px light
+and 390px dark compact Pace screenshots and 320px light and 1440px dark training
+screenshots were inspected.
+
+Three older interaction checks still look for retired Health controls. A separate
+navigation touch-down check can hit the opening splash before the target is ready;
+that also reproduced with the prior reveal scheduling. Native WebViews, physical
+devices and live providers were not tested.
+
+## Sync Notification Steps, 2026-11-16
+
+Full sync announces its applicable destinations together. Waiting, working,
+completed and failed steps stay in order and use a clock, spinner, checkmark
+and cross respectively. Unconfigured or skipped destinations are
+omitted. Each sync event carries the current list so a window joining mid-sync
+can recover it; dismissing the notification suppresses the remainder of that
+operation. Setup continues to suppress notifications while it is open.
+
+Verification: the production build, eight-catalog localization check, 12 focused
+synthetic-IPC Chromium notification/setup checks, two native stage-planning
+checks, 19 Strava tests and 34 device-sync tests passed. Notification screenshots
+at 320px light and 1440px dark were inspected; all four light/dark combinations
+at those widths passed. The 32-case Prism route matrix passed at 320, 360, 375,
+390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px
+in both themes, along with 537x740, 913x480 and 667x375 viewports and 820px and
+1440px enlarged-text checks. The 320px enlarged-text check did not complete and
+the run was stopped. The route matrix preceded the final event-snapshot change;
+the focused notification checks covered that change. Native WebViews, physical
+devices and live providers were not tested.
+
+## Shared Translucent Button Material, 2026-11-16
+
+All web button families use the training-plan link's shared palette wash, glass
+fill, sheen, edge feedback and depth, including workout tiles, activity and plan
+rows, settings actions and lap-chart controls. Action pills and content-row
+geometry remain distinct; selected controls retain their tint and destructive
+actions retain warning ink. Blur remains interaction-only. Unsupported blur,
+reduced transparency, increased contrast and forced colors use opaque fallbacks.
+The Swift-owned native navigation island and its ownership contract are unchanged.
+
+Verification: the production build passed. Synthetic-IPC Chromium checks covered
+material parity and destructive ink at 320 and 1440px in light and dark themes,
+shared controls at 320, 390, 768 and 1440px, pointer and keyboard feedback, touch
+selection/release, lap interactions, and pending/success/error geometry. Six
+WebKit material-parity and keyboard checks also passed at 320 and 1440px in both
+themes. The 32-case Prism route matrix passed at 320–2560px in both themes, plus 537x740,
+913x480 and 667x375 short/intermediate viewports. The 320px light watch-settings
+and 1440px dark training screenshots were inspected. Three existing workflow
+checks could not find their expected controls (two native-ready recovery-dialog
+checks and the end-plan action); all three also failed with the pre-change CSS.
+Native WebViews, physical devices and live providers were not tested.
+
+## Header Sync Icon
+
+The header sync control uses reversed refresh arrows and clockwise rotation while
+syncing; reduced motion keeps the icon static.
+
+Verification: the production build and three synthetic-IPC Chromium sync checks
+passed. Icon rotation and reduced motion were checked at 320 and 1440px, and
+screenshots at both widths were inspected. The 32-case Prism route matrix passed
+at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440,
+1600, 1920 and 2560px in light and dark themes. Native WebViews, physical devices
+and live providers were not tested.
+
+## Young Serif Interface Typography, 2026-11-16
+
+The production desk loads the bundled Young Serif Latin and Latin-extended web
+fonts through the shared UI token for headings, body copy and wordmarks, with
+fallbacks for glyphs outside its coverage. The Accessible Optical Controls pass
+separates button labels and native form controls into the platform sans-serif
+control token.
+
+Verification: `npm run build` passed and emitted both Young Serif font assets.
+Focused synthetic-IPC Chromium checks passed for the brand at 320, 375, 390,
+820 and 1440px, including the light and dark palette renders. A direct production
+preview also loaded Young Serif without viewport overflow. Physical devices,
+native WebViews and live providers were not tested.
+
+## Activity Date Filter Layout
+
+Activity date filters wrap when their native controls need more room, including
+in narrow desktop sidebars, while preserving filtering and reset behavior.
+
+Verification: the production build passed. Synthetic-IPC Chromium and WebKit
+checks covered date entry, reset and field geometry at 320, 393, 820 and 1440px;
+existing filter workflow checks also covered light and dark themes, short
+viewports and enlarged text. The 32-case Chromium Prism route matrix passed at
+320–2560px in both themes. The 393px Chromium and WebKit filter screenshots were
+inspected. Physical iPhones, iOS native WebViews and live providers were not tested.
+
+## Virtual Activity History
+
+Activity histories with more than 18 results mount the visible rows and a small
+buffer, measuring row heights as they appear. Desktop and compact retain their
+existing scroll owners; keyboard traversal, filtering and review focus restoration
+also work as rows enter and leave the DOM.
+
+Verification: the production build and six focused synthetic-IPC Chromium checks
+passed, including 200-activity histories at 390x844 and 1440x900, and compact
+scrolling at 320x640, 390x844 and 667x375. Virtual-history screenshots at 390
+and 1440px were inspected. The 32-case Prism route matrix and 12 filter checks
+passed in Chromium across light and dark themes; two independent-pane checks at
+820 and 1440px failed existing layout expectations with the nine-row fixture.
+Native WebViews, physical devices and live providers were not tested.
+
+## Numeric Presentation, 2026-11-16
+
+Displayed measurements and milestone progress use at most one fractional digit,
+with locale-aware separators. Editable settings and underlying measurement and
+achievement values retain their original precision.
+
+Verification: the production build, two English/French synthetic-IPC rounding
+checks, six activity and achievement workflows, and the Prism route matrix passed
+in Chromium. The matrix covered 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px in light and dark themes; three
+centered milestone checks covered 320, 820 and 1440px. The remaining dark 1600,
+1920 and 2560px cases were rerun against the production preview after the test
+server disconnected. Milestone screenshots at 320px light and 1440px dark were
+inspected. Native WebViews, physical devices and live providers were not tested.
+
+## Compact Release Browsing
+
+The About screen hides the Browse releases action at widths up to 800px and
+retains it above the compact breakpoint.
+
+Verification: the production build, eight synthetic-IPC updater and breakpoint
+checks, and the 32-case Prism route matrix passed in Chromium. Updater checks
+covered 320, 820 and 1440px in light and dark themes; the breakpoint was also
+checked at 800 and 801px. The 320px light and 1440px dark screenshots were
+inspected. Native WebViews, physical devices and live providers were not tested.
+
 ## Unified Action Buttons, 2026-11-13
 
 Primary actions use the same neutral pill surface as the training-plan link;
@@ -9,6 +354,17 @@ Verification: the production build and eight synthetic-IPC control checks passed
 at 320, 390, 768 and 1440px in light and dark themes, including hover and
 increased-contrast states. A 320px light settings screenshot was inspected.
 Native WebViews, physical devices and live providers were not tested.
+
+## Achievement Splash Ordering
+
+Achievement celebrations and their haptics wait until the opening splash finishes
+or is interrupted. Queued celebrations retain their order and the input that
+interrupts the splash cannot dismiss the first dialog.
+
+Verification: the production build, six focused synthetic-IPC Chromium checks,
+and the 32-case Prism route matrix passed. Celebration completion and Escape
+interruption were checked at 320px light and 1440px dark; screenshots were
+inspected. Native WebViews, physical devices and live providers were not tested.
 
 ## Splash Notification Ordering, 2026-11-13
 
@@ -95,10 +451,11 @@ reporting, physical devices and native keyboards were not tested.
 
 ## Branded Opening And Frosted Handoff, 2026-11-13
 
-The original nested-tile logo is unchanged. Runalytics wordmarks use the local
-Outfit UI font at the shared bold weight. On opening, the logo and staggered
-letters resolve centrally, then shrink into the measured desktop, compact or
-setup header. The workspace stays blurred throughout travel. Once the logo
+The original nested-tile logo is unchanged. The desk interface, including
+wordmarks, headings, controls and body copy, uses the bundled Young Serif family
+with system fallbacks for glyphs it does not cover. On opening, the logo and
+staggered letters resolve centrally, then shrink into the measured desktop,
+compact or setup header. The workspace stays blurred throughout travel. Once the logo
 lands, the stationary frosted layer gently fades away; the actual header logo
 stays hidden until the splash copy is synchronously hidden, avoiding overlap.
 Reduced motion skips the sequence, reduced transparency uses an opaque fallback,

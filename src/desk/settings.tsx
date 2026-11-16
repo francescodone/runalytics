@@ -372,7 +372,7 @@ function About() {
       throw error;
     }
     await relaunch();
-  })}>{pending ? t("Install {{value0}} and restart", { value0: pending.version }) : t("Check for updates")}</Button></div>{(progress != null || (command.busy && pending)) && <progress value={progress ?? undefined} max={100} aria-label={t("Update download")} />}{message && <p role="status">{message}</p>}</div>}<div className="form-actions"><Button onClick={() => void command.run(() => openUrl("https://github.com/francescodone/runalytics/releases"))}>{t("Browse releases")}</Button></div></div>;
+  })}>{pending ? t("Install {{value0}} and restart", { value0: pending.version }) : t("Check for updates")}</Button></div>{(progress != null || (command.busy && pending)) && <progress value={progress ?? undefined} max={100} aria-label={t("Update download")} />}{message && <p role="status">{message}</p>}</div>}<div className="form-actions about-releases"><Button onClick={() => void command.run(() => openUrl("https://github.com/francescodone/runalytics/releases"))}>{t("Browse releases")}</Button></div></div>;
 }
 
 export function Help() {

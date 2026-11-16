@@ -419,6 +419,31 @@ pub(super) fn quality_title(
     format!("{}{TITLE_SEP}{structure}", names[seed % names.len()])
 }
 
+/// Describe an adjusted prescription without changing the session's established name.
+pub(super) fn adjusted_quality_title(workout: &PlanWorkout, plan: &TrainingPlan, details: &WorkoutDetails) -> String {
+    let (weeks, week) = plan_week(plan, workout);
+    let pattern = quality_for_plan(plan, week, weeks).for_kind(workout.kind);
+    let main = &details.steps[1..details.steps.len() - 1];
+    let work: Vec<_> = main.iter().filter(|step| !step.open_ended).collect();
+    let split_reps = main.iter().any(|step| step.open_ended)
+        || (work.len() > 1 && matches!(pattern, QualityPattern::Repeats(_) | QualityPattern::Cruise | QualityPattern::Controlled(_)));
+    let structure = if split_reps || matches!(pattern, QualityPattern::Controlled(_)) {
+        let groups = work.iter().map(|step| {
+            format!("{} x {:.0} m", step.repeats, step.distance_m)
+        }).collect::<Vec<_>>().join(" + ");
+        if matches!(pattern, QualityPattern::Controlled(_)) {
+            format!("{groups} controlled threshold")
+        } else {
+            groups
+        }
+    } else {
+        let generated = quality_title(pattern, details, week);
+        generated.split_once(TITLE_SEP).map(|(_, structure)| structure).unwrap_or(&generated).to_string()
+    };
+    let name = workout.title.split_once(TITLE_SEP).map(|(name, _)| name).unwrap_or(&workout.title);
+    format!("{name}{TITLE_SEP}{structure}")
+}
+
 /// The new-style title for a quality session still carrying the old plain
 /// one, or `None` when there is nothing to rename.
 pub fn title_for_plan(workout: &PlanWorkout, plan: &TrainingPlan) -> Option<String> {
@@ -1102,6 +1127,18 @@ mod tests {
             current_weekly_km: Some(baseline),
             name: None,
         }
+    }
+
+    #[test]
+    fn adjusted_over_under_title_uses_current_repetition_distance() {
+        let mut request = request(RaceDistance::K21, 16, 226.0, 40.0);
+        request.training_method = TrainingMethod::RunnaLike;
+        let (plan, workouts) = super::super::engine::generate(&request, 40.0).unwrap();
+        let workout = workouts.iter().find(|workout| workout.title.contains("over/unders")).unwrap();
+        let mut details = details_for_plan(workout, &plan);
+        details.steps[1].distance_m = 400.0;
+        let title = adjusted_quality_title(workout, &plan, &details);
+        assert!(title.ends_with(&format!("{} x 400 m over/unders", details.steps[1].repeats)), "{title}");
     }
 
     #[test]

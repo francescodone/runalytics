@@ -24,7 +24,7 @@ function loadDraft(): Draft {
   try { return { ...initialDraft(), ...JSON.parse(localStorage.getItem(storageKey) || "{}") }; } catch { return initialDraft(); }
 }
 
-function OnboardingStep({ children }: { children: ReactNode }) {
+function OnboardingStep({ children, title }: { children: ReactNode; title: string }) {
   const [present, remove] = usePresence();
   const reduced = useReducedMotion();
   const [immediate, setImmediate] = useState(() => matchMedia("(max-width: 800px)").matches);
@@ -46,9 +46,9 @@ function OnboardingStep({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     if (!present || !host.current) return;
     host.current.closest(".onboarding-shell")?.scrollTo({ top: 0, behavior: "instant" });
-    host.current.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
+    host.current.focus({ preventScroll: true });
   }, [present]);
-  return <motion.section ref={host} className="onboarding-step" data-entrance={immediate ? "none" : undefined} data-step-state={present ? "present" : "exiting"} inert={!present} initial={immediate && !reduced ? { opacity: 0 } : false} animate={{ opacity: 1 }} exit={{ opacity: reduced ? 1 : 0 }} transition={{ duration: present ? tempo.landing : tempo.exit + tail }}>{children}</motion.section>;
+  return <motion.section ref={host} className="onboarding-step" tabIndex={-1} aria-label={title} data-entrance={immediate ? "none" : undefined} data-step-state={present ? "present" : "exiting"} inert={!present} initial={immediate && !reduced ? { opacity: 0 } : false} animate={{ opacity: 1 }} exit={{ opacity: reduced ? 1 : 0 }} transition={{ duration: present ? tempo.landing : tempo.exit + tail }}>{children}</motion.section>;
 }
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
@@ -66,7 +66,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const wasLoading = useRef(false);
   useLayoutEffect(() => {
     if (loading) main.current?.querySelector<HTMLElement>(".onboarding-loading")?.focus();
-    else if (wasLoading.current) main.current?.querySelector<HTMLElement>('.onboarding-step[data-step-state="present"] h1')?.focus({ preventScroll: true });
+    else if (wasLoading.current) main.current?.querySelector<HTMLElement>('.onboarding-step[data-step-state="present"]')?.focus({ preventScroll: true });
     wasLoading.current = loading;
   }, [loading]);
   const defaults = useRemote(tauri.planDefaults);
@@ -144,7 +144,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
     {loading && <div className="onboarding-loading" tabIndex={-1}><Loading label={operation === "create" ? t("Building your baseline") : syncStage ?? t("syncing")} /></div>}
     <div hidden={loading}>
     <div className="onboarding-progress"><span>{t("Step {{value0}} of {{value1}}", { value0: index + 1, value1: steps.length })}</span><progress max={steps.length} value={index + 1} aria-label={t("Setup progress")} /></div>
-    <div className="onboarding-step-host"><AnimatePresence initial={false} mode="wait"><OnboardingStep key={draft.step}><SetupFeedback><h1 tabIndex={-1}>{heading[draft.step]}</h1>
+    <div className="onboarding-step-host"><AnimatePresence initial={false} mode="wait"><OnboardingStep key={draft.step} title={heading[draft.step]}><SetupFeedback><h1>{heading[draft.step]}</h1>
       {draft.step === "name" && <>{transferContents && <TransferContentsSummary contents={transferContents} />}<label>{t("Name")}<input autoComplete="given-name" value={draft.name} maxLength={80} onChange={event => update({ name: event.target.value })} /></label></>}
       {draft.step === "watch" && <WatchSettings onboarding onSyncChange={active => setOperation(active ? "sync" : null)} />}
       {draft.step === "transfer" && choice(draft.transfer, "transfer")}
@@ -157,7 +157,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       {draft.step === "devices" && choice(draft.devices, "devices")}
       {draft.step === "devices-config" && <DeviceSync onRequestWatch={() => update({ step: "watch" })} />}
       {draft.step === "goal" && <fieldset className="onboarding-options"><legend className="sr-only">{heading.goal}</legend>{([ ["race", t("A race")], ["improvement", t("Improve my fitness")], ["maintenance", t("Stay consistent")] ] as const).map(([value, label]) => <label key={value}><input type="radio" name="goal" checked={draft.kind === value} onChange={() => update({ kind: value })} />{label}</label>)}</fieldset>}
-      {draft.step === "method" && <fieldset className="onboarding-options"><legend className="sr-only">{heading.method}</legend>{([ ["norwegian", t("Norwegian method")], ["runna_like", t("Runna-like")] ] as const).map(([value, label]) => <label key={value}><input type="radio" name="method" checked={draft.method === value} onChange={() => update({ method: value })} />{label}</label>)}</fieldset>}
+      {draft.step === "method" && <fieldset className="onboarding-options"><legend className="sr-only">{heading.method}</legend>{([ ["norwegian", t("Norwegian method")], ["runna_like", t("Runalytics method")] ] as const).map(([value, label]) => <label key={value}><input type="radio" name="method" checked={draft.method === value} onChange={() => update({ method: value })} />{label}</label>)}</fieldset>}
       {draft.step === "distance" && <label>{t("Distance")}<select value={draft.distance} onChange={event => update({ distance: event.target.value as Draft["distance"] })}><option value="5K">5 km</option><option value="10K">10 km</option><option value="21K">{t("Half marathon")}</option><option value="42K">{t("Marathon")}</option></select></label>}
       {draft.step === "start" && <label>{t("Start date")}<input type="date" value={draft.start} onChange={event => update({ start: event.target.value })} /></label>}
       {draft.step === "end" && <label>{t("End date")}<input type="date" value={draft.end} onChange={event => update({ end: event.target.value })} /></label>}

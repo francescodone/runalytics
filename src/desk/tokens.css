@@ -1,8 +1,10 @@
-@font-face { font-family: "Outfit"; src: url("../styles/fonts/outfit-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Young Serif"; src: url("../styles/fonts/young-serif-latin-ext.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Young Serif"; src: url("../styles/fonts/young-serif-latin.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
 :root {
-  --font-ui: "Outfit", "Avenir Next", sans-serif;
+  --font-ui: "Young Serif", Georgia, serif;
   --font-brand: var(--font-ui);
+  --font-control: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --text-brand: 1.0625rem;
   --text-caption: .75rem;
   --text-detail: .8125rem;
@@ -88,19 +90,20 @@
   --shadow-control: inset 0 1px 0 var(--desk-highlight), inset 0 -1px 0 #171c3008, 0 2px 6px -3px #171c3026;
   --button-highlight: #ffffffb3;
   --button-shade: #171c302b;
-  --button-sheen: linear-gradient(160deg, #ffffff45, #ffffff00 55%);
+  --button-sheen: linear-gradient(160deg, #ffffff80, #ffffff00 62%);
   --button-surface: color-mix(in srgb, var(--desk-muted) 4%, var(--desk-surface));
-  --button-selected-surface: color-mix(in srgb, var(--desk-action) 18%, var(--desk-surface));
+  --button-selected-surface: color-mix(in srgb, var(--desk-action) 12%, var(--desk-surface));
   --button-parent-surface: color-mix(in srgb, var(--desk-muted) 8%, var(--desk-surface));
-  --button-border-color: transparent;
+  --button-border-color: color-mix(in srgb, var(--desk-muted) 76%, transparent);
   --button-accent: var(--desk-action);
+  --button-selected-ink: color-mix(in srgb, var(--button-accent) 80%, var(--desk-ink));
   --button-rim-light: #fff;
   --button-rim-refraction: color-mix(in srgb, var(--button-accent, var(--desk-action)) 55%, transparent);
   --button-primary-surface: color-mix(in srgb, var(--desk-action) 16%, var(--control-surface));
   --button-primary-ink: color-mix(in srgb, var(--desk-action) 82%, var(--desk-ink));
   --shadow-button: inset 0 1px 0 var(--button-highlight), inset 0 -1px 0 color-mix(in srgb, var(--button-shade) 25%, transparent), 0 2px 3px -1px color-mix(in srgb, var(--button-shade) 50%, transparent);
   --button-glass-filter: blur(12px) saturate(140%);
-  --shadow-button-hover: var(--shadow-button);
+  --shadow-button-hover: var(--shadow-button), 0 4px 10px -6px var(--button-shade);
   --shadow-button-selected: 0 2px 3px -1px color-mix(in srgb, var(--button-shade) 50%, transparent);
   --shadow-button-pressed: inset 0 2px 4px color-mix(in srgb, var(--button-shade) 60%, transparent), inset 0 -1px 0 var(--button-highlight);
   --button-hover-transform: none;
@@ -126,6 +129,7 @@
      at shell strength: floating glass wears it as a background-image so the
      toolbar reads as cut from the background rather than a flat white slab. */
   --material-aura: radial-gradient(ellipse at 30% 40%, color-mix(in srgb, var(--desk-action) 18%, transparent), transparent 68%), radial-gradient(ellipse at 70% 60%, color-mix(in srgb, var(--desk-blue) 14%, transparent), transparent 68%), linear-gradient(115deg, color-mix(in srgb, var(--desk-action) 6%, transparent), transparent 55%);
+  --button-aura: radial-gradient(ellipse at 20% 15%, color-mix(in srgb, var(--desk-action) 8%, transparent), transparent 70%), radial-gradient(ellipse at 85% 90%, color-mix(in srgb, var(--desk-blue) 6%, transparent), transparent 70%);
   --material-floating: var(--glass-floating);
   --material-optical: var(--glass-control);
   --material-liquid: var(--state-selected);
@@ -219,7 +223,8 @@
   --button-surface: #2b2e36;
   --button-selected-surface: #393e4b;
   --button-parent-surface: #282b32;
-  --button-sheen: linear-gradient(160deg, #ffffff0d, #ffffff00 55%);
+  --button-border-color: color-mix(in srgb, var(--desk-muted) 65%, transparent);
+  --button-sheen: linear-gradient(160deg, #ffffff18, #ffffff00 62%);
   --glass-sheen: linear-gradient(155deg, #ffffff08, #ffffff00 48%);
   --shadow-control: inset 0 1px 0 #ffffff26, inset 0 -1px 0 #00000024, 0 2px 6px -2px #00000050;
   --shadow-floating: inset 0 1px 0 var(--desk-highlight), 0 2px 6px #00000018, 0 12px 32px -16px #00000060;
@@ -272,11 +277,17 @@
 :root[data-desk-theme="dark"][data-desk-palette="meadow"] { --desk-action: #a6dfa9; --desk-blue: #cfb6ed; --desk-selection: #293f2d; --session-tempo: #f5adc1; --session-intervals: #a6dfa9; --session-long: #cfb6ed; }
 @media (min-width: 801px) and (max-width: 1180px) { :root { --navigation-width: 88px; --shell-gap: var(--space-4); --shell-inset: var(--space-4); --page-gutter: var(--space-6); } }
 @media (max-width: 800px) { :root { --page-gutter: var(--space-4); --section-gap: var(--space-6); --section-inset: var(--space-4); --text-page: 1.75rem; --text-display: 1.75rem; --text-hero: 2rem; } }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root, :root[data-desk-theme="dark"] {
+    --button-surface: color-mix(in srgb, var(--desk-surface) 32%, transparent);
+    --button-selected-surface: color-mix(in srgb, var(--desk-action) 12%, color-mix(in srgb, var(--desk-surface) 72%, transparent));
+  }
+}
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-  :root { --material-aura: none; --button-sheen: none; --button-surface: var(--desk-surface); --button-selected-surface: var(--desk-selection); --button-parent-surface: var(--desk-surface); --button-border-color: var(--desk-line); --shadow-button: none; --shadow-button-selected: none; --shadow-button-hover: none; --shadow-button-pressed: none; }
+  :root { --material-aura: none; --button-aura: none; --button-sheen: none; --button-surface: var(--desk-surface); --button-selected-surface: var(--desk-selection); --button-parent-surface: var(--desk-surface); --button-border-color: var(--desk-muted); --shadow-button: none; --shadow-button-selected: none; --shadow-button-hover: none; --shadow-button-pressed: none; }
   :root[data-desk-theme="dark"] { --button-sheen: none; --button-surface: var(--desk-surface); --button-selected-surface: var(--desk-selection); --button-parent-surface: var(--desk-surface); }
 }
 @media (prefers-contrast: more) { :root { --desk-line: #63736a; } :root[data-desk-theme="dark"] { --desk-line: #b2c0b7; } }
 @media (forced-colors: active) {
-  :root { --desk-canvas: Canvas; --desk-surface: Canvas; --desk-ink: CanvasText; --desk-muted: CanvasText; --desk-line: ButtonText; --desk-action: LinkText; --desk-on-action: Canvas; --desk-selection: Canvas; }
+  :root, :root[data-desk-theme][data-desk-palette] { --desk-canvas: Canvas; --desk-surface: Canvas; --desk-soft: Canvas; --desk-ink: CanvasText; --desk-muted: CanvasText; --desk-line: ButtonText; --desk-action: LinkText; --desk-blue: LinkText; --desk-danger: CanvasText; --desk-on-action: Canvas; --desk-selection: Canvas; --button-selected-ink: ButtonText; }
 }

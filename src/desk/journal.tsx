@@ -1,5 +1,5 @@
 import { t, text, number, dateTime as fmtDateTime, duration as fmtDuration, distance as fmtKm } from "./i18n";
-import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { IconArrowUpRight, IconBarbell, IconBike, IconChevronDown, IconFilter, IconRun, IconSearch } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { tauri, fmtPace, ymdLocal } from "../lib/ipc";
@@ -46,6 +46,116 @@ function ReviewPanel({ activityId, tab, children }: { activityId: number; tab: R
   return <div role="tabpanel" id={`review-panel-${activityId}-${tab}`} className="review-panel" aria-labelledby={`review-tab-${activityId}-${tab}`}>{children}</div>;
 }
 
+const VIRTUAL_ACTIVITY_THRESHOLD = 18;
+const ACTIVITY_ESTIMATED_HEIGHT = 96;
+const ACTIVITY_OVERSCAN = 3;
+
+function VirtualActivities({ activities, renderRow }: { activities: Activity[]; renderRow: (activity: Activity, index: number) => ReactNode }) {
+  const host = useRef<HTMLDivElement>(null);
+  const heights = useRef(new Map<number, number>());
+  const width = useRef(0);
+  const pendingFocus = useRef<number | null>(null);
+  const [range, setRange] = useState({ start: 0, end: Math.min(activities.length, 12) });
+  const [, setMeasurement] = useState(0);
+  const offsets = [0];
+  for (const activity of activities) offsets.push(offsets[offsets.length - 1] + (heights.current.get(activity.id) ?? ACTIVITY_ESTIMATED_HEIGHT));
+  const start = Math.min(range.start, Math.max(0, activities.length - 1));
+  const end = Math.min(activities.length, Math.max(start + 1, range.end));
+  const ids = activities.map(activity => activity.id).join(",");
+
+  useLayoutEffect(() => {
+    const element = host.current;
+    if (!element) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const bounds = element.getBoundingClientRect();
+      if (!bounds.width || !element.getClientRects().length) return;
+      if (width.current && Math.abs(width.current - bounds.width) > 0.5) {
+        heights.current.clear();
+        element.querySelectorAll<HTMLElement>(".activity-row").forEach(row => {
+          const height = row.getBoundingClientRect().height + parseFloat(getComputedStyle(row).marginBottom || "0");
+          if (row.dataset.activityId && height > 0) heights.current.set(Number(row.dataset.activityId), height);
+        });
+      }
+      width.current = bounds.width;
+      let top = 0, bottom = window.innerHeight;
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+          const rect = ancestor.getBoundingClientRect();
+          top = Math.max(top, rect.top + ancestor.clientTop);
+          bottom = Math.min(bottom, rect.top + ancestor.clientTop + ancestor.clientHeight);
+        }
+      }
+      const currentOffsets = [0];
+      for (const activity of activities) currentOffsets.push(currentOffsets[currentOffsets.length - 1] + (heights.current.get(activity.id) ?? ACTIVITY_ESTIMATED_HEIGHT));
+      const visibleTop = Math.max(0, top - bounds.top);
+      const visibleBottom = Math.max(visibleTop, bottom - bounds.top);
+      let first = 0;
+      while (first < activities.length - 1 && currentOffsets[first + 1] < visibleTop) first++;
+      let last = first;
+      while (last < activities.length && currentOffsets[last] <= visibleBottom) last++;
+      const next = { start: Math.max(0, first - ACTIVITY_OVERSCAN), end: Math.min(activities.length, last + ACTIVITY_OVERSCAN) };
+      setRange(previous => previous.start === next.start && previous.end === next.end ? previous : next);
+      setMeasurement(value => value + 1);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    const observer = new ResizeObserver(entries => {
+      let changed = false;
+      for (const entry of entries) {
+        const row = entry.target as HTMLElement;
+        const id = Number(row.dataset.activityId);
+        if (!Number.isFinite(id) || !row.dataset.activityId) continue;
+        const height = row.getBoundingClientRect().height + parseFloat(getComputedStyle(row).marginBottom || "0");
+        if (height > 0 && Math.abs((heights.current.get(id) ?? 0) - height) > 0.5) { heights.current.set(id, height); changed = true; }
+      }
+      if (changed || entries.some(entry => entry.target === element)) schedule();
+    });
+    observer.observe(element);
+    element.querySelectorAll<HTMLElement>(".activity-row").forEach(row => observer.observe(row));
+    const restoreFocus = (event: Event) => {
+      const id = (event as CustomEvent<number>).detail;
+      const index = activities.findIndex(activity => activity.id === id);
+      if (index < 0) { element.closest<HTMLElement>(".activity-library")?.focus({ preventScroll: true }); return; }
+      let offset = 0;
+      for (let i = 0; i < index; i++) offset += heights.current.get(activities[i].id) ?? ACTIVITY_ESTIMATED_HEIGHT;
+      let scroller = element.parentElement;
+      while (scroller && (!/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) || scroller.scrollHeight <= scroller.clientHeight)) scroller = scroller.parentElement;
+      if (scroller) scroller.scrollTop += element.getBoundingClientRect().top + offset - scroller.getBoundingClientRect().top - scroller.clientTop;
+      pendingFocus.current = id;
+      setRange({ start: Math.max(0, index - ACTIVITY_OVERSCAN), end: Math.min(activities.length, index + ACTIVITY_OVERSCAN + 1) });
+    };
+    element.addEventListener("activity:restore-focus", restoreFocus);
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    schedule();
+    return () => { observer.disconnect(); element.removeEventListener("activity:restore-focus", restoreFocus); window.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); cancelAnimationFrame(frame); };
+  }, [ids, start, end]);
+
+  useLayoutEffect(() => {
+    if (pendingFocus.current === null) return;
+    const row = host.current?.querySelector<HTMLElement>(`[data-activity-id="${pendingFocus.current}"]`);
+    if (row) { pendingFocus.current = null; row.focus({ preventScroll: true }); }
+  });
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab" || !(event.target instanceof HTMLElement)) return;
+    const id = Number(event.target.dataset.activityId);
+    const index = activities.findIndex(activity => activity.id === id);
+    const next = index + (event.shiftKey ? -1 : 1);
+    if (index < 0 || next < 0 || next >= activities.length || (next >= start && next < end)) return;
+    event.preventDefault();
+    host.current?.dispatchEvent(new CustomEvent("activity:restore-focus", { detail: activities[next].id }));
+  };
+
+  return <div ref={host} className="virtual-activities" onKeyDown={onKeyDown}>
+    <div aria-hidden="true" style={{ height: offsets[start] }} />
+    {activities.slice(start, end).map((activity, index) => renderRow(activity, start + index))}
+    <div aria-hidden="true" style={{ height: offsets[activities.length] - offsets[end] }} />
+  </div>;
+}
+
 export function Journal() {
   const route = useRoute();
   const reduced = useReducedMotion();
@@ -53,6 +163,13 @@ export function Journal() {
   const scores = useRemote(tauri.runScores);
   const matches = useRemote(tauri.matchedSessions);
   const [reviewOrigin, setReviewOrigin] = useState<HTMLElement | null>(null);
+  const library = useRef<HTMLElement>(null);
+  const restoreMissingOrigin = useCallback(() => {
+    const virtual = library.current?.querySelector(".virtual-activities");
+    const id = Number(reviewOrigin?.dataset.activityId);
+    if (virtual && reviewOrigin?.dataset.activityId) virtual.dispatchEvent(new CustomEvent("activity:restore-focus", { detail: id }));
+    else library.current?.focus({ preventScroll: true });
+  }, [reviewOrigin]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sport, setSport] = useState("");
@@ -81,20 +198,21 @@ export function Journal() {
     return (!sport || activity.sport === sport) && (!provider || activity.provider === provider) && (!from || date >= from) && (!until || date <= until) && (!search || `${nameOf(activity)} ${activity.sport} ${activity.provider} ${fmtDateTime(activity.startTime)} ${fmtKm(activity.distanceM)}`.toLowerCase().includes(search));
   }).sort((first, second) => second.startTime.localeCompare(first.startTime));
   const activeFilters = [sport, provider, from, until].filter(Boolean).length + (query.trim() ? 1 : 0);
+  const renderRow = (activity: Activity) => <motion.button key={activity.id} data-activity-id={activity.id} layout={reduced ? false : "position"} data-motion-layout initial={false} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : fadeOut} transition={springTransition} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={event => { setReviewOrigin(event.currentTarget); navigate("journal", String(activity.id)); }}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></motion.button>;
   return <div className={`journal-workspace ${selected ? "has-inspector" : ""}`}>
     <div className="journal-sidebar">
     <div className="desk-toolbar"><div className="journal-toolbar"><Button className="filters-toggle" aria-expanded={filtersOpen} aria-controls="activity-filters" onClick={() => setFiltersOpen(open => !open)}><IconFilter size={18} aria-hidden="true" />{filtersOpen ? t("Hide filters") : t("Filters")}{activeFilters > 0 && <span className="filter-count">{activeFilters}</span>}<IconChevronDown className="disclosure-indicator" size={18} aria-hidden="true" /></Button><span className="muted journal-count">{t("activityCount", { count: filtered.length })}</span></div></div>
     <Disclosure id="activity-filters" className="journal-tools" open={filtersOpen}><label className="search-field"><IconSearch size={18} aria-hidden="true" /><input type="search" aria-label={t("Search activities")} value={query} placeholder={t("Search your training")} onChange={event => setQuery(event.target.value)} /></label><label>{t("Sport")}<select value={sport} onChange={event => setSport(event.target.value)}><option value="">{t("All sports")}</option>{[...new Set((activities.data ?? []).filter(activity => isReadableSport(activity.sport)).map(activity => activity.sport))].map(value => <option key={value} value={value}>{capitalizeFirst(value)}</option>)}</select></label><label>{t("Source")}<select value={provider} onChange={event => setProvider(event.target.value)}><option value="">{t("All sources")}</option><option value="coros">COROS</option><option value="garmin">Garmin</option></select></label><label>{t("From")}<input type="date" value={from} onChange={event => setFrom(event.target.value)} /></label><label>{t("Until")}<input type="date" value={until} onChange={event => setUntil(event.target.value)} /></label><Button onClick={() => { setQuery(""); setSport(""); setProvider(""); setFrom(""); setUntil(""); }}>{t("Reset filters")}</Button></Disclosure>
     <ErrorNotice error={activities.error} retry={activities.retry} />
     {activities.loading ? <Loading label={t("Loading training history")} /> :
-      <section className="activity-library" tabIndex={0} aria-label={t("Activity history")} aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>{t("Most recent first")}</span></div>
+      <section ref={library} className="activity-library" tabIndex={0} aria-label={t("Activity history")} aria-busy={query.toLowerCase().trim() !== search}><div className="list-heading"><span>{t("Most recent first")}</span></div>
         <Change identity={`${search}:${sport}:${provider}:${from}:${until}`}>
         {!filtered.length && <Empty title={activities.data?.length ? t("No matching activities") : t("Your training story starts here")}>{activities.data?.length ? t("Try another date or clear the filters.") : t("Sync your watch to bring your completed activities here.")}</Empty>}
-        <AnimatePresence mode="popLayout" propagate>{filtered.map(activity => <motion.button key={activity.id} layout={reduced ? false : "position"} data-motion-layout initial={false} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : fadeOut} transition={springTransition} className="activity-row" aria-pressed={selected?.id === activity.id} onClick={event => { setReviewOrigin(event.currentTarget); navigate("journal", String(activity.id)); }}>{isStrengthSport(activity.sport) ? <IconBarbell size={23} aria-hidden="true" /> : isBikeSport(activity.sport) ? <IconBike size={23} aria-hidden="true" /> : <IconRun size={23} aria-hidden="true" />}<span><strong>{nameOf(activity)}</strong><small>{fmtDateTime(activity.startTime)}</small></span><span className="activity-distance"><strong>{fmtKm(activity.distanceM)}</strong><small>{fmtDuration(activity.durationS)}</small></span><span className="activity-pace">{activity.avgPaceSKm ? `${fmtPace(activity.avgPaceSKm)}/km` : ""}</span><IconArrowUpRight size={18} aria-hidden="true" /></motion.button>)}</AnimatePresence>
+        {filtered.length > VIRTUAL_ACTIVITY_THRESHOLD ? <VirtualActivities activities={filtered} renderRow={renderRow} /> : <AnimatePresence mode="popLayout" propagate>{filtered.map(renderRow)}</AnimatePresence>}
         </Change>
       </section>}
     </div>
-    <Presence>{selected && <Inspector key="review" title={t("Activity review")} origin={reviewOrigin} onClose={() => navigate("journal")}><Change identity={selected.id} className="activity-transition" stagger><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Change></Inspector>}</Presence>
+    <Presence>{selected && <Inspector key="review" title={t("Activity review")} origin={reviewOrigin} restoreMissingOrigin={restoreMissingOrigin} onClose={() => navigate("journal")}><Change identity={selected.id} className="activity-transition" stagger><ActivityReview activity={selected} score={scores.data?.find(score => score.activityId === selected.id)} match={matchOf(selected)} tab={tab} onTab={next => navigate("journal", String(selected.id), next === "overview" ? "" : next)} /></Change></Inspector>}</Presence>
     {!selected && <div className="journal-placeholder"><IconRun size={32} aria-hidden="true" /><h2>{t("Activity review")}</h2><p className="muted">{t("No activity selected")}</p></div>}
   </div>;
 }
@@ -198,7 +316,7 @@ function ActivityReview({ activity, score, match, tab, onTab }: { activity: Acti
     <ErrorNotice error={review.error} retry={review.retry} />
     {review.loading ? <Loading label={t("Loading recorded route and splits")} /> : review.data && <Change identity={tab}>
       {tab === "overview" && <ReviewPanel activityId={activity.id} tab="overview">
-        <dl className="metrics-line"><Metric label={t("Distance")} value={number((activity.distanceM / 1000), 2)} count={{ value: activity.distanceM / 1000, format: value => number(value, 2) }} unit="km" /><Metric label={t("Moving time")} value={fmtDuration(activity.durationS)} count={{ value: activity.durationS, format: fmtDuration }} /><Metric label={t("Average pace")} value={fmtPace(activity.avgPaceSKm)} unit="/km" /><Metric label={t("Heart rate")} value={activity.avgHr ?? "Not recorded"} count={activity.avgHr != null ? { value: activity.avgHr } : undefined} unit={activity.avgHr ? "bpm" : undefined} /><Metric label={t("Elevation gain")} value={activity.elevationGainM ?? "Not recorded"} count={activity.elevationGainM != null ? { value: activity.elevationGainM } : undefined} unit={activity.elevationGainM != null ? "m" : undefined} /></dl>
+        <dl className="metrics-line"><Metric label={t("Distance")} value={number((activity.distanceM / 1000), 1)} count={{ value: activity.distanceM / 1000, format: value => number(value, 1) }} unit="km" /><Metric label={t("Moving time")} value={fmtDuration(activity.durationS)} count={{ value: activity.durationS, format: fmtDuration }} /><Metric label={t("Average pace")} value={fmtPace(activity.avgPaceSKm)} unit="/km" /><Metric label={t("Heart rate")} value={activity.avgHr ?? "Not recorded"} count={activity.avgHr != null ? { value: activity.avgHr } : undefined} unit={activity.avgHr ? "bpm" : undefined} /><Metric label={t("Elevation gain")} value={activity.elevationGainM ?? "Not recorded"} count={activity.elevationGainM != null ? { value: activity.elevationGainM } : undefined} unit={activity.elevationGainM != null ? "m" : undefined} /></dl>
         {review.data.track.length > 1 && settings.data ? <Suspense fallback={<Loading label={t("Loading map")} />}><RouteMap track={review.data.track} settings={settings.data} /></Suspense> : <p className="context-note">{t("No GPS track was recorded for this activity.")}</p>}
         {score && <section className="review-section"><h3>{t("Recorded session impact")}</h3><dl className="metrics-line"><Metric label={t("Training load")} value={score.load ?? "Not recorded"} /></dl></section>}
         <SessionFeedback key={activity.id} activityId={activity.id} draft={feedbackDraft.current} />
@@ -208,9 +326,9 @@ function ActivityReview({ activity, score, match, tab, onTab }: { activity: Acti
         const splits = review.data.splits;
         const paces = splits.map(split => split.avgPaceSKm).filter((pace): pace is number => pace != null);
         const fastest = paces.length ? Math.min(...paces) : null;
-        return <ReviewPanel activityId={activity.id} tab="splits"><section className="review-section"><h3>{t("Kilometre splits")}</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Kilometre splits")}><table className="splits-chart"><caption className="sr-only">{t("Kilometre splits; each bar is that kilometre's pace measured against the fastest kilometre of the run")}</caption><thead><tr><th>{t("Km")}</th><th>{t("Pace /km")}</th><th><span className="sr-only">{t("Relative pace")}</span></th><th>{t("Elevation")}</th><th>{t("HR")}</th></tr></thead><tbody>{splits.map(split => <tr key={split.km}><th scope="row">{split.km}{split.meters < 990 ? t(" ({{value0}} m)", { value0: Math.round(split.meters) }) : ""}</th><td>{fmtPace(split.avgPaceSKm)}</td><td className="split-bar">{split.avgPaceSKm != null && fastest != null && <span aria-hidden="true" style={{ width: `${Math.round(fastest / split.avgPaceSKm * 100)}%` }} />}</td><td>{split.elevationGainM == null ? t("Not recorded") : `${split.elevationGainM > 0 ? "+" : ""}${Math.round(split.elevationGainM)} m`}</td><td>{split.avgHr ?? t("Not recorded")}</td></tr>)}</tbody></table></div></section></ReviewPanel>;
+        return <ReviewPanel activityId={activity.id} tab="splits"><section className="review-section"><h3>{t("Kilometre splits")}</h3><div className="data-table-scroll" tabIndex={0} role="region" aria-label={t("Kilometre splits")}><table className="splits-chart"><caption className="sr-only">{t("Kilometre splits; each bar is that kilometre's pace measured against the fastest kilometre of the run")}</caption><thead><tr><th>{t("Km")}</th><th>{t("Pace /km")}</th><th><span className="sr-only">{t("Relative pace")}</span></th><th>{t("Elevation")}</th><th>{t("HR")}</th></tr></thead><tbody>{splits.map(split => <tr key={split.km}><th scope="row">{split.km}{split.meters < 990 ? t(" ({{value0}} m)", { value0: Math.round(split.meters) }) : ""}</th><td>{fmtPace(split.avgPaceSKm)}</td><td className="split-bar">{split.avgPaceSKm != null && fastest != null && <span aria-hidden="true" style={{ width: `${Math.round(fastest / split.avgPaceSKm * 100)}%` }} />}</td><td>{split.elevationGainM == null ? t("Not recorded") : `${split.elevationGainM > 0 ? "+" : ""}${Math.round(split.elevationGainM)} m`}</td><td>{number(split.avgHr, 1) ?? t("Not recorded")}</td></tr>)}</tbody></table></div></section></ReviewPanel>;
       })()}
-      {tab === "context" && <ReviewPanel activityId={activity.id} tab="context"><section className="review-section"><div className="section-heading"><h3>{t("Training context")}</h3><label><span className="sr-only">{t("Context range")}</span><select value={range} onChange={event => setRange(event.target.value as TimeRange)}><option value="1d">{t("Day")}</option><option value="7d">{t("Week")}</option><option value="1mo">{t("Month")}</option></select></label></div>{match && <div className="prescribed-session"><h4>{t("Prescribed session")}</h4>{match.notes.split("\n").filter(line => line.trim() && !line.startsWith("Made with")).map(line => <p key={line}>{text(line.replace(/^🏃\s*/, "").trim())}</p>)}</div>}<ErrorNotice error={detail.error} retry={detail.retry} />{detail.data && <dl className="metrics-line"><Metric label={t("Load ratio")} value={detail.data.load?.ratio?.toFixed(2) ?? "Not available"} /><Metric label="VO2 max" value={detail.data.fitness?.vo2max?.toFixed(1) ?? "Not available"} /></dl>}</section></ReviewPanel>}
+      {tab === "context" && <ReviewPanel activityId={activity.id} tab="context"><section className="review-section"><div className="section-heading"><h3>{t("Training context")}</h3><label><span className="sr-only">{t("Context range")}</span><select value={range} onChange={event => setRange(event.target.value as TimeRange)}><option value="1d">{t("Day")}</option><option value="7d">{t("Week")}</option><option value="1mo">{t("Month")}</option></select></label></div>{match && <div className="prescribed-session"><h4>{t("Prescribed session")}</h4>{match.notes.split("\n").filter(line => line.trim() && !line.startsWith("Made with")).map(line => <p key={line}>{text(line.replace(/^🏃\s*/, "").trim())}</p>)}</div>}<ErrorNotice error={detail.error} retry={detail.retry} />{detail.data && <dl className="metrics-line"><Metric label={t("Load ratio")} value={number(detail.data.load?.ratio, 1) ?? "Not available"} /><Metric label="VO2 max" value={number(detail.data.fitness?.vo2max, 1) ?? "Not available"} /></dl>}</section></ReviewPanel>}
     </Change>}
   </article>;
 }
