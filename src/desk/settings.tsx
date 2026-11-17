@@ -48,7 +48,7 @@ export function SettingsWorkspace() {
 export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding?: boolean; onSyncChange?: (active: boolean) => void } = {}) {
   const status = useRemote(tauri.providerStatus);
   const notice = useRemote(tauri.corosSigninNotice);
-  const { refresh, notify } = useWorkspace();
+  const { refresh, notifySync } = useWorkspace();
   const command = useCommand();
   const [waiting, setWaiting] = useState(false);
   const [message, setMessage] = useState("");
@@ -86,7 +86,7 @@ export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding
   }, [waiting]);
   return <><ErrorNotice error={status.error ?? notice.error ?? command.error} retry={status.retry} />{status.loading ? <Loading /> : <>
     <div className="connection-summary"><strong>{coros?.connected ? t("COROS connected") : t("COROS not connected")}</strong><p>{coros?.lastSync ? t("Last synced {{value0}}", { value0: fmtDateTime(coros.lastSync) }) : coros?.detail || t("No training history synced yet.")}</p></div>
-    <div className="form-actions">{coros?.connected ? <><Button tone="primary" busy={command.busy} onClick={() => { onSyncChange?.(true); void command.run(async () => { const report = await tauri.syncNow("coros"); notify(t("{{value0}} new activities, {{value1}} health days. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") })); }).finally(() => onSyncChange?.(false)); }}><IconRefresh size={18} />{t("Sync history")}</Button><Button tone="danger" onClick={() => setDisconnect(true)}>{t("Disconnect")}</Button></> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(t("Finish signing in to COROS when it opens.")); setWaiting(true); if (!await command.run(() => tauri.connectProvider("coros"))) setWaiting(false); }}>{t("Connect COROS")}</Button>}</div>
+    <div className="form-actions">{coros?.connected ? <><Button tone="primary" busy={command.busy} onClick={() => { onSyncChange?.(true); void command.run(async () => { const report = await tauri.syncNow("coros"); notifySync(t("{{value0}} new activities, {{value1}} health days. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") })); }).finally(() => onSyncChange?.(false)); }}><IconRefresh size={18} />{t("Sync history")}</Button><Button tone="danger" onClick={() => setDisconnect(true)}>{t("Disconnect")}</Button></> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(t("Finish signing in to COROS when it opens.")); setWaiting(true); if (!await command.run(() => tauri.connectProvider("coros"))) setWaiting(false); }}>{t("Connect COROS")}</Button>}</div>
     {(waiting || message) && <p role="status">{waiting ? t("Waiting for COROS sign-in...") : message}</p>}
     {coros?.connected && !onboarding && <a className="desk-button normal context-link" href="#training/plan">{t("Open your training plan")}<IconChevronRight size={18} /></a>}
     {!onboarding && <InfoDialog title={t("Connection diagnostics")} className="settings-section"><Button busy={command.busy} onClick={() => void command.run(async () => setTools(await tauri.checkProviderApi("coros")))}>{t("Check COROS API")}</Button><ErrorNotice error={command.error} />{tools && <><p role="status">{t("API reachable: {{value0}} tools exposed.", { value0: tools.length })}</p><ul className="plain-list">{tools.map(tool => <li key={tool}>{tool}</li>)}</ul></>}</InfoDialog>}

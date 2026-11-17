@@ -40,7 +40,7 @@ export function Training() {
   const weekProgress = useRemote(tauri.planWeekProgress);
   const remotePlan = useRemote(tauri.planSyncCheck);
   const command = useCommand();
-  const { refresh, notify, planProgress } = useWorkspace();
+  const { refresh, notify, notifySync, planProgress } = useWorkspace();
   const first = horizon === "month" ? monday(`${cursor.slice(0, 7)}-01`) : monday(cursor);
   // A month board shows whole weeks, but only the weeks the month actually
   // touches: a leading or trailing week with no day inside the selected month
@@ -186,7 +186,7 @@ export function Training() {
     const value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
     setCursor(value); setSelectedDay(value);
   };
-  const scheduled = workouts.filter(workout => workout.kind !== "rest" && workout.date >= first && workout.date <= days[days.length - 1]);
+  const scheduled = workouts.filter(workout => workout.kind !== "rest" && (horizon === "month" ? workout.date.slice(0, 7) === cursor.slice(0, 7) : workout.date >= first && workout.date <= days[days.length - 1]));
   const done = scheduled.filter(workout => workout.done);
   const plannedM = scheduled.reduce((total, workout) => total + (workout.distanceM ?? 0), 0);
   const completedM = done.reduce((total, workout) => total + (workout.distanceM ?? 0), 0);
@@ -201,7 +201,7 @@ export function Training() {
     <ErrorNotice error={command.error} />
     <ErrorNotice error={current.error} retry={current.retry} />
     {!providers.loading && !connected && <div className="setup-band"><div><strong>{t("Connect your watch")}</strong><p>{t("Bring your runs and recovery data into your training.")}</p></div><Button tone="primary" onClick={() => navigate("settings", "setup")}>{t("Connect COROS")}</Button></div>}
-    {connected && !synced && <div className="setup-band"><div><strong>{t("Your watch is connected")}</strong><p>{t("Sync your training history to establish your starting point.")}</p></div><Button busy={command.busy} tone="primary" onClick={() => void command.run(() => tauri.syncNow("coros"), t("Training history synced."))}>{t("Sync now")}</Button></div>}
+    {connected && !synced && <div className="setup-band"><div><strong>{t("Your watch is connected")}</strong><p>{t("Sync your training history to establish your starting point.")}</p></div><Button busy={command.busy} tone="primary" onClick={() => void command.run(async () => { await tauri.syncNow("coros"); notifySync(t("Training history synced.")); })}>{t("Sync now")}</Button></div>}
     <div className="desk-toolbar training-toolbar">
       <SelectionGroup><nav className="horizon-switch" aria-label={t("Training horizon")}>{(["week", "month", "plan"] as const).map(value => <a key={value} href={`#training/${value}`} aria-current={horizon === value ? "page" : undefined}>{horizon === value && <SelectionMarker />}{t(value[0].toUpperCase() + value.slice(1))}</a>)}</nav></SelectionGroup>
       {compact && horizon === "plan" && plan && <Button aria-label={t("Schedule race or test")} onClick={() => setBenchmark(true)}><IconPlus size={18} aria-hidden="true" />{t("Race or test")}</Button>}

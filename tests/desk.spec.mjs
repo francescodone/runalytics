@@ -693,6 +693,8 @@ test("difficulty review emphasizes only changed proposed values", async ({ page 
   const current = row.locator("td").nth(0);
   const proposed = row.locator("td").nth(1);
   await expect(proposed.locator("p").first().locator("strong")).toHaveText(["0.9 km", "4:55 - 5:05 /km", "0.3 km", "5:50 - 6:10 /km"]);
+  await expect(proposed.locator("p").first().locator("strong").first()).toHaveCSS("font-weight", "700");
+  await expect(current.locator("p").first()).toHaveCSS("font-weight", "400");
   await expect(current.locator("strong")).toHaveCount(0);
   await expect(proposed.locator("p").nth(1).locator("strong")).not.toHaveCount(0);
   await expect(proposed.locator("p").nth(2).locator("strong")).toHaveCount(0);
@@ -3382,6 +3384,7 @@ test("schedule mutations retain intent and Undo restores the original date", asy
 });
 
 for (const horizon of ["week", "month"]) test(`${horizon} summary counts only scheduled sessions and their planned distance`, async ({page}) => {
+  await page.clock.setFixedTime(new Date(2026, 10, 17, 12));
   await page.addInitScript(() => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke = async (command, args) => {
@@ -3411,6 +3414,33 @@ for (const horizon of ["week", "month"]) test(`${horizon} summary counts only sc
   await expect(strip).toContainText("1/3 sessions done");
   await expect(strip).toContainText("5.0 km / 20.0 km done");
   await expect(page.getByText("Extra run").first()).toBeVisible();
+});
+
+for (const width of [390, 1440]) test(`month summary excludes adjacent calendar days at ${width}px`, async ({page}) => {
+  await page.clock.setFixedTime(new Date(2025, 11, 15, 12));
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command !== "current_plan") return invoke(command, args);
+      const [plan, workouts] = await invoke(command, args);
+      return [plan, [
+        ["2025-11-30", 2000, true],
+        ["2025-12-01", 5000, true],
+        ["2025-12-31", 8000, false],
+        ["2026-01-01", 7000, true],
+        ["2026-01-31", 9000, false],
+        ["2026-02-01", 3000, true],
+      ].map(([date, distanceM, done]) => ({...workouts[0], id: `summary-${date}`, date, kind: "easy", distanceM, done}))];
+    };
+  });
+  await page.setViewportSize({width, height: 1000});
+  await page.goto('/desk.html#training/month');
+  const strip = page.locator('.schedule-summary');
+  await expect(strip).toContainText('1/2 sessions done');
+  await expect(strip).toContainText('5.0 km / 13.0 km done');
+  await page.getByRole('button', {name: 'Next month', exact: true}).click();
+  await expect(strip).toContainText('1/2 sessions done');
+  await expect(strip).toContainText('7.0 km / 16.0 km done');
 });
 
 test("reset week undoes a scheduled benchmark and a moved session", async ({page}) => {
@@ -4703,6 +4733,70 @@ for (const width of [320, 1440]) {
 }
 
 const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
+
+for (const entry of ["header", "settings"]) {
+  test(`manual sync combines its result and progress in one notification from ${entry}`, async ({ page }) => {
+    await page.addInitScript(() => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command !== "sync_now") return invoke(command, args);
+        window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "working", targets: ["db"] });
+        window.__deskEmit("sync://started", {});
+        window.__deskEmit("plan://stage", { op: "sync", target: "db", state: "done" });
+        window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "done" });
+        window.__deskEmit("sync://completed", { ok: true });
+        return { activitiesNew: 2, healthDays: 3, messages: ["calendar published"] };
+      };
+    });
+    await page.goto(entry === "header" ? "/desk.html#training" : "/desk.html#settings/watch");
+    await page.getByRole("button", { name: entry === "header" ? "Sync activities" : "Sync history", exact: true }).click();
+    const progress = page.getByRole("status", { name: "Plan sync progress" });
+    await expect(progress).toContainText("2 new activities, 3 health days");
+    await expect(progress).toContainText("calendar published");
+    await expect(progress).toContainText("Updated local DB");
+    await expect(page.locator(".notification-viewport .desk-notice")).toHaveCount(1);
+  });
+}
+
+test("dismissing an active sync does not reopen its result", async ({ page }) => {
+  await page.addInitScript(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command !== "sync_now") return invoke(command, args);
+      window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "working", targets: ["db"] });
+      window.__deskEmit("sync://started", {});
+      await new Promise(resolve => { window.__finishSync = resolve; });
+      window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "done" });
+      window.__deskEmit("sync://completed", { ok: true });
+      return { activitiesNew: 2, healthDays: 3, messages: [] };
+    };
+  });
+  await page.goto("/desk.html#training");
+  await page.getByRole("button", { name: "Sync activities", exact: true }).click();
+  const progress = page.getByRole("status", { name: "Plan sync progress" });
+  await progress.getByRole("button", { name: "Dismiss notification" }).click();
+  await page.evaluate(() => window.__finishSync());
+  await expect(page.getByRole("button", { name: "Sync activities", exact: true })).toBeEnabled();
+  await expect(page.locator(".notification-viewport .desk-notice")).toHaveCount(0);
+});
+
+test("sync failure shares the progress notification and falls back without stages", async ({ page }) => {
+  await page.goto("/desk.html#training");
+  await expect(page.getByRole("heading", { name: "Training", exact: true })).toBeVisible();
+  await emitStage(page, { op: "sync", target: "op", state: "working", targets: ["db"] });
+  await emitStage(page, { op: "sync", target: "db", state: "error" });
+  await emitStage(page, { op: "sync", target: "op", state: "error" });
+  await page.evaluate(() => window.__deskEmit("sync://completed", { ok: false }));
+  const progress = page.getByRole("status", { name: "Plan sync progress" });
+  await expect(progress).toContainText("Background sync failed.");
+  await expect(progress).toContainText("Updating local DB failed");
+  await expect(page.locator(".notification-viewport .desk-notice")).toHaveCount(1);
+  await progress.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(progress).toHaveCount(0);
+  await page.evaluate(() => { window.__deskEmit("sync://started", {}); window.__deskEmit("sync://completed", { ok: false }); });
+  await expect(page.locator(".notification-viewport .desk-notice")).toContainText("Background sync failed.");
+  await expect(page.locator(".notification-viewport .desk-notice")).toHaveCount(1);
+});
 
 for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
   test(`preplanned sync shows every applicable step with its current state ${width}px ${theme}`, async ({ page }, testInfo) => {

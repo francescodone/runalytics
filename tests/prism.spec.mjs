@@ -727,7 +727,7 @@ for (const theme of ["light", "dark"]) {
       const normal = page.locator(`${selector}:not([aria-pressed="true"]):not([aria-current]):not(:disabled)`).filter({ visible: true }).first();
       await expect(normal).toBeVisible();
       expect(await material(normal)).toEqual(resting);
-      await expect(normal).toHaveCSS("font-family", /system-ui/);
+      await expect(normal).toHaveCSS("font-family", /Inter/);
       await expectControlContrast(page, normal);
       await page.evaluate(() => document.fonts.ready);
       await normal.scrollIntoViewIfNeeded();
@@ -2299,6 +2299,19 @@ test("Prism mobile opaque topbar stays within the shell while scrolling", async 
   await expect(page.locator(".desk-appbar")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.getByRole("navigation", { name: "Workspaces" })).toBeVisible();
   await expect(page.locator(".desk-navigation")).toHaveCSS("background-image", "none");
+});
+
+test("body typography is lighter while headings and selected navigation retain emphasis", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/desk.html#training");
+  await page.evaluate(() => document.fonts.ready);
+  await expect(page.locator("html")).toHaveCSS("font-family", /Inter/);
+  await expect(page.locator(".desk-navigation a").first()).toHaveCSS("font-family", /Inter/);
+  await expect(page.locator("h1").first()).toHaveCSS("font-family", /Young Serif/);
+  await expect(page.locator("h1").first()).toHaveCSS("font-weight", "700");
+  await expect(page.locator(".desk-navigation a[aria-current]")).toHaveCSS("font-weight", "700");
+  await expect(page.locator(".desk-navigation a:not([aria-current])").first()).toHaveCSS("font-weight", "500");
+  expect(await page.evaluate(() => [...document.fonts].some(font => font.family === "Inter" && font.status === "loaded"))).toBe(true);
 });
 
 for (const width of [320, 375, 390, 820, 1440]) {

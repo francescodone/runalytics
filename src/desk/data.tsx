@@ -100,14 +100,14 @@ function stageText(line: StageLine): string {
   if (line.target === "strava" && line.detail) return line.state === "error" ? t("Updating Strava failed: {{value0}}", { value0: line.detail }) : text(line.detail);
   return line.state === "done" ? t("Updated {{value0}}", { value0: label }) : t("Updating {{value0}} failed", { value0: label });
 }
-type WorkspaceContext = { revision: number; planCheck: number; syncing: boolean; syncStage: string | null; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void; setSetupPending: (pending: boolean) => void };
-const Context = createContext<WorkspaceContext>({ revision: 0, planCheck: 0, syncing: false, syncStage: null, planProgress: null, refresh() {}, notify() {}, setSetupPending() {} });
+type WorkspaceContext = { revision: number; planCheck: number; syncing: boolean; syncStage: string | null; planProgress: PlanSyncProgress | null; refresh: () => void; notify: (text: string, action?: NonNullable<Notice>["action"]) => void; notifySync: (text: string) => void; setSetupPending: (pending: boolean) => void };
+const Context = createContext<WorkspaceContext>({ revision: 0, planCheck: 0, syncing: false, syncStage: null, planProgress: null, refresh() {}, notify() {}, notifySync() {}, setSetupPending() {} });
 export const useWorkspace = () => useContext(Context);
 
 export function SetupFeedback({ children }: { children: ReactNode }) {
   const workspace = useWorkspace();
   const [message, setMessage] = useState("");
-  return <Context.Provider value={{ ...workspace, notify: setMessage }}>
+  return <Context.Provider value={{ ...workspace, notify: setMessage, notifySync: setMessage }}>
     {children}
     {message && <p role="status">{text(message)}</p>}
   </Context.Provider>;
@@ -158,6 +158,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [planCheck, setPlanCheck] = useState(0);
   const planUpdates = useRef(0);
   const [notices, setNotices] = useState<NonNullable<Notice>[]>([]);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const notice = notices[0] ?? null;
   const setNotice = (next: Notice, immediate = false) => setNotices(previous => {
     if (next && setupPendingRef.current) return previous;
@@ -168,6 +169,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const noticeRef = useRef<HTMLDivElement>(null);
   const [stageOps, setStageOps] = useState<Record<string, StageOp>>({});
   const dismissedStageOps = useRef(new Set<string>());
+  const syncStagesAvailable = useRef(false);
+  const syncStageSettled = useRef(false);
+  const notifySync = (message: string) => {
+    if (setupPendingRef.current || dismissedStageOps.current.has("sync")) return;
+    if (syncStagesAvailable.current) setSyncNotice(message);
+    else setNotice({ text: message });
+  };
   const stagesRef = useRef<HTMLDivElement>(null);
   const [acting, setActing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -201,11 +209,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const register = <Payload,>(name: string, callback: (payload: Payload) => void) => {
       void listen<Payload>(name, event => { if (!disposed) callback(event.payload); }).then(stop => { if (disposed) stop(); else stops.push(stop); }).catch(() => undefined);
     };
-    register("sync://started", () => { receivedEvent = true; setSyncing(true); });
+    register("sync://started", () => { receivedEvent = true; dismissedStageOps.current.delete("sync"); setSyncNotice(null); setSyncing(true); });
     register<{ok:boolean}>("sync://completed", result => {
       receivedEvent = true; setSyncing(false); setRevision(value => value + 1);
       if (result.ok) { snapshot(true); window.dispatchEvent(new Event("desk:sync-succeeded")); }
-      if (!result.ok) setNotice({text:t("Background sync failed. Check your watch connection and try again.")});
+      if (!result.ok) notifySync(t("Background sync failed. Check your watch connection and try again."));
     });
     register<PlanSyncProgress>("plan://sync", progress => setPlanProgress(progress));
     register<{ discarded?: boolean }>("plan://updated", result => {
@@ -215,8 +223,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     });
     register("plan://checked", () => setPlanCheck(value => value + 1));
     register<StageEvent>("plan://stage", event => {
-      if (event.target === "op" && event.state === "working") dismissedStageOps.current.delete(event.op);
+      if (event.target === "op" && event.state === "working") {
+        dismissedStageOps.current.delete(event.op);
+        if (event.op === "sync") { syncStagesAvailable.current = Boolean(event.lines?.length || event.targets?.length); setSyncNotice(null); }
+      }
       else if (dismissedStageOps.current.has(event.op)) return;
+      if (event.op === "sync") {
+        if (event.target === "op") syncStageSettled.current = event.state !== "working";
+        if (event.lines?.length || (event.target !== "op" && event.state !== "skipped")) syncStagesAvailable.current = true;
+      }
       setStageOps(previous => {
         const current = previous[event.op] ?? { lines: [], settled: false, planned: false };
         if (event.lines) {
@@ -311,13 +326,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return scheduleNoticeDismissal(noticeRef.current, () => setNotice(null));
   }, [notice, acting]);
   const stageEntries = useMemo(() => Object.entries(stageOps).filter(([, op]) => op.lines.length > 0), [stageOps]);
+  const hasSyncStages = stageEntries.some(([op]) => op === "sync");
   const stagesQuiet = stageEntries.length > 0 && stageEntries.every(([, op]) => op.settled && op.lines.every(line => line.state !== "working" && line.state !== "waiting"));
   useEffect(() => {
     if (!stagesQuiet) return;
-    return scheduleNoticeDismissal(stagesRef.current, () => setStageOps({}));
-  }, [stagesQuiet, stageOps]);
+    return scheduleNoticeDismissal(stagesRef.current, () => { setStageOps({}); if (hasSyncStages) { syncStagesAvailable.current = false; setSyncNotice(null); } });
+  }, [stagesQuiet, stageOps, syncNotice, hasSyncStages]);
   const activeSyncStage = stageOps.sync?.lines.slice().reverse().find(line => line.state === "working");
-  return <Context.Provider value={{ revision, planCheck, syncing, syncStage: activeSyncStage ? stageText(activeSyncStage) : null, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true), setSetupPending: pending => { setupPendingRef.current = pending; setSetupPending(pending); if (pending) setNotices([]); else setStageOps(previous => Object.fromEntries(Object.entries(previous).filter(([, op]) => op.planned && !op.settled))); } }}>
+  return <Context.Provider value={{ revision, planCheck, syncing, syncStage: activeSyncStage ? stageText(activeSyncStage) : null, planProgress, refresh, notify: (text, action) => setNotice({ text, action }, true), notifySync, setSetupPending: pending => { setupPendingRef.current = pending; setSetupPending(pending); if (pending) { setNotices([]); setSyncNotice(null); } else { if (syncStageSettled.current) syncStagesAvailable.current = false; setStageOps(previous => Object.fromEntries(Object.entries(previous).filter(([, op]) => op.planned && !op.settled))); } } }}>
     {children}
     {!setupPending && <><AchievementCelebrations />
     <NotificationViewport>
@@ -327,7 +343,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         catch (error) { setNotices(previous => [{ text: String(error) }, ...previous.slice(1)]); }
         finally { setActing(false); }
       }}>{notice.action.label}</button>}><Change identity={text(notice.text)}><span>{text(notice.text)}</span></Change></Notification>}</Presence>
-    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => { Object.keys(stageOps).forEach(op => dismissedStageOps.current.add(op)); setStageOps({}); }} countdown={stagesQuiet}>
+    <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => { Object.keys(stageOps).forEach(op => dismissedStageOps.current.add(op)); setStageOps({}); if (hasSyncStages) { syncStagesAvailable.current = false; setSyncNotice(null); } }} countdown={stagesQuiet} countdownKey={syncNotice ?? undefined}>
+      {hasSyncStages && syncNotice && <div>{text(syncNotice)}</div>}
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
         {line.state === "waiting" ? <IconClock size={16} aria-hidden="true" /> : line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
         <span>{stageText(line)}</span>

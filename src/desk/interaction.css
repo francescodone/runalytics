@@ -85,8 +85,7 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 :is(.desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button):is([aria-current], [aria-selected="true"], [aria-pressed="true"]) { color: var(--desk-action); border-color: transparent; background: var(--state-selected); }
 .desk-navigation a[aria-current] { color: var(--desk-blue); border-color: transparent; background: color-mix(in srgb, var(--desk-blue) 14%, var(--desk-surface)); }
 :is(.desk-navigation, .horizon-switch, .review-tabs, .pace-mode, .pace-session-picker) .selection-marker { inset: 0; height: auto; background: var(--state-selected); transition: background-color var(--motion-feedback) var(--motion-settle); box-shadow: none; }
-.horizon-switch a, .pace-mode button { font-weight: var(--weight-semibold); }
-.desk-navigation a { font-weight: var(--weight-semibold); }
+.horizon-switch a, .pace-mode button, .desk-navigation a { font-weight: var(--weight-medium); }
 .navigation-icon { display: grid; place-items: center; flex: none; width: 21px; height: 21px; }
 @media (max-width: 800px) {
   .desk-navigation a { border-radius: var(--radius-pill); }

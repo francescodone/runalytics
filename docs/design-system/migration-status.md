@@ -1,3 +1,60 @@
+## Single Sync Notification, 2026-11-17
+
+A sync's result or background failure appears in its existing progress notice,
+so the same operation does not produce two notifications. Other notices retain
+their existing queue and Undo behavior; syncs without progress stages still
+show their result normally. Dismissing an active sync keeps its result closed.
+
+Verification: the production build and focused synthetic-IPC Chromium checks
+cover manual sync from the header and watch settings, failures, dismissal,
+notification queueing and progress layouts at 320, 390, 768 and 1440px in
+light and dark where covered by existing tests. Native WebViews and physical
+provider integration were not tested. The referenced foundations and
+components documents remain absent.
+
+## Inter Everyday Typography, 2026-11-17
+
+Everyday text and controls now use locally bundled Inter, with Latin and
+Latin-extended coverage and system fallbacks for other scripts. Young Serif
+remains the heading and wordmark face; meaningful bold emphasis is unchanged.
+
+Verification: the production build and 44 synthetic-IPC Chromium checks passed,
+including light and dark routes at 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px, short viewports at
+537x740, 913x480 and 667x375, 200% text at 320, 820 and 1440px, and difficulty
+reviews. Screenshots of 320px dark and 1440px light reviews and 320px light
+training were inspected. Shared-control checks passed at 1440px in both themes;
+the 320px cases could not find a session tile in the compact week view. Native
+WebViews, other browser engines and physical devices were not tested. The
+referenced foundations and components documents remain absent.
+
+## Lighter Everyday Typography, 2026-11-17
+
+Everyday desk text and metrics use the bundled variable Outfit font at normal or
+medium weight; major headings and the Young Serif wordmark retain their existing
+emphasis. Standard buttons and unselected navigation are lighter, while selected
+controls and changed values in difficulty reviews remain bold.
+
+Verification: the production build and focused synthetic-IPC Chromium checks
+passed. The route matrix covered light and dark at 320, 360, 375, 390, 414, 430,
+600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px. Short viewports
+at 537x740, 913x480 and 667x375 and 200% text at 320, 820 and 1440px passed.
+Difficulty-review screenshots at 320px dark and 1440px light and a 320px training
+screenshot were inspected. WebKit, native WebViews and physical devices were not
+verified; the attempted alternate browser run lacked its configured executable.
+The referenced foundations and components documents remain absent.
+
+## Calendar Month Summary, 2026-11-17
+
+The month summary counts scheduled sessions and their planned distances only
+within the selected calendar month, not adjacent-month days in the visible grid.
+Week summary behavior and the calendar grid are unchanged.
+
+Verification: the production build and four focused Chromium checks passed,
+including month navigation across a year boundary at 390px and 1440px and the
+existing week and month summary checks. Browser checks use synthetic IPC;
+native WebViews and physical devices were not tested.
+
 ## Reveal Scheduling Survives Racing View Arrivals, 2026-11-17
 
 A `desk:view-arrive` event landing while a reveal frame was pending cancelled

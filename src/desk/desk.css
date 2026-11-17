@@ -34,7 +34,7 @@ body::before { opacity: .25; background: linear-gradient(115deg, transparent 10%
 .native-window-title { display: none; }
 :root[data-native-window="macos"] .native-window-title { position: fixed; top: 0; left: 104px; height: 32px; display: flex; align-items: center; font-family: var(--font-brand); font-size: 13px; font-weight: var(--weight-brand); font-synthesis: none; color: #000; pointer-events: none; }
 :root[data-native-window="macos"][data-desk-theme="dark"] .native-window-title { color: #fff; }
-h1, h2, .desk-brand, .desk-metric dd { font-family: var(--desk-heading); font-optical-sizing: auto; }
+h1, h2, .desk-brand { font-family: var(--desk-heading); font-optical-sizing: auto; }
 h1, h2, h3 { text-wrap: balance; }
 p { text-wrap: pretty; }
 button, input, select, textarea { font: inherit; }
@@ -89,7 +89,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .desk-navigation a[aria-current] { color: var(--desk-blue); background: color-mix(in srgb, var(--desk-blue) 14%, var(--desk-surface)); font-weight: var(--weight-semibold); }
 .desk-utilities { display: flex; justify-content: center; gap: var(--control-gap); margin-top: auto; padding-top: var(--space-6); }
 .desk-utilities .desk-button[aria-pressed="true"] { color: var(--desk-action); background-color: var(--state-selected); border-color: var(--desk-action); box-shadow: var(--shadow-control); }
-.desk-button { display: inline-flex; justify-content: center; align-items: center; gap: var(--control-gap); min-height: var(--control-size); min-width: var(--control-size); max-width: 100%; padding: var(--space-2) var(--space-4); color: var(--desk-ink); background: var(--desk-soft); border: var(--control-border) solid transparent; border-radius: var(--radius-control); box-shadow: none; font-weight: var(--weight-semibold); font-size: var(--text-label); line-height: var(--leading-control); text-align: center; overflow-wrap: anywhere; }
+.desk-button { display: inline-flex; justify-content: center; align-items: center; gap: var(--control-gap); min-height: var(--control-size); min-width: var(--control-size); max-width: 100%; padding: var(--space-2) var(--space-4); color: var(--desk-ink); background: var(--desk-soft); border: var(--control-border) solid transparent; border-radius: var(--radius-control); box-shadow: none; font-weight: var(--weight-medium); font-size: var(--text-label); line-height: var(--leading-control); text-align: center; overflow-wrap: anywhere; }
 .desk-button.primary { background: var(--desk-action); color: var(--desk-on-action); border-color: transparent; }
 .desk-button.danger { color: var(--desk-danger); }
 .desk-button.icon-button { width: var(--control-size); height: var(--control-size); padding: 0; border-radius: var(--radius-pill); flex: none; }

@@ -49,7 +49,7 @@ function App() {
   const [runnerName, setRunnerName] = useState(() => { try { return localStorage.getItem("runalytics.runnerName") ?? ""; } catch { return ""; } });
   const setupPending = !setupCompleted && (currentPlan.loading || currentPlan.error !== null || hasOnboardingDraft() || !currentPlan.data);
   const command = useCommand();
-  const { syncing, notify, setSetupPending } = useWorkspace();
+  const { syncing, notifySync, setSetupPending } = useWorkspace();
   useEffect(() => {
     const updateName = () => { try { setRunnerName(localStorage.getItem("runalytics.runnerName") ?? ""); } catch {} };
     window.addEventListener("runalytics:runner-name-changed", updateName);
@@ -148,7 +148,7 @@ function App() {
       <div className="desk-utilities">
         <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");
-          notify(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
+          notifySync(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
         })}><span className="sync-icon"><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></span></IconButton>
         <IconButton label={t("help")} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
         <IconButton label={t("settings")} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
