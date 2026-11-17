@@ -1,6 +1,6 @@
 import { t, text, languagePreference, dateTime as fmtDateTime, distance as fmtKm } from "./i18n";
 import { useEffect, useState, type ReactNode } from "react";
-import { IconArrowLeft, IconChevronDown, IconChevronRight, IconDeviceWatch, IconPalette, IconLanguage, IconAdjustments, IconMap, IconCalendarShare, IconCalendarEvent, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh, IconBrandStrava, IconLink, IconUnlink, IconDeviceFloppy } from "@tabler/icons-react";
+import { IconArrowLeft, IconChevronDown, IconChevronRight, IconDeviceWatch, IconPalette, IconLanguage, IconAdjustments, IconCalendarShare, IconCalendarEvent, IconInfoCircle, IconSearch, IconCopy, IconFolder, IconRefresh, IconBrandStrava, IconLink, IconUnlink, IconDeviceFloppy } from "@tabler/icons-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -22,7 +22,6 @@ const tasks = [
   { id: "calendar", title: t("Calendar apps"), detail: t("Read-only subscription, calendar link, file snapshot"), Icon: IconCalendarShare },
   { id: "devices", title: t("Device sync"), detail: t("Keep your Runalytics plan up to date across devices"), Icon: IconRefresh },
   { id: "transfer", title: t("Transfer connections"), detail: t("Encrypted QR export and import, calendar, GitHub and Strava credentials"), Icon: IconCopy },
-  { id: "maps", title: t("Offline maps"), detail: t("Local PMTiles archive and map source"), Icon: IconMap },
   { id: "about", title: t("About and updates"), detail: t("App version, releases, install an update"), Icon: IconInfoCircle },
 ];
 
@@ -33,7 +32,7 @@ function SetupOrDialog({ inline, title, onClose, children }: { inline: boolean; 
 export function SettingsWorkspace() {
   const route = useRoute();
   const [query, setQuery] = useState("");
-  const aliases: Record<string, string> = { setup: "watch", zones: "thresholds", tiles: "maps", theme: "appearance", publishing: "calendar" };
+  const aliases: Record<string, string> = { setup: "watch", zones: "thresholds", theme: "appearance", publishing: "calendar" };
   const section = aliases[route.section] ?? route.section;
   const selected = tasks.find(task => task.id === section);
   const connectionIds = ["watch", "strava", "calendar", "devices", "transfer"];
@@ -42,7 +41,7 @@ export function SettingsWorkspace() {
     { id: "general", title: t("General"), items: tasks.filter(task => !connectionIds.includes(task.id)) },
   ].map(group => ({...group, items:group.items.filter(task => `${group.title} ${task.title} ${task.detail}`.toLowerCase().includes(query.toLowerCase()))}));
   return <Change identity={section}>{selected ? <section className="settings-editor"><Button onClick={() => navigate("settings")}><IconArrowLeft size={18} />{t("All settings")}</Button><header><selected.Icon size={24} aria-hidden="true" /><h2>{selected.title}</h2></header>
-    {section === "watch" ? <WatchSettings /> : section === "strava" ? <StravaSettings /> : section === "appearance" ? <Appearance /> : section === "language" ? <Language /> : section === "thresholds" ? <TrainingBoundaries /> : section === "training" ? <TrainingData /> : section === "calendar" ? <CalendarSettings /> : section === "devices" ? <DeviceSync /> : section === "transfer" ? <ConnectionTransfer /> : section === "maps" ? <MapSettings /> : <About />}
+    {section === "watch" ? <WatchSettings /> : section === "strava" ? <StravaSettings /> : section === "appearance" ? <Appearance /> : section === "language" ? <Language /> : section === "thresholds" ? <TrainingBoundaries /> : section === "training" ? <TrainingData /> : section === "calendar" ? <CalendarSettings /> : section === "devices" ? <DeviceSync /> : section === "transfer" ? <ConnectionTransfer /> : <About />}
   </section> : <section className="settings-directory"><label className="search-field"><IconSearch size={20} /><input type="search" aria-label={t("Search settings")} value={query} onChange={event => setQuery(event.target.value)} placeholder={t("Find a setting")} /></label>{groups.filter(group => group.items.length > 0).map(group => <section className="settings-group" key={group.id} aria-labelledby={`settings-${group.id}`}><h2 id={`settings-${group.id}`}>{group.title}</h2><div className="settings-task-list">{group.items.map(task => <a key={task.id} href={`#settings/${task.id}`}><task.Icon size={25} aria-hidden="true" /><span><strong>{task.title}</strong><small>{task.detail}</small></span><IconChevronRight size={18} aria-hidden="true" /></a>)}</div></section>)}{groups.every(group => group.items.length === 0) && <Empty title={t("No matching settings")} action={<Button onClick={() => setQuery("")}>{t("Clear search")}</Button>} />}</section>}</Change>;
 }
 
@@ -99,7 +98,7 @@ export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" |
   const command = useCommand();
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
-  const [confirmation, setConfirmation] = useState<"enable" | "disconnect" | "forget" | null>(null);
+  const [confirmation, setConfirmation] = useState<"connect" | "disconnect" | "forget" | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const data = remote.data;
@@ -110,35 +109,37 @@ export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" |
   };
   const connect = async () => {
     setConnecting(true); setCancelError(null);
-    try { await run(tauri.stravaConnect, t("Strava connected. Description updates remain paused until enabled.")); }
+    try { await run(tauri.stravaConnect, t("Strava description updates enabled for new runs.")); }
     finally { setConnecting(false); }
   };
   const setupInformation = <><p>{t("Create your own API application in Strava settings. Set its Authorization Callback Domain to ")}<strong>{t("strava")}</strong>{t(" for iPhone; macOS uses the whitelisted loopback address. Enter that application's Client ID and Client Secret separately on each device.")}</p><p>{t("Credentials stay in this device's Keychain. No Runalytics server receives them. Connecting requires activity read and write access, including private activities.")}</p><p>{t("Automatic updates append the same text as Copy prescription, including results and training load, under the activity's existing Strava visibility. Existing notes are preserved. Only runs recorded after activation are eligible; nothing runs while Runalytics is closed.")}</p><p>{t("Another device's copied text is checked before writing. Simultaneous device or third-party edits can still race.")}</p><Button onClick={() => void command.run(() => openUrl("https://www.strava.com/settings/api"))}><IconLink size={18} />{t("Open Strava API settings")}</Button></>;
   return <><ErrorNotice error={remote.error ?? command.error ?? cancelError} retry={remote.retry} />{remote.loading && !data ? <Loading /> : data && <>
     <div className="connection-summary"><strong>{data.connected ? t("Strava connected: athlete {{value0}}", { value0: data.athleteId }) : t("Strava not connected")}</strong><p role="status">{(data.lastMessage && !data.lastMessage.startsWith("Strava:")) ? data.lastMessage : (data.configured ? t("API credentials saved in Keychain.") : t("API credentials not configured."))}</p></div>
     {mode === "connection" && <section className="settings-section"><h2>{t("Strava API setup and privacy")}</h2>{setupInformation}</section>}
+    {mode === "all" && <p>{t("Automatic updates append the same text as Copy prescription, including results and training load, under the activity's existing Strava visibility. Existing notes are preserved. Only runs recorded after activation are eligible; nothing runs while Runalytics is closed.")}</p>}
     {mode !== "publishing" && <><form onSubmit={async event => {
       event.preventDefault();
       if (await run(() => tauri.stravaConfigure(clientId, secret || null), t("Strava API credentials saved."))) setSecret("");
     }}><div className="form-grid"><label>{t("Strava Client ID")}<input required inputMode="numeric" pattern="[0-9]+" value={clientId} onChange={event => setClientId(event.target.value)} autoComplete="off" /></label><label>{t("Strava Client Secret")}<input type="password" required={!data.configured} value={secret} onChange={event => setSecret(event.target.value)} autoComplete="new-password" placeholder={data.configured ? t("Saved in Keychain; leave blank to keep") : t("Not configured")} /></label></div>
       <Button type="submit" busy={command.busy}><IconDeviceFloppy size={18} />{t("Save API credentials")}</Button>
     </form>
-    <div className="form-actions">{data.connected ? <><Button busy={command.busy} onClick={() => void connect()}><IconLink size={18} />{t("Reconnect Strava")}</Button><Button tone="danger" busy={command.busy} onClick={() => setConfirmation("disconnect")}><IconUnlink size={18} />{t("Disconnect Strava")}</Button></> : <Button tone="primary" busy={command.busy} disabled={!data.configured} onClick={() => void connect()}><IconBrandStrava size={18} />{t("Connect with Strava")}</Button>}
+    <div className="form-actions">{data.connected ? <><Button busy={command.busy} onClick={() => setConfirmation("connect")}><IconLink size={18} />{t("Reconnect Strava")}</Button><Button tone="danger" busy={command.busy} onClick={() => setConfirmation("disconnect")}><IconUnlink size={18} />{t("Disconnect Strava")}</Button></> : <Button tone="primary" busy={command.busy} disabled={!data.configured} onClick={() => setConfirmation("connect")}><IconBrandStrava size={18} />{t("Connect with Strava")}</Button>}
       {connecting && <Button onClick={() => void tauri.stravaCancelConnect().catch(error => setCancelError(String(error)))}>{t("Cancel sign-in")}</Button>}
       {data.configured && <Button busy={command.busy} onClick={() => setConfirmation("forget")}>{t("Remove API credentials")}</Button>}
     </div></>}
-    {mode !== "connection" && <section className="settings-section"><h3>{t("Activity descriptions")}</h3><label className="toggle-setting"><input type="checkbox" checked={data.enabled} disabled={!data.connected || command.busy} onChange={event => { if (event.target.checked) setConfirmation("enable"); else void run(() => tauri.stravaSetEnabled(false), t("Strava description updates paused.")); }} />{t("Update paired activity descriptions")}</label>
+    {mode !== "connection" && <section className="settings-section"><h3>{t("Activity descriptions")}</h3>{data.connected && <p>{t("Strava description updates enabled for new runs.")}</p>}
       {data.enabledAt != null && <p className="muted">{t("Eligible runs: recorded from {{value0}}.", { value0: fmtDateTime(new Date(data.enabledAt * 1000).toISOString()) })}</p>}
       <h3>{t("Needs attention")} ({data.needsReview})</h3>
       <p className="muted">{t("These runs could not be updated. Try again or discard the pending description; discarding does not change Strava.")}</p>
       {(data.reviewItems ?? []).map(item => <div className="settings-section" key={item.sourceKey}><strong>{t("Run")} · {fmtDateTime(new Date(item.startTs * 1000).toISOString())} · {fmtKm(item.distanceM)}</strong><p>{text(item.message)}</p><div className="form-actions"><Button disabled={!data.connected || !data.enabled || !item.retryable} busy={command.busy} onClick={() => void run(() => tauri.stravaResolveReview(item.sourceKey, true), t("Try again"))}><IconRefresh size={18} />{t("Try again")}</Button><Button disabled={command.busy} onClick={() => void run(() => tauri.stravaResolveReview(item.sourceKey, false), t("Discard"))}>{t("Discard")}</Button></div></div>)}
     </section>}
     {mode === "all" && <InfoDialog title={t("Strava API setup and privacy")} className="settings-section">{setupInformation}</InfoDialog>}
-  </>}<Presence>{confirmation && <SetupOrDialog inline={mode !== "all"} title={confirmation === "enable" ? t("Enable Strava description updates?") : confirmation === "forget" ? t("Remove Strava API credentials?") : t("Disconnect Strava?")} onClose={() => setConfirmation(null)}>
-    {confirmation === "enable" ? <><p>{t("Future paired runs will receive the same text as Copy prescription, including results and training load. This text may be public if the Strava activity is public.")}</p><p>{t("Your existing descriptions stay. Older activities will not be updated.")}</p></> : <p>{t("Updates stop on this device. Existing Strava descriptions and local completion receipts stay. Authorization on other devices is not revoked.{{value0}}", { value0: confirmation === "forget" ? t(" The Client ID, Client Secret and local tokens will be removed from Keychain.") : t(" API credentials remain in Keychain for reconnecting.") })}</p>}
-    <ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirmation(null)}>{t("Cancel")}</Button><Button tone={confirmation === "enable" ? "primary" : "danger"} busy={command.busy} onClick={async () => {
-      if (await run(() => confirmation === "enable" ? tauri.stravaSetEnabled(true) : tauri.stravaDisconnect(confirmation === "forget"), confirmation === "enable" ? t("Strava description updates enabled for new runs.") : t("Strava disconnected on this device."))) { setConfirmation(null); setSecret(""); }
-    }}>{confirmation === "enable" ? t("Enable updates") : confirmation === "forget" ? t("Remove credentials") : t("Disconnect")}</Button></div>
+  </>}<Presence>{confirmation && <SetupOrDialog inline={mode !== "all"} title={confirmation === "connect" ? t("Enable Strava description updates?") : confirmation === "forget" ? t("Remove Strava API credentials?") : t("Disconnect Strava?")} onClose={() => setConfirmation(null)}>
+    {confirmation === "connect" ? <><p>{t("Future paired runs will receive the same text as Copy prescription, including results and training load. This text may be public if the Strava activity is public.")}</p><p>{t("Your existing descriptions stay. Older activities will not be updated.")}</p></> : <p>{t("Updates stop on this device. Existing Strava descriptions and local completion receipts stay. Authorization on other devices is not revoked.{{value0}}", { value0: confirmation === "forget" ? t(" The Client ID, Client Secret and local tokens will be removed from Keychain.") : t(" API credentials remain in Keychain for reconnecting.") })}</p>}
+    <ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConfirmation(null)}>{t("Cancel")}</Button><Button tone={confirmation === "connect" ? "primary" : "danger"} busy={command.busy} onClick={async () => {
+      if (confirmation === "connect") { setConfirmation(null); await connect(); }
+      else if (await run(() => tauri.stravaDisconnect(confirmation === "forget"), t("Strava disconnected on this device."))) { setConfirmation(null); setSecret(""); }
+    }}>{confirmation === "connect" ? t("Connect with Strava") : confirmation === "forget" ? t("Remove credentials") : t("Disconnect")}</Button></div>
   </SetupOrDialog>}</Presence></>;
 }
 
@@ -305,18 +306,11 @@ export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } =
   return <section>
     <ErrorNotice error={status.error ?? command.error} retry={status.retry} />
     {status.loading ? <Loading /> : config && <>
-      <div className="connection-summary"><strong>{!config.hasToken ? t("Device sync not configured") : !config.enabled ? t("Device sync paused") : !status.data?.accountLinked ? t("Watch account required") : syncError ? t("Device sync needs attention") : !remote && !status.data?.local ? t("No plan to sync") : ({upToDate:t("Plan up to date"),unpublished:t("Changes waiting to sync"),updateAvailable:t("A newer plan version is available"),otherPlan:t("Different plans on your devices"),importAvailable:t("Your plan is ready to download")})[remoteStatus ?? "unpublished"]}</strong><p role="status">{config.lastChecked ? t("Last checked {{value0}}", { value0: fmtDateTime(config.lastChecked) }) : t("Not checked yet.")}</p></div>
+      <div className="connection-summary"><strong>{!config.hasToken ? t("Device sync not configured") : !status.data?.accountLinked ? t("Watch account required") : syncError ? t("Device sync needs attention") : !remote && !status.data?.local ? t("No plan to sync") : ({upToDate:t("Plan up to date"),unpublished:t("Changes waiting to sync"),updateAvailable:t("A newer plan version is available"),otherPlan:t("Different plans on your devices"),importAvailable:t("Your plan is ready to download")})[remoteStatus ?? "unpublished"]}</strong><p role="status">{config.lastChecked ? t("Last checked {{value0}}", { value0: fmtDateTime(config.lastChecked) }) : t("Not checked yet.")}</p></div>
       {ready && remote && remoteStatus !== "upToDate" && <p>{t("{{value0}} · {{value1}} sessions{{value2}}", { value0: remote.planName, value1: remote.workouts, value2: status.data?.local && remoteStatus === "otherPlan" ? t("; on this device: {{value0}}.", { value0: displayPlanName(status.data.local) }) : "." })}</p>}
       {!status.data?.accountLinked && (onRequestWatch ? <Button onClick={onRequestWatch}>{t("Connect COROS")}<IconChevronRight size={18} /></Button> : <a className="desk-button normal context-link" href="#settings/watch">{t("Connect COROS")}<IconChevronRight size={18} /></a>)}
       <div className="form-actions">{!config.hasToken ? <Button tone="primary" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconLink size={18} />{t("Set up device sync")}</Button> : ready && needsAction ? <Button tone="primary" busy={command.busy} onClick={() => void (remoteStatus === "otherPlan" || remoteStatus === "updateAvailable" || remoteStatus === "importAvailable" ? pull(false) : sync())}><IconRefresh size={18} />{syncError ? t("Retry sync") : remoteStatus === "otherPlan" ? t("Review plans") : remoteStatus === "updateAvailable" ? t("Update this device") : remoteStatus === "importAvailable" ? t("Get my plan") : t("Sync now")}</Button> : null}
         <Button className="connection-disclosure" aria-expanded={options} aria-controls="device-options" onClick={() => setOptions(!options)}><IconChevronDown className="disclosure-indicator" size={18} />{t("More options")}</Button></div>
-      <label className="toggle-setting"><input type="checkbox" disabled={command.busy} checked={config.enabled} onChange={event => {
-        const enabled = event.target.checked;
-        void command.run(async () => {
-          await tauri.planSyncConfigure({enabled}, null);
-          if (enabled) window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
-        }, t("Plan sync preference saved."));
-      }} />{t("Sync this plan across devices")}</label>
       <p className="muted">{t("Use the same COROS account and GitHub token on each device. Calendar publishing is not required.")}</p>
       <Disclosure id="device-options" open={options} className="connection-options"><div className="form-actions">{!needsAction && <Button disabled={!ready} busy={command.busy} onClick={() => void sync()}><IconRefresh size={18} />{t("Sync now")}</Button>}<Button className="connection-disclosure" aria-expanded={setup} aria-controls="device-setup" onClick={() => setSetup(!setup)}><IconChevronDown className="disclosure-indicator" size={18} />{t("Connection settings")}</Button></div>{!onRequestWatch && <InfoDialog title={t("Sync diagnostics")}><dl className="definition-list">
         <div><dt>{t("Channel")}</dt><dd className="file-path">{status.data?.code ?? t("Unavailable until COROS is connected")}</dd></div>
@@ -327,7 +321,7 @@ export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } =
       <Disclosure id="device-setup" open={setup}><section className="settings-section"><h3>{t("GitHub connection")}</h3><p className="muted">{t("A personal access token with gist scope is needed on each device. It stays in Keychain and is also used by GitHub calendar publishing.")}</p><form onSubmit={async event => {
         event.preventDefault();
         if (await command.run(async () => {
-          await tauri.planSyncConfigure({enabled:config.enabled || !config.hasToken}, token.trim() || null);
+          await tauri.planSyncConfigure({enabled:true}, token.trim() || null);
           window.dispatchEvent(new Event("runalytics:plan-sync-enabled"));
         }, t("Device sync connection saved."))) { setToken(""); setSetup(false); }
       }}><label>{t("GitHub token")}<input type="password" autoComplete="new-password" required={!config.hasToken} value={token} onChange={event => setToken(event.target.value)} placeholder={config.hasToken ? t("Saved in Keychain; leave blank to keep") : t("Token with gist scope")} /></label><Button type="submit" tone="primary" busy={command.busy}><IconDeviceFloppy size={18} />{t("Save device connection")}</Button></form></section></Disclosure>
@@ -335,16 +329,6 @@ export function DeviceSync({ onRequestWatch }: { onRequestWatch?: () => void } =
     </>}
     <Presence>{conflict !== null && <SetupOrDialog inline={Boolean(onRequestWatch)} title={t("Replace the plan on this device?")} onClose={() => setConflict(null)}><p>{text(conflict)}</p><p>{t("The published plan will replace this device's local plan. Your recorded activities are kept.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setConflict(null)}>{t("Keep local plan")}</Button><Button tone="danger" busy={command.busy} onClick={() => void pull(true)}>{t("Replace local plan")}</Button></div></SetupOrDialog>}</Presence>
   </section>;
-}
-
-function MapSettings() {
-  const settings = useRemote(tauri.getSettings);
-  return <><ErrorNotice error={settings.error} retry={settings.retry} />{settings.loading ? <Loading /> : settings.data && <MapForm initial={settings.data.pmtilesPath} />}</>;
-}
-function MapForm({ initial }: { initial: string | null }) {
-  const [path, setPath] = useState(initial ?? "");
-  const command = useCommand();
-  return <form onSubmit={event => { event.preventDefault(); void command.run(() => patchSettings({pmtilesPath:path.trim() || null}), t("Map source saved.")); }}><label>{t("Raster PMTiles archive")}<input value={path} onChange={event => setPath(event.target.value)} placeholder="/path/to/region.pmtiles" /></label><p className="muted">{t("Leave empty to use online OpenStreetMap tiles. Online tiles send map-area requests to the tile provider.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button tone="primary" type="submit" busy={command.busy}>{t("Save map source")}</Button></div></form>;
 }
 
 function About() {

@@ -132,11 +132,12 @@ distributed.
   Strava API credentials. New plan-paired runs receive the completed session's
   copied description during watch sync, with durable local tracking and checks
   for copies already present from another device. Existing notes stay intact.
-- **Heatmap**: MapLibre GL JS with a heatmap layer over OSM raster tiles, or
-  fully offline from a [PMTiles] archive (path configurable in Settings).
+- **Heatmap**: MapLibre GL JS with a heatmap layer over OSM raster tiles. Existing
+  saved [PMTiles] archive paths continue to support offline maps; the archive
+  path is no longer configurable in Settings.
 - **Plan sync**: desktop and phone share an encrypted private GitHub Gist,
-  keyed to the same COROS account. Enable plan sync and save a GitHub token
-  with gist scope on both devices. Both devices can edit, but the Gist wins
+  keyed to the same COROS account. Save a GitHub token with gist scope on
+  both devices to enable sync automatically. Both devices can edit, but the Gist wins
   when unpublished local plan changes conflict with a changed remote copy.
   Foreground, reconnect and visible-app checks keep the local plan current;
   session completions and plan endings travel between devices too.
@@ -160,23 +161,24 @@ distributed.
   activities, and activity write access. Configure and authorize each device
   separately. The secret and rotating tokens remain in that device's Keychain;
   they are never sent through plan sync, calendar publishing or diagnostics.
-4. Enable **Update paired activity descriptions** and confirm the privacy
-  notice. The payload is the same completed-session text as **Copy
-  prescription**, including results and training-load information.
-  It inherits the activity's Strava visibility and may therefore be public.
+4. Connecting automatically enables updates to paired activity descriptions.
+  The payload is the same completed-session text as **Copy prescription**,
+  including results and training-load information. It inherits the activity's
+  Strava visibility and may therefore be public.
 
-Only activities recorded from the first activation time on that device/account
-are eligible. Downloading an older activity or pairing it later does not bypass
-this cutoff. Manual pairing is picked up by the next watch sync. Pause/resume
-and reconnect retain the original cutoff and completion receipts.
+Only activities recorded from activation on that device/account are eligible.
+Downloading an older activity or pairing it later does not bypass this cutoff.
+Previously paused connections start a new cutoff when automatically activated;
+connections already active retain their cutoff. Manual pairing is picked up by
+the next watch sync. Completion receipts remain across reconnects.
 
 Watch sync, including launch sync, queues eligible pairs and attempts a bounded
 batch. Delayed watch uploads to Strava remain pending, including on syncs with
 zero new watch activities. **Retry pending descriptions** respects persisted
 cooldowns; it is not historical backfill. Nothing runs while the app is closed.
 Ambiguous or inconsistent matches are not updated automatically. Reconnect when
-Strava reports missing permissions or expired authorization; automation remains
-paused after reconnection until explicitly enabled again.
+Strava reports missing permissions or expired authorization; automation resumes
+automatically after reconnection.
 
 Existing descriptions are preserved and a single Runalytics block is appended
 with a stable sync reference. A matching reference or exact clipboard copy is

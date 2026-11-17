@@ -1,3 +1,59 @@
+## Reveal Scheduling Survives Racing View Arrivals, 2026-11-17
+
+A `desk:view-arrive` event landing while a reveal frame was pending cancelled
+that frame without releasing its handle, so the guarded scheduler never ran
+again: every later view registered its content at opacity 0 and nothing
+revealed it. Filtering the activity journal and clearing filters could leave
+the app looking frozen and the Training calendar completely blank until
+restart. Native WebViews above 800px were most exposed because every filter
+identity change dispatches a view arrival there; reduced motion and compact
+widths bypass the path. The handle is now cleared when the frame is cancelled.
+
+Verification: the production build passed. A new deterministic Chromium
+regression check recreates the race (a scroll-scheduled reveal frame cancelled
+by a same-task view arrival, then a filter change and a workspace change); it
+fails without the fix and passes with it. Nine surrounding filter,
+virtualization and packaged-motion checks passed. The compact filtered-results
+animation expectation at 390px no-preference fails identically with and
+without this change on the current working tree. Browser checks use synthetic
+IPC; native WebViews and physical devices were not tested.
+
+## Automatic Connected Sync, 2026-11-17
+
+Device-plan sync now follows the saved GitHub token and linked COROS account;
+Strava description updates follow the authorized Strava connection. Both switches
+were removed. Strava connection still confirms the privacy consequences, and
+previously paused Strava accounts receive a new eligibility cutoff rather than
+backfilling old runs. Existing plan-conflict and disconnect confirmations remain.
+
+Verification: the production build, eight-catalog check, 19 native Strava unit
+checks, a native plan-token check, and focused Chromium workflows passed. The
+Prism route matrix passed in light and dark at 320, 360, 375, 390, 414, 430,
+600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports
+at 537x740, 913x480 and 667x375 also passed. Strava settings passed at 320,
+390, 768, 820 and 1440px in both themes; 320px light and 1440px dark screenshots
+were inspected. Browser checks use synthetic IPC, not native provider integration.
+Live Keychain credentials, external providers, native WebViews and physical
+devices were not tested. The foundations and components documents remain absent.
+
+## Offline Map Settings Removal, 2026-11-17
+
+The offline map settings entry and editor have been removed. Existing saved
+PMTiles paths and map rendering remain unchanged; old map-settings links show
+the settings directory instead of editing the source.
+
+Verification: the production build, catalog consistency check, and five focused
+Chromium checks passed, including light and dark settings at 320px and 1440px.
+Settings screenshots at 320px light and 1440px dark were inspected. The Prism
+route matrix passed in both themes at 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px, including four dark cases
+retried after test artifact errors or timeout. Existing motion, entry-route and
+translated-route checks failed before reaching
+settings because their Health overview expectations do not match the current
+Pace insights route. Browser checks use synthetic IPC; native WebViews, physical
+devices and live map providers were not tested. The referenced foundations and
+components documents are absent from this checkout.
+
 ## Race-Day Estimates Across Distances, 2026-11-16
 
 An eligible race plan now projects each displayed distance using the existing

@@ -156,16 +156,13 @@ test("Strava setup enables Continue after connecting", async ({ page }) => {
   await expect(page.locator(".notification-viewport")).toHaveCount(0);
   await expect(next).toBeDisabled();
   await page.getByRole("button", { name: "Connect with Strava" }).click();
+  await page.getByRole("region", { name: "Enable Strava description updates?" }).getByRole("button", { name: "Connect with Strava" }).click();
   await expect(next).toBeEnabled();
-  await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("status").filter({ hasText: "Strava connected. Description updates remain paused until enabled." })).toBeVisible();
+  await expect(page.locator('.onboarding-step[data-step-state="present"]').getByRole("status").filter({ hasText: "Strava description updates enabled for new runs." })).toBeVisible();
   await next.click();
-  await page.getByRole("checkbox", { name: "Update paired activity descriptions" }).click();
-  const confirmation = page.getByRole("region", { name: "Enable Strava description updates?" });
-  await expect(confirmation).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Activity descriptions" }).first()).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Update paired activity descriptions" })).toHaveCount(0);
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_set_enabled"))).toBe(false);
-  await confirmation.getByRole("button", { name: "Enable updates" }).click();
-  await expect.poll(() => page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_set_enabled" && call.args.enabled))).toBe(true);
 });
 
 test("setup suppresses background notifications and achievement celebrations", async ({ page }) => {
@@ -740,7 +737,7 @@ test("an imported plan is reviewed without creating another plan", async ({ page
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "create_plan"))).toHaveLength(0);
 });
 
-test("Strava connection and publishing are separate optional steps", async ({ page }) => {
+test("Strava connection enables publishing without a separate switch", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "strava", name: "Ada" })));
   await page.goto("/desk.html?noPlan#training");
   await page.getByRole("radio", { name: "Yes" }).check();
@@ -751,8 +748,9 @@ test("Strava connection and publishing are separate optional steps", async ({ pa
   await page.getByLabel("Strava Client Secret").fill("secret-not-in-draft");
   await page.getByRole("button", { name: "Save API credentials" }).click();
   await page.getByRole("button", { name: "Connect with Strava" }).click();
+  await page.getByRole("region", { name: "Enable Strava description updates?" }).getByRole("button", { name: "Connect with Strava" }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Update your Strava activities?" })).toBeVisible();
-  await expect(page.getByLabel("Update paired activity descriptions")).not.toBeChecked();
+  await expect(page.getByRole("heading", { name: "Activity descriptions" }).first()).toBeVisible();
+  await expect(page.getByLabel("Update paired activity descriptions")).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("runalytics.onboarding.v1"))).not.toContain("secret-not-in-draft");
 });

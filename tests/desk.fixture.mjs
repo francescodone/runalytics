@@ -79,7 +79,7 @@ export const deskFixture = `(function () {
     if (cmd === 'plugin:process|restart') return null;
     if (cmd === 'strava_status') return {...deskStrava};
     if (cmd === 'strava_configure') { deskStrava={...deskStrava,configured:true,clientId:args.clientId}; return {...deskStrava}; }
-    if (cmd === 'strava_connect') { if (window.__deskHoldStrava) await new Promise((resolve,reject) => { window.__deskCancelStrava=() => reject(new Error('Strava sign-in was cancelled.')); }); deskStrava={...deskStrava,connected:true,athleteId:42,enabled:false,pending:2}; return {...deskStrava}; }
+    if (cmd === 'strava_connect') { if (window.__deskHoldStrava) await new Promise((resolve,reject) => { window.__deskCancelStrava=() => reject(new Error('Strava sign-in was cancelled.')); }); deskStrava={...deskStrava,connected:true,athleteId:42,enabled:true,enabledAt:Math.floor(Date.now()/1000),pending:2}; return {...deskStrava}; }
     if (cmd === 'strava_cancel_connect') { window.__deskCancelStrava?.(); return null; }
     if (cmd === 'strava_set_enabled') { deskStrava={...deskStrava,enabled:args.enabled,enabledAt:deskStrava.enabledAt ?? Math.floor(Date.now()/1000)}; return {...deskStrava}; }
     if (cmd === 'strava_disconnect') { deskStrava={...deskStrava,connected:false,enabled:false,athleteId:null,...(args.forget ? {configured:false,clientId:''} : {})}; return {...deskStrava}; }
@@ -165,7 +165,7 @@ export const deskFixture = `(function () {
       if (original && pending) { Object.assign(workout, original, {date: workout.date, plannedDate: workout.plannedDate}); deskBenchmarks.delete(workout.id); count += 1; continue; }
       if (workout.date !== workout.plannedDate && pending && workout.plannedDate >= new Date().toISOString().slice(0,10)) { workout.date = workout.plannedDate; workout.movedAt = null; count += 1; }
     } return count; }
-    if (cmd === 'plan_sync_status') return deskSync;
+    if (cmd === 'plan_sync_status') { deskSync.config.enabled = deskSync.config.hasToken; return deskSync; }
     if (cmd === 'plan_sync_refresh') {
       if (window.__deskHoldRefresh) await new Promise(resolve => { window.__deskReleaseRefresh=resolve; });
       deskSync.config.lastChecked=new Date().toISOString();
@@ -177,7 +177,7 @@ export const deskFixture = `(function () {
       window.__deskEmit('plan://updated',null);
       return true;
     }
-    if (cmd === 'plan_sync_configure') { deskSync.config.enabled = args.config.enabled; if (args.token) deskSync.config.hasToken=true; return deskSync; }
+    if (cmd === 'plan_sync_configure') { if (args.token !== null && args.token !== undefined) deskSync.config.hasToken=Boolean(args.token); deskSync.config.enabled = deskSync.config.hasToken; return deskSync; }
     if (cmd === 'plan_sync_check') return {status:connectionParams.get('syncState') ?? (connectionParams.has('syncConflict') ? 'otherPlan' : 'upToDate'),planName:'Synthetic plan',workouts:33,syncedAt:Math.floor(Date.now()/1000)};
     if (cmd === 'plan_sync_push') return deskSync.config;
     if (cmd === 'plan_sync_pull') return {installed:!!args.force,planName:'Synthetic plan',workouts:33,conflict:new URLSearchParams(location.search).has('syncConflict') && !args.force ? 'Different synthetic plan on this device.' : null};

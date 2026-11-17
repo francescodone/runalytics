@@ -1242,7 +1242,7 @@ test.describe("plan freshness", () => {
     await expect(upload).toBeFocused();
   });
 
-  test("event bursts do not overlap checks and disabled sync does not poll", async ({ page }) => {
+  test("event bursts do not overlap checks and sync without a token does not poll", async ({ page }) => {
     await page.clock.install();
     await page.addInitScript(() => { window.__deskHoldRefresh = true; });
     await page.goto("/desk.html");
@@ -1251,7 +1251,7 @@ test.describe("plan freshness", () => {
     await page.clock.fastForward(60000);
     expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length)).toBe(1);
     await page.evaluate(async () => {
-      await window.__TAURI_INTERNALS__.invoke("plan_sync_configure", { config: { enabled: false } });
+      await window.__TAURI_INTERNALS__.invoke("plan_sync_configure", { config: { enabled: false }, token: "" });
       window.__deskHoldRefresh = false;
       window.__deskReleaseRefresh();
     });
@@ -1261,7 +1261,7 @@ test.describe("plan freshness", () => {
 });
 
 test.describe("Strava settings", () => {
-  test("strava credentials, privacy opt-in, pending retries and local disconnect", async ({ page }) => {
+  test("strava credentials enable updates on connection and allow local disconnect", async ({ page }) => {
     await page.goto("/desk.html#settings/strava");
     await expect(page.getByRole("button", { name: "Connect with Strava" })).toBeDisabled();
     await page.getByLabel("Strava Client ID", { exact: true }).fill("12345");
@@ -1271,18 +1271,17 @@ test.describe("Strava settings", () => {
     await page.getByRole("button", { name: "Save API credentials" }).click();
     await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "strava_configure").at(-1)?.args.clientSecret)).toBeNull();
     await page.getByRole("button", { name: "Connect with Strava" }).click();
+    const privacy = page.getByRole("dialog", { name: "Enable Strava description updates?" });
+    await expect(privacy).toContainText("results and training load");
+    await privacy.getByRole("button", { name: "Cancel" }).click();
+    expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_connect"))).toBe(false);
+    await page.getByRole("button", { name: "Connect with Strava" }).click();
+    await privacy.getByRole("button", { name: "Connect with Strava" }).click();
     await expect(page.getByText("Strava connected: athlete 42", { exact: true })).toBeVisible();
-    const toggle = page.getByRole("checkbox", { name: "Update paired activity descriptions" });
-    await expect(toggle).not.toBeChecked();
-    await toggle.click();
-    const confirmation = page.getByRole("dialog", { name: "Enable Strava description updates?" });
-    await expect(confirmation).toContainText("results and training load");
-    await expect(confirmation).not.toContainText(/risk/i);
-    await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(toggle).not.toBeChecked();
-    await toggle.click();
-    await confirmation.getByRole("button", { name: "Enable updates", exact: true }).click();
-    await expect(toggle).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Update paired activity descriptions" })).toHaveCount(0);
+    await expect(page.getByText("Strava description updates enabled for new runs.").first()).toBeVisible();
+    await expect(page.getByText("Automatic updates append the same text as Copy prescription", { exact: false }).first()).toBeVisible();
+    expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "strava_set_enabled"))).toBe(false);
     await expect(page.getByRole("heading", { name: "Needs attention (0)" })).toBeVisible();
     await page.getByRole("button", { name: "Disconnect Strava" }).click();
     const disconnect = page.getByRole("dialog", { name: "Disconnect Strava?" });
@@ -1293,7 +1292,6 @@ test.describe("Strava settings", () => {
     await page.getByRole("button", { name: "Disconnect Strava" }).click();
     await disconnect.getByRole("button", { name: "Disconnect", exact: true }).click();
     await expect(page.getByText("Strava not connected", { exact: true })).toBeVisible();
-    await expect(toggle).not.toBeChecked();
   });
 
   test("strava review identifies runs and allows retry or discard", async ({ page }) => {
@@ -1329,10 +1327,11 @@ test.describe("Strava settings", () => {
     await page.getByRole("button", { name: "Save API credentials" }).click();
     await page.evaluate(() => { window.__deskHoldStrava = true; });
     await page.getByRole("button", { name: "Connect with Strava" }).click();
+    await page.getByRole("dialog", { name: "Enable Strava description updates?" }).getByRole("button", { name: "Connect with Strava" }).click();
     await page.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("Strava sign-in was cancelled.");
     await expect(page.getByRole("button", { name: "Connect with Strava" })).toBeEnabled();
-    await expect(page.getByRole("checkbox", { name: "Update paired activity descriptions" })).not.toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Update paired activity descriptions" })).toHaveCount(0);
   });
 
   for (const width of [320, 390, 768, 820, 1440]) {
@@ -1749,14 +1748,14 @@ test.describe("motion system", () => {
         await expect(selector).toHaveCSS("scale", "none");
         await expect(selector).toHaveAttribute("aria-pressed", "true");
         await page.goto("/desk.html#settings");
-        await page.getByRole("link", { name: /Offline maps/ }).click();
+        await page.getByRole("link", { name: /Training boundaries/ }).click();
         const editor = page.locator(".settings-editor");
         await expect(editor).toBeVisible();
         if (reducedMotion === "no-preference") {
           await expect.poll(() => editor.locator("header").getAttribute("data-reveal")).toBe("settled");
         }
         const before = await page.evaluate(() => window.__contentReveals.length);
-        await page.getByLabel("Raster PMTiles archive").fill("/synthetic/new-map.pmtiles");
+        await page.getByLabel("Pace tolerance (seconds/km)").fill("5");
         expect(await page.evaluate(() => window.__contentReveals.length)).toBe(before);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await page.screenshot({ path: `test-results/micro-motion-${reducedMotion}-${width}.png`, fullPage: true });
@@ -2289,8 +2288,8 @@ test.describe("motion system", () => {
         return invoke(command, args);
       };
     });
-    await page.goto("/desk.html#settings/maps");
-    const save = page.getByRole("button", { name: "Save map source", exact: true });
+    await page.goto("/desk.html#settings/thresholds");
+    const save = page.getByRole("button", { name: "Save boundaries", exact: true });
     await expect(save).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
     const layout = () => save.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }));
@@ -2303,15 +2302,15 @@ test.describe("motion system", () => {
     await expect(save).toHaveAttribute("data-result", "success");
     await expect(save).toBeEnabled();
     expect(await layout()).toEqual(resting);
-    await expect(page.getByRole("status")).toContainText("Map source saved");
+    await expect(page.getByRole("status")).toContainText("Training boundaries saved");
     await page.evaluate(() => { window.__deskFail = "save_settings"; });
-    await page.getByLabel("Raster PMTiles archive").fill("/synthetic/map.pmtiles");
-    await page.getByLabel("Raster PMTiles archive").press("Enter");
+    await page.getByLabel("Pace tolerance (seconds/km)").fill("5");
+    await page.getByLabel("Pace tolerance (seconds/km)").press("Enter");
     await expect(save).toHaveAttribute("aria-busy", "true");
     await page.evaluate(() => window.__releaseMotionAction());
     await expect(save).toHaveAttribute("data-result", "error");
     await expect(page.getByRole("alert")).toContainText("Unable to save");
-    await expect(page.getByLabel("Raster PMTiles archive")).toHaveValue("/synthetic/map.pmtiles");
+    await expect(page.getByLabel("Pace tolerance (seconds/km)")).toHaveValue("5");
     expect(await layout()).toEqual(resting);
     await page.evaluate(() => { window.__deskFail = ""; });
     await save.press("Enter");
@@ -3187,7 +3186,7 @@ test("original entry routes load the independent workspace and retain deep links
     if(section) await expect(page.locator('.horizon-switch a[aria-current="page"]')).toHaveText(section);
     await expect(page.locator('#desk-root')).toBeVisible();
   }
-  for(const [hash,heading] of [['theme','Appearance'],['zones','Training boundaries'],['tiles','Offline maps'],['publishing','Calendar apps'],['setup','Watch connection']]) {
+  for(const [hash,heading] of [['theme','Appearance'],['zones','Training boundaries'],['publishing','Calendar apps'],['setup','Watch connection']]) {
     await page.goto(`/settings.html#${hash}`);
     await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
   }
@@ -3195,6 +3194,21 @@ test("original entry routes load the independent workspace and retain deep links
   await expect(page.getByRole('complementary',{name:'Activity review'})).toBeVisible();
   expect(loaded.filter(url=>/\/(app|redesign)\.css|\/src\/(dashboard|plan|calendar|achievements|injury|settings|support)\.ts|\/lib\/(navigation|overlay|workout-detail)\.ts/.test(url))).toEqual([]);
 });
+
+for (const theme of ['light', 'dark']) for (const width of [320, 1440]) {
+  test(`removed map settings fall back to the directory ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    for (const url of ['/desk.html#settings', '/settings.html#tiles', '/desk.html#settings/maps']) {
+      await page.goto(`${url.replace('#', `?theme=${theme}#`)}`);
+      await expect(page.getByRole('searchbox', { name: 'Search settings' })).toBeVisible();
+      await expect(page.getByRole('link', { name: /Offline maps/ })).toHaveCount(0);
+      await expect(page.getByLabel('Raster PMTiles archive')).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === 'save_settings'))).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`settings-${theme}-${width}.png`), fullPage: true });
+  });
+}
 
 for (const theme of ['light','dark']) {
   for (const width of [320,390,768,1440]) {
@@ -3951,6 +3965,34 @@ for (const width of [390, 1440]) {
   }
 }
 
+// Filtering while a reveal frame was pending used to cancel that frame without
+// clearing its handle, so the scheduler's `if (!revealFrame)` guard went
+// permanently dead: every later view registered its content at opacity 0 and
+// nothing ever revealed it — the journal looked frozen and the Training
+// calendar arrived completely blank until the app was restarted.
+test("a view arrival racing a pending reveal frame keeps later reveals alive", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#journal");
+  await expect(page.locator(".activity-row")).toHaveCount(9);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  // Deterministically recreate the race: a scroll schedules a reveal frame and
+  // a view arrival lands in the same task, cancelling it before it can run.
+  await page.locator(".activity-library .motion-change").evaluate(host => {
+    document.dispatchEvent(new Event("scroll"));
+    host.dispatchEvent(new Event("desk:view-arrive", { bubbles: true }));
+  });
+  await page.getByRole("combobox", { name: "Sport", exact: true }).selectOption("Run");
+  await expect(page.locator(".activity-row")).toHaveCount(6);
+  // Offscreen rows legitimately wait for viewport entry; the onscreen ones
+  // must actually arrive instead of staying registered at opacity 0 forever.
+  await expect.poll(() => page.locator(".activity-row").first().evaluate(row => Number(getComputedStyle(row).opacity))).toBe(1);
+  await page.getByRole("link", { name: "Training", exact: true }).click();
+  await expect(page.locator(".session-tile").first()).toBeVisible();
+  await expect.poll(() => page.locator(".session-tile").first().evaluate(tile => Number(getComputedStyle(tile).opacity))).toBe(1);
+  await expect.poll(() => page.locator("#workspace h2").first().evaluate(heading => Number(getComputedStyle(heading).opacity))).toBe(1);
+});
+
 test("activity splits display signed net elevation", async ({ page }) => {
   await page.addInitScript(() => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
@@ -4131,10 +4173,8 @@ test("calendar settings never publish on read and retain blank credentials and s
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "publish_calendar"))).toBe(false);
   await expect(page.getByRole("checkbox", { name: "Sync this plan across devices" })).toHaveCount(0);
   await page.goto("/desk.html#settings/devices");
-  await page.getByRole("checkbox", { name: "Sync this plan across devices" }).uncheck();
-  const sync = await page.evaluate(() => window.__deskCalls.find(call => call.command === "plan_sync_configure").args);
-  expect(sync).toEqual({config:{enabled:false},token:null});
-  await expect(page.getByText("Device sync paused", {exact:true})).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Sync this plan across devices" })).toHaveCount(0);
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "plan_sync_configure"))).toBe(false);
   await expect(page.getByRole("button", { name: "Import plan", exact:true })).toHaveCount(0);
   await page.getByRole("button", { name:"More options", exact:true }).click();
   await page.getByRole("button", { name:"Sync diagnostics", exact:true }).click();
@@ -4506,7 +4546,8 @@ test("device connections keep settings accessible when checks fail or prerequisi
   await expect(page.getByRole("link", {name:"Connect COROS"})).toHaveAttribute("href", "#settings/watch");
   await expect(page.getByRole("button", {name:"Retry sync", exact:true})).toHaveCount(0);
   await page.goto("/desk.html?syncPaused=1#settings/devices");
-  await expect(page.getByText("Device sync paused", {exact:true})).toBeVisible();
+  await expect(page.getByText("Device sync paused", {exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button", {name:"Retry sync", exact:true})).toBeVisible();
 });
 
 for (const width of [320,390,768,820,1440]) for (const theme of ["light","dark"]) {

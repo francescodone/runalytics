@@ -135,7 +135,13 @@ fn load_device(state: &AppState) -> Result<PlanSync> {
         config.channel_code = acknowledged.channel_code;
         config.gist_id = acknowledged.gist_id;
     }
+    apply_token_state(&mut config, stored_token().is_some());
     Ok(config)
+}
+
+fn apply_token_state(config: &mut PlanSync, has_token: bool) {
+    config.has_token = has_token;
+    config.enabled = has_token;
 }
 
 fn save_device(state: &AppState, config: &PlanSync) -> Result<()> {
@@ -819,13 +825,13 @@ pub fn pending_changes(state: &AppState) -> Result<bool> {
 }
 
 pub(crate) fn automatic_push_will_run(state: &AppState) -> bool {
-    load_device(state).map(|config| config.enabled).unwrap_or(true)
+    load_device(state).map(|config| config.enabled && account_id().is_some()).unwrap_or(true)
 }
 
 /// `None` when the channel is not configured; `Some` when a push was attempted.
 pub async fn try_push_if_enabled(state: &AppState) -> Option<Result<PlanSync>> {
     let config = match load_device(state) { Ok(config) => config, Err(error) => return Some(Err(error)) };
-    if !config.enabled {
+    if !config.enabled || account_id().is_none() {
         return None;
     }
     let result = push(state, false).await;
@@ -1349,8 +1355,8 @@ pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
 /// Save the pane's settings. `token` follows the same convention as calendar
 /// publishing: `None` leaves the stored token alone, `Some("")` removes it.
 pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) -> Result<PlanSyncStatus> {
+    let _ = patch.enabled;
     let mut config = load_device(state)?;
-    config.enabled = patch.enabled;
     config.can_publish = true;
     // A token change invalidates a discovered gist: the new account may have a
     // different channel, and re-discovery is cheap.
@@ -1380,6 +1386,7 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
     } else {
         config.has_token = stored_token().is_some();
     }
+    config.enabled = config.has_token;
     if token_changed {
         config.gist_id = None;
         config.acknowledged_blob = None;
@@ -1458,6 +1465,15 @@ fn b64_index(c: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn token_state_overrides_legacy_sync_preference() {
+        let mut config = PlanSync { enabled: false, ..Default::default() };
+        apply_token_state(&mut config, true);
+        assert!(config.enabled && config.has_token);
+        apply_token_state(&mut config, false);
+        assert!(!config.enabled && !config.has_token);
+    }
+
+    #[test]
     fn shared_credential_change_invalidates_the_persisted_channel_checkpoint() {
         let state = device();
         let config = PlanSync {
@@ -1471,7 +1487,7 @@ mod tests {
         save_device(&state, &config).unwrap();
         invalidate_channel(&state).unwrap();
         let changed = load_device(&state).unwrap();
-        assert!(changed.enabled);
+        assert_eq!(changed.enabled, changed.has_token);
         assert!(changed.gist_id.is_none());
         assert!(changed.acknowledged_blob.is_none());
         assert!(changed.remote_etag.is_none());

@@ -315,6 +315,10 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       landingRoots.add(event.target);
       cancelAnimationFrame(landingFrame);
       cancelAnimationFrame(revealFrame);
+      // Clearing the handle matters: scheduleReveals is guarded by it, and a
+      // stale cancelled id would otherwise disable every future reveal,
+      // leaving all later views registered at opacity 0 — a blank app.
+      revealFrame = 0;
       landingFrame = requestAnimationFrame(() => {
         const roots = [...landingRoots].filter(root => root.isConnected && ![...landingRoots].some(other => other !== root && other.contains(root)));
         landingRoots.clear();

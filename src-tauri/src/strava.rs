@@ -126,7 +126,18 @@ fn status(store: &Store) -> Result<Status> {
         athlete_id: config.tokens.as_ref().map(|tokens| tokens.athlete_id),
         ..Status::default()
     };
+    if let Some(athlete) = output.athlete_id {
+        activate_account(store, athlete, &output.client_id, Utc::now().timestamp())?;
+    }
     account_status(store, output)
+}
+
+fn activate_account(store: &Store, athlete: i64, client_id: &str, now: i64) -> Result<()> {
+    store.conn.lock().unwrap().execute(
+        "INSERT INTO strava_accounts(athlete_id,client_id,enabled,enabled_at) VALUES(?1,?2,1,?3) ON CONFLICT(athlete_id) DO UPDATE SET client_id=excluded.client_id,enabled_at=CASE WHEN enabled=1 AND enabled_at IS NOT NULL THEN enabled_at ELSE excluded.enabled_at END,enabled=1",
+        params![athlete, client_id, now],
+    )?;
+    Ok(())
 }
 
 fn account_status(store: &Store, mut output: Status) -> Result<Status> {
@@ -223,15 +234,11 @@ pub async fn strava_configure(
 
 #[tauri::command]
 pub async fn strava_set_enabled(state: State<'_, AppState>, enabled: bool) -> Result<Status> {
+    let _ = enabled;
     let _guard = operation().lock().await;
     let config = credentials()?.ok_or_else(|| failure("Configure Strava first."))?;
-    let tokens = config
-        .tokens
-        .ok_or_else(|| failure("Connect Strava first."))?;
-    state.store.conn.lock().unwrap().execute(
-        "UPDATE strava_accounts SET enabled=?2,enabled_at=CASE WHEN ?2=1 THEN COALESCE(enabled_at,?3) ELSE enabled_at END WHERE athlete_id=?1",
-        params![tokens.athlete_id, enabled, Utc::now().timestamp()],
-    )?;
+    let tokens = config.tokens.ok_or_else(|| failure("Connect Strava first."))?;
+    activate_account(&state.store, tokens.athlete_id, &config.client_id, Utc::now().timestamp())?;
     status(&state.store)
 }
 
@@ -420,13 +427,12 @@ pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Resul
         .athlete
         .ok_or_else(|| failure("Strava did not identify the connected athlete."))?
         .id;
-    if let Some(previous) = config.tokens.as_ref() {
+    if let Some(previous) = config.tokens.as_ref().filter(|previous| previous.athlete_id != athlete_id) {
         state.store.conn.lock().unwrap().execute(
             "UPDATE strava_accounts SET enabled=0 WHERE athlete_id=?1",
             [previous.athlete_id],
         )?;
     }
-    state.store.conn.lock().unwrap().execute("INSERT INTO strava_accounts(athlete_id,client_id) VALUES(?1,?2) ON CONFLICT(athlete_id) DO UPDATE SET client_id=excluded.client_id,enabled=0,last_message=NULL", params![athlete_id, config.client_id])?;
     config.tokens = Some(Tokens {
         access_token: response.access_token,
         refresh_token: response.refresh_token,
@@ -434,6 +440,7 @@ pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Resul
         athlete_id,
     });
     save_credentials(&config)?;
+    activate_account(&state.store, athlete_id, &config.client_id, Utc::now().timestamp())?;
     state.store.conn.lock().unwrap().execute("UPDATE strava_exports SET status='pending',next_attempt_at=0 WHERE athlete_id=?1 AND status='auth_required'", [athlete_id])?;
     status(&state.store)
 }
@@ -688,11 +695,17 @@ fn sync_cutoff(store: &Store, athlete: i64) -> Result<Option<i64>> {
 }
 
 pub(crate) fn sync_stage_enabled(store: &Store) -> bool {
-    store.conn.lock().unwrap().query_row(
-        "SELECT EXISTS(SELECT 1 FROM strava_accounts WHERE enabled=1 AND enabled_at IS NOT NULL)",
-        [],
-        |row| row.get(0),
-    ).unwrap_or(true)
+    match credentials() {
+        Ok(Some(config)) => match config.tokens {
+            Some(tokens) => {
+                let _ = activate_account(store, tokens.athlete_id, &config.client_id, Utc::now().timestamp());
+                true
+            }
+            None => false,
+        },
+        Ok(None) => false,
+        Err(_) => true,
+    }
 }
 
 async fn sync_inner(store: &Store) -> Result<(String, bool)> {
@@ -704,6 +717,7 @@ async fn sync_inner(store: &Store) -> Result<(String, bool)> {
         return Ok(("Strava is not connected. Connect in Settings to update descriptions.".into(), false));
     };
     let athlete = tokens.athlete_id;
+    activate_account(store, athlete, &config.client_id, Utc::now().timestamp())?;
     let Some(cutoff) = sync_cutoff(store, athlete)? else {
         return Ok((String::new(), false));
     };
@@ -976,17 +990,17 @@ mod tests {
     }
 
     #[test]
-    fn sync_stage_cutoff_requires_an_enabled_account_with_a_start_time() {
+    fn activation_preserves_existing_cutoff_and_starts_paused_accounts_now() {
         let (store, _) = fixture();
-        assert!(sync_stage_enabled(&store));
+        activate_account(&store, 42, "123", 100).unwrap();
         assert_eq!(sync_cutoff(&store, 42).unwrap(), Some(1));
-        assert_eq!(sync_cutoff(&store, 99).unwrap(), None);
         store.conn.lock().unwrap().execute("UPDATE strava_accounts SET enabled=0 WHERE athlete_id=42", []).unwrap();
-        assert!(!sync_stage_enabled(&store));
-        assert_eq!(sync_cutoff(&store, 42).unwrap(), None);
-        store.conn.lock().unwrap().execute("UPDATE strava_accounts SET enabled=1,enabled_at=NULL WHERE athlete_id=42", []).unwrap();
-        assert!(!sync_stage_enabled(&store));
-        assert_eq!(sync_cutoff(&store, 42).unwrap(), None);
+        activate_account(&store, 42, "123", 200).unwrap();
+        assert_eq!(sync_cutoff(&store, 42).unwrap(), Some(200));
+        activate_account(&store, 42, "123", 300).unwrap();
+        assert_eq!(sync_cutoff(&store, 42).unwrap(), Some(200));
+        activate_account(&store, 99, "123", 400).unwrap();
+        assert_eq!(sync_cutoff(&store, 99).unwrap(), Some(400));
     }
 
     #[test]

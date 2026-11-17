@@ -67,6 +67,9 @@ There is no animated blur on large surfaces or repeated rows.
 
 Reveals register before paint; desktop reveals wait for viewport entry. Ordinary
 rerenders do not replay them. Each desktop view change gets a fresh, scoped landing.
+A view arrival that cancels a pending reveal frame releases its handle, so
+rapid successive arrivals — native filter changes among them — never strand
+reveal scheduling with invisible, permanently waiting content.
 Headings, metric groups, setup controls, lists, tables, forms and opened disclosures
 use the shared registration path. Native details register their contents on opening.
 Nested reveal targets animate as one outer visual unit, including its borders

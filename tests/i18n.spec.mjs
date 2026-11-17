@@ -115,7 +115,6 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
       ["settings/devices", "Device sync"],
       ["settings/transfer", "Transfer connections"],
       ["settings/assistant", "Third-party connections"],
-      ["settings/maps", "Offline maps"],
       ["settings/about", "About and updates"],
       ["help", "A recent workout is missing"],
     ]) {
