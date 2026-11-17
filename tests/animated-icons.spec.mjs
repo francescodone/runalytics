@@ -38,6 +38,38 @@ async function partFrames(icon, count = 60) {
   }, count);
 }
 
+async function iconInk(icon) {
+  return icon.evaluate(async element => {
+    const source = element.querySelector("svg");
+    const svg = source.cloneNode(true);
+    svg.setAttribute("width", "64");
+    svg.setAttribute("height", "64");
+    svg.style.color = getComputedStyle(source).color;
+    const image = new Image();
+    image.src = `data:image/svg+xml,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    return context.getImageData(0, 0, 64, 64).data.filter((value, index) => index % 4 === 3 && value > 32).length;
+  });
+}
+
+async function iconFrames(icon) {
+  return icon.evaluate(async element => {
+    const frames = [];
+    for (let index = 0; index < 60; index++) {
+      await new Promise(requestAnimationFrame);
+      frames.push(JSON.stringify([...element.querySelectorAll("svg, svg *")].map(node => {
+        const style = getComputedStyle(node);
+        return [style.transform, style.opacity, style.strokeDasharray, style.strokeDashoffset];
+      })));
+    }
+    return frames;
+  });
+}
+
 async function runnerSteps(icon) {
   return icon.evaluate(element => {
     const animations = element.getAnimations({ subtree: true });
@@ -173,6 +205,91 @@ test("animated close stays an unboxed cross, settles quickly and preserves dismi
   await close.click();
   await expect(dialog).toHaveCount(0);
   await expect(opener).toBeFocused();
+});
+
+for (const [width, theme] of [[320, "light"], [1440, "dark"]]) {
+  test(`animated plan pace arrows remain painted before and after previews ${width}px ${theme}`, async ({ page, browserName }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto(`/desk.html?feedback&theme=${theme}#training/plan`);
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    for (const [direction, name] of [["easier", "arrowDown"], ["harder", "arrowUp"]]) {
+      const label = `Make plan slightly ${direction}`;
+      const control = page.getByRole("button", { name: label, exact: true });
+      const icon = control.locator(`[data-icon="${name}"]`);
+      await control.scrollIntoViewIfNeeded();
+      await expect(control).toBeEnabled();
+      await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+      const rest = await icon.locator("svg").innerHTML();
+      const size = await icon.evaluate(element => [element.offsetWidth, element.offsetHeight]);
+      const calls = await page.evaluate(() => window.__deskCalls.length);
+      const hover = iconFrames(icon);
+      await control.hover();
+      expectOneShot(await hover);
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+      await page.mouse.move(0, 0);
+      await control.focus();
+      await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
+      const keyboard = iconFrames(icon);
+      await page.keyboard.press(browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab");
+      await expect(control).toBeFocused();
+      expectOneShot(await keyboard);
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+      expect(await icon.locator("svg").innerHTML()).toBe(rest);
+      expect(await icon.evaluate(element => [element.offsetWidth, element.offsetHeight])).toEqual(size);
+      expect(await page.evaluate(() => window.__deskCalls.length)).toBe(calls);
+      await control.press("Enter");
+      const dialog = page.getByRole("dialog", { name: "Review plan changes", exact: true });
+      await expect(dialog.getByRole("button", { name: "Apply changes", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(control).toBeFocused();
+      await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+      await expect.poll(() => icon.evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0);
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+      for (const media of [{ reducedMotion: "reduce" }, { reducedMotion: "no-preference", forcedColors: "active" }]) {
+        await page.emulateMedia(media);
+        await expectStatic(icon);
+        expect(await iconInk(icon)).toBeGreaterThan(20);
+        expect(await icon.locator("svg").innerHTML()).toBe(rest);
+      }
+      await page.emulateMedia({ reducedMotion: "no-preference", forcedColors: "none" });
+    }
+    const calls = await page.evaluate(() => window.__deskCalls);
+    expect(calls.filter(call => call.command === "preview_plan_difficulty").map(call => call.args.direction)).toEqual(["easier", "harder"]);
+    expect(calls.filter(call => call.command === "approve_plan_difficulty")).toEqual([]);
+    await page.locator(".edit-plan").screenshot({ path: testInfo.outputPath("plan-pace-actions.png") });
+  });
+}
+
+test("animated plan pace arrows retain visible artwork and single previews after touch dismissal", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "no-preference" });
+  try {
+    const page = await context.newPage();
+    await installDeskFixture(page);
+    await page.goto("/desk.html?feedback#training/plan");
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    for (const [direction, name] of [["easier", "arrowDown"], ["harder", "arrowUp"]]) {
+      const control = page.getByRole("button", { name: `Make plan slightly ${direction}`, exact: true });
+      const icon = control.locator(`[data-icon="${name}"]`);
+      await control.scrollIntoViewIfNeeded();
+      await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+      await control.tap();
+      const dialog = page.getByRole("dialog", { name: "Review plan changes", exact: true });
+      await expect(dialog.getByRole("button", { name: "Apply changes", exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "Dismiss changes", exact: true }).tap();
+      await expect(dialog).toHaveCount(0);
+      await expect(control).toBeFocused();
+      await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+      await expect.poll(() => icon.evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0);
+      expect(await iconInk(icon)).toBeGreaterThan(20);
+    }
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "preview_plan_difficulty").map(call => call.args.direction))).toEqual(["easier", "harder"]);
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "approve_plan_difficulty"))).toEqual([]);
+  } finally {
+    await context.close();
+  }
 });
 
 test("animated palette language and provider gestures retain their shapes labels and connection permissions", async ({ page }) => {

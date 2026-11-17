@@ -1,3 +1,33 @@
+## Persistent Plan Pace Action Arrows, 2026-11-17
+
+Plan easier/harder action arrows now remain visible before and after interaction.
+Their selected library clips begin/end with invisible strokes; the shared adapter
+instead animates the same-source library SVG with a small up/down nudge, using
+the existing search-poster motion path, normal replay timing and cancellation.
+No action-specific player, replacement artwork or additional input host was added.
+Static/reduced-motion/forced-colour states retain the same arrow. Plan previews,
+approval guards, revision checks, mileage preservation, focus return and labels
+are unchanged. This shared UI also applies inside native WebViews; UIKit tab
+artwork and OS window controls were not changed.
+
+Verification: new rendered-pixel regressions reproduced zero painted arrow pixels
+before the fix and passed afterward. The production build, 59 selected Chromium
+checks and 13 WebKit checks passed. Three new cases cover both arrows at 320px
+light and 1440px dark, hover/keyboard playback and exact resting-artwork restoration,
+reduced motion/forced colours, and 390px touch dismissal with single preview calls
+and no approvals. Existing checks cover review confirmation/revision/mileage
+behavior, shared animation lifecycle, search, offline assets, and runner/close
+playback. The Chromium run includes 42 Prism checks: light/dark route widths 320,
+360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920
+and 2560px; short viewports 537x740, 913x480 and 667x375; 820px settings/details;
+200% text at 320/820/1440px; and settled rendering budgets. Packaged before/after
+screenshots at 320px light and 1440px dark were inspected, with both strokes
+present across sampled motion phases, no remote requests/runtime errors, no
+page overflow and no preview/write calls from hovering. Whitespace checks passed.
+Browser checks use synthetic IPC, not native/provider integration; native apps,
+physical devices and manual assistive-technology behavior were not retested.
+The referenced foundations and components documents remain absent.
+
 ## Flat Compact Month Calendar, 2026-11-17
 
 At widths up to 800px, month dates no longer inherit individual pill borders,

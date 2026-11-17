@@ -15,6 +15,19 @@ type Activation = (event: Event | MouseEvent<HTMLElement>) => void;
 
 function isCatalog(name: IconName): name is CatalogIconName { return name in catalogIcons; }
 
+const nudge = (x: number, y: number): Keyframe[] => [
+  { transform: "translate(0px, 0px)" },
+  { transform: `translate(${x}px, ${y}px)` },
+  { transform: "translate(0px, 0px)" },
+];
+
+// These catalog clips morph or hide their idle meaning; animate their source SVG instead.
+const posterMotions: Partial<Record<CatalogIconName, Keyframe[]>> = {
+  search: nudge(.6, 0),
+  arrowDown: nudge(0, 1),
+  arrowUp: nudge(0, -1),
+};
+
 function StaticGlyph({ name, size, state }: { name: IconName; size: number; state?: boolean }) {
   const identity = useId().replace(/\W/g, "");
   if (!isCatalog(name)) return <CustomGlyph name={name} size={size} />;
@@ -52,7 +65,7 @@ function NativePlayer({ name, size, activation, autoplay }: { name: IconName; si
     const cancel = () => { for (const animation of animations) animation.cancel(); animations.clear(); };
     const replay = () => {
       cancel();
-      const recipes = isCatalog(name) ? [{ part: "", frames: [{ transform: "translateX(0px)" }, { transform: "translateX(.6px)" }, { transform: "translateX(0px)" }] }] : customMotions[name];
+      const recipes = isCatalog(name) ? [{ part: "", frames: posterMotions[name] ?? [] }] : customMotions[name];
       for (const recipe of recipes) {
         const selector = recipe.part ? `[data-icon-part="${recipe.part}"]` : "svg";
         for (const part of host.current?.querySelectorAll<SVGElement>(selector) ?? []) {
@@ -108,8 +121,9 @@ function IconPlayback({ name, size, activation, status, play = false, className 
   useLayoutEffect(() => () => { setInterrupted(true); }, []);
   const fallback = <StaticGlyph name={name} size={size} state={selected} />;
   const entry = isCatalog(name) ? catalogIcons[name] : null;
+  const posterMotion = isCatalog(name) ? posterMotions[name] : undefined;
   return <span ref={host} className={`animated-icon ${className}`.trim()} data-icon={name} data-icon-source={entry ? "useanimations" : "custom"} data-icon-state={stateful || expanded ? String(Boolean(selected)) : undefined} data-icon-playback={animate ? pending ? "pending" : status ? "result" : "ready" : "static"} style={{ ...style, "--icon-size": `${size}px` } as CSSProperties} aria-hidden="true">
-    {animate ? <PlayerBoundary key={name} fallback={fallback} onFailure={() => setFailed(name)}>{entry && name !== "search" ? <UseAnimations animation={entry.animation} size={size} interaction={pending ? "loop" : stateful ? "click-toggle" : "click-replay"} active={stateful ? Boolean(selected) : undefined} autoplay={stateful ? false : autoplay} loop={pending} speed={pending ? 1 : speedFor(entry.animation, status ? tempo.iconResult : tempo.iconReplay)} render={(events, attributes) => <PlayerFrame events={events} attributes={attributes} activation={activation} />} /> : <NativePlayer name={name} size={size} activation={activation} autoplay={autoplay} />}</PlayerBoundary> : fallback}
+    {animate ? <PlayerBoundary key={name} fallback={fallback} onFailure={() => setFailed(name)}>{entry && !posterMotion ? <UseAnimations animation={entry.animation} size={size} interaction={pending ? "loop" : stateful ? "click-toggle" : "click-replay"} active={stateful ? Boolean(selected) : undefined} autoplay={stateful ? false : autoplay} loop={pending} speed={pending ? 1 : speedFor(entry.animation, status ? tempo.iconResult : tempo.iconReplay)} render={(events, attributes) => <PlayerFrame events={events} attributes={attributes} activation={activation} />} /> : <NativePlayer name={name} size={size} activation={activation} autoplay={autoplay} />}</PlayerBoundary> : fallback}
   </span>;
 }
 

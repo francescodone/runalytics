@@ -36,7 +36,11 @@ and toggle players follow checked state rather than maintaining their own toggle
 Disclosure orientation follows real `aria-expanded`/native details state through
 shared styling, not route-specific transforms. Native picker popup chrome remains
 OS-owned. Search retains the library's search artwork with a short original accent
-instead of morphing an idle search field into an unrelated clear action.
+instead of morphing an idle search field into an unrelated clear action. Up/down
+action arrows likewise use their same-source library SVGs with a small directional
+nudge: their catalog clips have blank initial/final frames and must not leave
+plan difficulty controls empty at rest. These poster motions share the normal
+replay timing, eligibility and cancellation; they never hide or redraw the strokes.
 
 `StatusIcon` loops only for actual `pending` work. Success/error are static unless
 `play` identifies a new command outcome; repeated outcomes have distinct sequence
