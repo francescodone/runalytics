@@ -1,3 +1,158 @@
+## Recorded Completion Counters, 2026-11-17
+
+Week and Month now count completed calendar activities and sum their recorded
+distances, including runs not matched to a plan. Completion dates come from the
+recordings, not the scheduled workout dates. Planned session and distance totals,
+skipped/rest behavior, calendar presentation and shared counting motion are
+unchanged. The reported week now reads 2/4 sessions and 21.8 km / 42.0 km rather
+than 1/4 sessions and the completed workout's planned 8.0 km.
+
+Verification: the production build, 14 focused Chromium checks, the same 14
+WebKit checks and all 40 Prism responsive checks passed. Regressions cover
+matched actual mileage, extra runs, week navigation, month/year boundaries,
+recordings on different dates from their plan and missing plans/distances.
+The responsive matrix covers light/dark widths 320, 360, 375, 390, 414, 430,
+600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports
+537x740, 913x480 and 667x375; 820px settings/details; and 200% text at
+320/820/1440px. Corrected counter screenshots were inspected at 390px light and
+1440px dark. Earlier matrix attempts lost the reused preview; the complete
+matrix passed against a separately managed, responsive preview. Browser checks
+use synthetic IPC, not native integration. Native WebViews, live-provider data
+and physical devices were not tested. The referenced foundations and components
+documents remain absent.
+
+## Sync Update Confirmations Without Report Summary, 2026-11-17
+
+Manual sync from the header and Watch connection settings no longer adds the
+activity/health counts or raw calendar-publishing summary above the update list.
+The existing COROS calendar, local DB, calendar, Strava and gist confirmations,
+progress states, dismissal and error feedback remain unchanged. The sync IPC and
+backend behavior are unchanged.
+
+Verification: the new zero-activity regression reproduced the reported summary
+before the change. The production build and 46 selected synthetic-IPC Chromium
+checks passed afterward: both sync entry points with zero/nonzero activity reports
+at 320px light and 1440px dark, dismissal and failure fallback, plus all 40 Prism
+responsive checks. The matrix covers light/dark widths 320, 360, 375, 390, 414,
+430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports
+537x740, 913x480 and 667x375; 820px settings/details; and 200% text at
+320/820/1440px. Notification screenshots were inspected at 320px light and
+1440px dark. An initial broader run also failed seven untouched stage-event tests
+(waiting-state/startup expectations and old spinner selectors); those tests were
+not changed. Concurrent runs also removed shared test artifacts, so final checks
+used a session-specific output directory. Native WebViews, physical devices and
+live provider sync were not verified. The referenced foundations and components
+documents remain absent.
+
+## COROS Re-login Callback and Feedback Spacing, 2026-11-17
+
+The desktop callback listener now switches its socket to nonblocking mode before
+registering with Tokio. The old conversion panicked in debug builds, dropped the
+listener and left the browser at a refused localhost connection while the invoke
+remained unresolved. Synthetic loopback regressions reproduced that panic before
+the repair. The listener now ignores unrelated browser requests, bounds incomplete
+request reads, answers denied sign-ins with retry guidance and releases its port
+on timeout. Browser-launch errors are returned rather than silently ignored.
+OAuth state, PKCE and issuer verification still belong to the existing authorization
+manager; provider permissions and per-COROS-profile persistence are unchanged.
+
+Watch connection content now uses the shared connection-settings grid, keeping
+pending status text separated from its button without new spacing or motion rules.
+Completed/failed requests clear the waiting state, and failure removes obsolete
+sign-in instructions while retaining a visible error and an enabled retry action.
+
+Verification: production frontend and native debug executable builds, eight-catalog
+translation checks, seven browser storage/IPC unit checks and 25 focused native
+COROS/profile tests passed. The four new native checks use real
+localhost HTTP with synthetic codes: callback acceptance without panic, unrelated
+requests, denial and abandoned-login timeout/port reuse. All 64 selected Chromium
+checks and 13 profile WebKit checks passed. These include profile restoration,
+setup workflows, 320/1440px light/dark pending/error/retry geometry and all 40 Prism
+responsive cases: light/dark route widths 320, 360, 375, 390, 414, 430, 600, 768,
+820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; 537x740, 913x480 and
+667x375 short viewports; 820px details/settings; and 200% text at 320/820/1440px.
+The new spacing regressions measured a 0px gap before the repair and require at
+least 16px afterward. A further focused pass explicitly verified light/dark
+appearance in both browsers at 320/1440px; 320px light and 1440px dark pending
+screenshots were inspected. Browser checks use synthetic IPC; callback transport tests
+do not verify live COROS authorization, actual Keychain access or physical devices.
+Native WebView acceptance remains unverified. The referenced foundations and
+components documents remain absent.
+
+## Per-COROS Login Profiles, 2026-11-17
+
+A stable COROS login ID now selects an independent, persistent local profile.
+Plans, activity/health history, settings and service credentials use scoped native
+storage; appearance, language, onboarding and connection-transfer drafts use
+journaled browser snapshots. Logging out hides the workspace without deleting the
+profile, and logging back into the same COROS account restores it. Another COROS
+account starts separately. The sign-in screen and legacy-import confirmation reuse
+Prism's onboarding layout, controls, dialogs and pending/error states. Logout also
+remains available when a saved profile has no usable watch credentials.
+
+Account bootstrap precedes personal UI/i18n initialization. Commands and background
+work pin their profile and credentials; switching waits for active work, rejects
+stale requests and prevents late frontend replies from updating another profile.
+Existing authenticated installations migrate only to their known owner. Unowned
+legacy data requires explicit confirmation and an empty destination, including no
+saved third-party credentials. Original legacy data remains intact; installed
+profile metadata preserves ownership if the migration marker write is interrupted.
+Entry URLs, provider permissions, training algorithms, remote-plan confirmations
+and existing account-specific device-sync conflict rules are unchanged.
+
+Verification: production build, eight-catalog translation checks, seven browser
+storage/IPC unit checks and 79 focused native profile/COROS/plan-sync/Strava/calendar
+publishing tests passed. All nine profile browser cases passed in Chromium and
+WebKit, covering A/B/A/B restoration, restart, isolated drafts/settings/history,
+logout cancellation and failures, pending/duplicate actions, unavailable watch
+credentials, sync gating, confirmed legacy import and fail-closed bootstrap.
+A final 82-check Chromium selection passed, including related connection/settings
+workflows and all 40 Prism responsive cases: light/dark route widths 320, 360, 375,
+390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px;
+537x740, 913x480 and 667x375 short viewports; 820px detail/settings flows; and
+200% text at 320/820/1440px. Profile confirmation accessibility checks and screenshots
+cover 320/1440px light/dark; 320px light confirmation and 1440px dark signed-out
+screenshots were inspected. Whitespace checks passed.
+
+Three dark QR-decoding checks at 320/390/1440px fail identically on unchanged HEAD;
+that unrelated behavior was left unchanged and excluded from the final selection.
+The formerly removed fixture sources now live persistently under tests/fixtures,
+without restoring retired production harnesses. Browser checks use synthetic IPC,
+and native unit checks use temporary data and mock credentials: live COROS login,
+real Keychain/WebView integration, physical devices and native offline acceptance
+remain unverified. The referenced foundations and components documents are absent.
+
+## Non-destructive Watch Logout (superseded), 2026-11-17
+
+Settings > Watch connection now exposes Log out through the shared confirmation
+surface, with cancellation/focus return, pending guards, retryable errors and
+explicit local-data retention guidance. The searchable directory includes logout.
+Reconnecting stays in the existing setup/watch flow; logout does not reset
+onboarding, plans, preferences, history or other service configurations. This
+initial shared-profile implementation is superseded by the per-login profiles above.
+The existing disconnect IPC removes only COROS authorization, waits for a complete
+history sync and active provider requests, and cannot race a new sign-in. COROS
+authorization requests fresh login while retaining OAuth state and PKCE proofs.
+No training algorithms, provider permissions or remote-plan deletion behavior
+changed. Existing account-specific plan-sync/conflict behavior is retained.
+
+Verification: production build, eight-catalog translation checks, 16 focused Rust
+COROS tests, 57 synthetic-IPC Chromium checks and nine WebKit checks passed. Seven
+new browser cases cover logout/reload/re-login retention, confirmation/cancellation,
+failed logout and sign-in, duplicate submission, sync gating and offline logout.
+Logout screenshots and accessibility checks cover 320/1440px light/dark. All 40
+Prism responsive checks passed: light/dark route widths 320, 360, 375, 390, 414,
+430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports
+537x740, 913x480 and 667x375; 820px detail/settings flows; and 200% text at
+320/820/1440px. Screenshots were inspected at 320px light and 1440px dark.
+
+A concurrent cleanup removed two legacy files still imported by the browser
+fixture. Validation used isolated historical copies through a temporary Node
+read shim, without restoring those removed repository files. Browser reloads
+exercise synthetic persistence, not the native Keychain or live-provider login.
+Native WebViews, physical devices and live COROS account switching remain
+unverified. The referenced foundations and components documents remain absent.
+
 ## Persistent Plan Pace Action Arrows, 2026-11-17
 
 Plan easier/harder action arrows now remain visible before and after interaction.

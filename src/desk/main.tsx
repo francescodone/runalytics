@@ -1,6 +1,7 @@
 import { FeedbackReminder } from "./feedback";
 import { Activity, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { IconCalendarWeek, IconRun, IconChartLine, IconTrophy } from "./icons";
@@ -8,14 +9,15 @@ import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
 import type { Workspace } from "./data";
-import { BrandMark, ErrorNotice, IconButton } from "./ui";
+import { BrandMark, Button, ErrorNotice, IconButton, Loading } from "./ui";
+import { accountSession } from "./profiles";
 import { AnimatedIcon, ControlAnimation, StatusIcon } from "./animated-icons";
 import "./desk.css";
 import { Training } from "./training";
 import { Journal } from "./journal";
 import { Milestones } from "./health";
 import { PaceInsightsView } from "./pace-insights";
-import { SettingsWorkspace, Help } from "./settings";
+import { SettingsWorkspace, WatchSettings, LegacyProfileImport, Help } from "./settings";
 import { Onboarding, hasOnboardingDraft } from "./onboarding";
 import { BrandSplash } from "./splash";
 import { Change, MotionSystem, SelectionGroup, SelectionMarker, tempo, useCompactLayout } from "./interaction";
@@ -50,7 +52,7 @@ function App() {
   const [runnerName, setRunnerName] = useState(() => { try { return localStorage.getItem("runalytics.runnerName") ?? ""; } catch { return ""; } });
   const setupPending = !setupCompleted && (currentPlan.loading || currentPlan.error !== null || hasOnboardingDraft() || !currentPlan.data);
   const command = useCommand();
-  const { syncing, notifySync, setSetupPending } = useWorkspace();
+  const { syncing, setSetupPending } = useWorkspace();
   useEffect(() => {
     const updateName = () => { try { setRunnerName(localStorage.getItem("runalytics.runnerName") ?? ""); } catch {} };
     window.addEventListener("runalytics:runner-name-changed", updateName);
@@ -147,10 +149,7 @@ function App() {
       </a>
       <SelectionGroup><nav aria-label={t("workspaces")} className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <ControlAnimation key={id} name={id === "training" ? "calendar" : id === "milestones" ? "milestones" : undefined} size={21}>{(activate, glyph) => <a href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined} onClick={activate}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}>{glyph ?? <Icon size={21} />}</motion.div><span>{label}</span></a>}</ControlAnimation>)}</nav></SelectionGroup>
       <div className="desk-utilities">
-        <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
-          const report = await tauri.syncNow("coros");
-          notifySync(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
-        })}>{syncing || command.busy ? <StatusIcon status="pending" size={20} /> : <AnimatedIcon name="sync" size={20} reveal={false} />}</IconButton>
+        <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(() => tauri.syncNow("coros"))}>{syncing || command.busy ? <StatusIcon status="pending" size={20} /> : <AnimatedIcon name="sync" size={20} reveal={false} />}</IconButton>
         <IconButton label={t("help")} icon="help" iconSize={21} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")} />
         <IconButton label={t("settings")} icon="settings" iconSize={21} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")} />
       </div>
@@ -164,4 +163,33 @@ function App() {
   </>;
 }
 
-createRoot(document.getElementById("desk-root")!).render(<MotionSystem><WorkspaceProvider><App /><BrandSplash /></WorkspaceProvider></MotionSystem>);
+function AccountScreen({ children }: { children: React.ReactNode }) {
+  return <div className="onboarding-shell"><header className="onboarding-header"><strong><BrandMark /><span className="brand-wordmark">Runalytics</span></strong></header><main className="onboarding-main" id="workspace" tabIndex={-1}><section className="onboarding-step">{children}</section></main></div>;
+}
+
+function ProfileContent() {
+  const session = accountSession();
+  const [skipLegacy, setSkipLegacy] = useState(() => { try { return localStorage.getItem("runalytics.legacy-skipped") === "1"; } catch { return false; } });
+  if (!session.profileKey) return <AccountScreen><h1>{t("Sign in to your profile")}</h1><p>{t("Each COROS login has its own plans, history and settings. Sign in with the same account to restore your saved profile.")}</p><WatchSettings onboarding /></AccountScreen>;
+  if (session.legacyAvailable && !skipLegacy) return <AccountScreen><h1>{t("Previous local data is available")}</h1><LegacyProfileImport onSkip={() => { try { localStorage.setItem("runalytics.legacy-skipped", "1"); } catch {} setSkipLegacy(true); }} /></AccountScreen>;
+  return <><App /><BrandSplash /></>;
+}
+
+function ProfileRoot({ initialError }: { initialError?: string }) {
+  const [changing, setChanging] = useState(false);
+  const [error, setError] = useState<string | null>(initialError ?? null);
+  useEffect(() => {
+    const change = () => flushSync(() => { setChanging(true); setError(null); });
+    const failure = (event: Event) => flushSync(() => { setError((event as CustomEvent<string>).detail); setChanging(false); });
+    window.addEventListener("runalytics:account-changing", change);
+    window.addEventListener("runalytics:account-error", failure);
+    return () => { window.removeEventListener("runalytics:account-changing", change); window.removeEventListener("runalytics:account-error", failure); };
+  }, []);
+  if (error) return <AccountScreen><h1>{t("Could not open your profile")}</h1><p>{t("Your saved data has not been deleted. Retry before opening another profile.")}</p><ErrorNotice error={error} /><Button onClick={() => location.reload()}>{t("Try again")}</Button></AccountScreen>;
+  if (changing) return <AccountScreen><Loading /></AccountScreen>;
+  return <WorkspaceProvider><ProfileContent /></WorkspaceProvider>;
+}
+
+const root = createRoot(document.getElementById("desk-root")!);
+export function startApp() { root.render(<MotionSystem><ProfileRoot /></MotionSystem>); }
+export function showStartupError(error: string) { root.render(<MotionSystem><ProfileRoot initialError={error} /></MotionSystem>); }

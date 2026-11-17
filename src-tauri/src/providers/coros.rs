@@ -40,7 +40,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::Provider;
 use crate::error::{AppError, Result};
 use crate::fit;
-use crate::secure_store::entry;
+use crate::secure_store::{entry, entry_scoped};
 use crate::store::Store;
 use crate::types::*;
 
@@ -345,14 +345,14 @@ async fn authorize_in_app(auth_url: &str) -> Result<AuthCallback> {
 }
 
 /// Keychain-backed rmcp credential store so tokens survive restarts.
-struct KeyringCredentialStore;
+struct KeyringCredentialStore { scope: Option<String> }
 
 #[async_trait]
 impl CredentialStore for KeyringCredentialStore {
     async fn load(
         &self,
     ) -> std::result::Result<Option<StoredCredentials>, rmcp::transport::auth::AuthError> {
-        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry_scoped(self.scope.as_deref(), KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         match entry.get_password() {
             Ok(json) => {
@@ -374,7 +374,7 @@ impl CredentialStore for KeyringCredentialStore {
     ) -> std::result::Result<(), rmcp::transport::auth::AuthError> {
         let json = serde_json::to_string(&credentials)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
-        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry_scoped(self.scope.as_deref(), KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         entry
             .set_password(&json)
@@ -382,7 +382,7 @@ impl CredentialStore for KeyringCredentialStore {
     }
 
     async fn clear(&self) -> std::result::Result<(), rmcp::transport::auth::AuthError> {
-        let entry = entry(KEYRING_SERVICE, KEYRING_USER)
+        let entry = entry_scoped(self.scope.as_deref(), KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| rmcp::transport::auth::AuthError::CredentialStoreError(e.to_string()))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
@@ -395,8 +395,9 @@ impl CredentialStore for KeyringCredentialStore {
 
 pub struct CorosProvider {
     connected: AtomicBool,
-    /// Serializes connect() so a double-click cannot spawn two callbacks.
-    connecting: tokio::sync::Mutex<()>,
+    scope: Option<String>,
+    /// Keep token refreshes and provider requests from outliving logout.
+    session: tokio::sync::RwLock<()>,
     /// Live tool names exposed by the COROS MCP server (fetched once per run).
     tools: tokio::sync::OnceCell<Vec<String>>,
 }
@@ -405,13 +406,22 @@ impl CorosProvider {
     pub fn new() -> Self {
         Self {
             connected: AtomicBool::new(false),
-            connecting: tokio::sync::Mutex::new(()),
+            scope: None,
+            session: tokio::sync::RwLock::new(()),
             tools: tokio::sync::OnceCell::new(),
         }
     }
 
+    pub fn for_profile(scope: &str) -> Self {
+        Self { scope: Some(scope.to_string()), ..Self::new() }
+    }
+
+    fn credentials(&self) -> KeyringCredentialStore {
+        KeyringCredentialStore { scope: self.scope.clone() }
+    }
+
     fn has_credentials(&self) -> bool {
-        entry(KEYRING_SERVICE, KEYRING_USER)
+        entry_scoped(self.scope.as_deref(), KEYRING_SERVICE, KEYRING_USER)
             .and_then(|e| e.get_password())
             .is_ok()
     }
@@ -422,7 +432,7 @@ impl CorosProvider {
         let mut manager = AuthorizationManager::new(COROS_MCP_URL)
             .await
             .map_err(|e| AppError::Provider(format!("auth manager: {e}")))?;
-        manager.set_credential_store(KeyringCredentialStore);
+        manager.set_credential_store(self.credentials());
         // Set the COROS metadata (issuer on the regional host) before
         // initialize_from_store, which otherwise runs rmcp's strict
         // issuer == base-URL discovery and rejects the split-host setup.
@@ -890,96 +900,69 @@ fn json_pick<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     keys.iter().find_map(|k| v.get(*k)).filter(|x| !x.is_null())
 }
 
-/// Minimal loopback HTTP server: accepts one GET on /callback and returns the
-/// (code, state, iss) triple. Serves a friendly HTML page on success.
+#[cfg(not(mobile))]
+async fn callback_page(socket: &mut tokio::net::TcpStream, status: &str, message: &str) {
+    let body = format!("<!doctype html><html><body style=\"font-family:sans-serif;padding:2em\"><h2>Runalytics</h2><p>{message}</p></body></html>");
+    let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}", body.len());
+    let _ = socket.write_all(response.as_bytes()).await;
+    let _ = socket.shutdown().await;
+}
+
+/// Keep listening until the browser sends the OAuth callback, not a favicon or
+/// a speculative connection. The deadline also bounds abandoned browser logins.
 #[cfg(not(mobile))]
 async fn wait_for_callback(
     listener: TcpListener,
     timeout: std::time::Duration,
 ) -> Result<(String, String, Option<String>)> {
+    listener.set_nonblocking(true)
+        .map_err(|e| AppError::Other(format!("callback listener: {e}")))?;
     let listener = tokio::net::TcpListener::from_std(listener)
         .map_err(|e| AppError::Other(format!("callback listener: {e}")))?;
 
-    // The accept has to sit inside the timeout too: a sign-in abandoned in the
-    // browser never produces a request, and waiting on it outside would hold the
-    // connect lock for good — every later attempt then reports it is in use.
-    let result = tokio::time::timeout(timeout, async {
-        let (mut sock, _) = listener
-            .accept()
-            .await
-            .map_err(|e| AppError::Other(format!("callback accept: {e}")))?;
-        let mut buf = vec![0u8; 8192];
-        let mut read = 0usize;
+    tokio::time::timeout(timeout, async {
         loop {
-            let n = sock
-                .read(&mut buf[read..])
-                .await
-                .map_err(|e| AppError::Other(format!("callback read: {e}")))?;
-            read += n;
-            if read == 0 || buf[..read].windows(4).any(|w| w == b"\r\n\r\n") {
-                break;
+            let (mut socket, _) = listener.accept().await
+                .map_err(|e| AppError::Other(format!("callback accept: {e}")))?;
+            let request = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut buffer = [0u8; 8192];
+                let mut length = 0;
+                while length < buffer.len() {
+                    let read = socket.read(&mut buffer[length..]).await.ok()?;
+                    if read == 0 { return None; }
+                    length += read;
+                    if buffer[..length].windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                        return Some(String::from_utf8_lossy(&buffer[..length]).into_owned());
+                    }
+                }
+                None
+            }).await;
+            let Ok(Some(request)) = request else { continue; };
+            let mut parts = request.lines().next().unwrap_or_default().split_whitespace();
+            let method = parts.next();
+            let target = parts.next().unwrap_or_default();
+            let url = tauri::Url::parse(&format!("http://127.0.0.1{target}"));
+            let Ok(url) = url else {
+                callback_page(&mut socket, "400 Bad Request", "Invalid sign-in callback. Return to Runalytics and try again.").await;
+                continue;
+            };
+            if method != Some("GET") || url.path() != "/callback" {
+                callback_page(&mut socket, "404 Not Found", "This address is only for the Runalytics sign-in callback.").await;
+                continue;
             }
+            let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+            if query.contains_key("error") {
+                callback_page(&mut socket, "200 OK", "COROS sign-in did not complete. Return to Runalytics and try again.").await;
+                return Err(AppError::Provider("COROS sign-in did not complete. Try again.".into()));
+            }
+            let (Some(code), Some(state)) = (query.get("code").filter(|value| !value.is_empty()), query.get("state").filter(|value| !value.is_empty())) else {
+                callback_page(&mut socket, "400 Bad Request", "Incomplete sign-in callback. Return to Runalytics and try again.").await;
+                continue;
+            };
+            callback_page(&mut socket, "200 OK", "Sign-in received. Return to Runalytics to finish connecting. You can close this tab.").await;
+            return Ok((code.clone(), state.clone(), query.get("iss").cloned()));
         }
-        let request = String::from_utf8_lossy(&buf[..read]).to_string();
-        let line = request
-            .lines()
-            .next()
-            .ok_or_else(|| AppError::Other("empty callback request".into()))?;
-        // "GET /callback?code=...&state=... HTTP/1.1"
-        let path = line.split_whitespace().nth(1).unwrap_or("/");
-        let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
-        let mut code = None;
-        let mut state = None;
-        let mut iss = None;
-        for pair in query.split('&') {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            let v = urlencoding(v);
-            match k {
-                "code" => code = Some(v),
-                "state" => state = Some(v),
-                "iss" => iss = Some(v),
-                _ => {}
-            }
-        }
-        let code = code.ok_or_else(|| AppError::Provider("no code in callback".into()))?;
-        let state = state.ok_or_else(|| AppError::Provider("no state in callback".into()))?;
-        let page = b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
-                     Connection: close\r\n\r\n\
-                     <html><body style=\"font-family:sans-serif;padding:2em\">\
-                     <h2>Runalytics</h2><p>COROS connected. You can close this tab.</p>\
-                     </body></html>";
-        let _ = sock.write_all(page).await;
-        let _ = sock.shutdown().await;
-        Ok::<_, AppError>((code, state, iss))
-    })
-    .await
-    .map_err(|_| AppError::Provider("authorization timed out".into()))??;
-    Ok(result)
-}
-
-#[cfg(not(mobile))]
-fn urlencoding(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
-                out.push(char::from(u8::from_str_radix(hex, 16).unwrap_or(0)));
-                i += 3;
-            }
-            b'+' => {
-                out.push(' ');
-                i += 1;
-            }
-            c => {
-                out.push(c as char);
-                i += 1;
-            }
-        }
-    }
-    out
+    }).await.map_err(|_| AppError::Provider("COROS sign-in timed out. Try again.".into()))?
 }
 
 /// COROS fronts the MCP endpoint on a regional host (e.g. mcp.coros.com
@@ -1067,6 +1050,22 @@ async fn discover_coros_metadata() -> Result<rmcp::transport::auth::Authorizatio
     Ok(metadata)
 }
 
+fn interactive_authorization_url(url: &str) -> Result<String> {
+    let mut url =
+        tauri::Url::parse(url).map_err(|e| AppError::Provider(format!("auth url: {e}")))?;
+    let params: Vec<_> = url
+        .query_pairs()
+        .into_owned()
+        .filter(|(key, _)| key != "prompt")
+        .collect();
+    // A browser's existing COROS session must not silently reconnect the old account.
+    url.query_pairs_mut()
+        .clear()
+        .extend_pairs(params)
+        .append_pair("prompt", "login");
+    Ok(url.into())
+}
+
 #[async_trait]
 impl Provider for CorosProvider {
     fn kind(&self) -> ProviderKind {
@@ -1078,15 +1077,16 @@ impl Provider for CorosProvider {
     }
 
     async fn connect(&self) -> Result<String> {
-        let _guard = self
-            .connecting
-            .try_lock()
-            .map_err(|_| AppError::Other("connect already running".into()))?;
+        let _guard = self.session.try_write().map_err(|_| {
+            AppError::Other(
+                "COROS is busy. Wait for the current operation, then try signing in again.".into(),
+            )
+        })?;
 
         let mut manager = AuthorizationManager::new(COROS_MCP_URL)
             .await
             .map_err(|e| AppError::Provider(format!("auth manager: {e}")))?;
-        manager.set_credential_store(KeyringCredentialStore);
+        manager.set_credential_store(self.credentials());
         // Set the COROS metadata (issuer on the regional host) before
         // initialize_from_store, which otherwise runs rmcp's strict
         // issuer == base-URL discovery and rejects the split-host setup.
@@ -1135,16 +1135,16 @@ impl Provider for CorosProvider {
             .get_authorization_url(&[])
             .await
             .map_err(|e| AppError::Provider(format!("auth url: {e}")))?;
+        let url = interactive_authorization_url(&url)?;
 
         #[cfg(mobile)]
         let callback = authorize_in_app(&url).await?;
         #[cfg(not(mobile))]
         let callback = {
             // Open the system browser (no CSP involvement — this is an OS open).
-            if let Some(handle) = APP_HANDLE.get() {
-                use tauri_plugin_opener::OpenerExt;
-                let _ = handle.opener().open_url(&url, None::<String>);
-            }
+            use tauri_plugin_opener::OpenerExt;
+            let handle = APP_HANDLE.get().ok_or_else(|| AppError::Other("The app is not ready for COROS sign-in. Restart Runalytics and try again.".into()))?;
+            handle.opener().open_url(&url, None::<String>).map_err(|_| AppError::Provider("Could not open COROS sign-in in your browser. Try again.".into()))?;
             let (code, state, iss) =
                 wait_for_callback(listener, std::time::Duration::from_secs(AUTH_TIMEOUT_SECS))
                     .await?;
@@ -1191,7 +1191,7 @@ impl Provider for CorosProvider {
                 scopes,
                 Some(Utc::now().timestamp() as u64),
             );
-            KeyringCredentialStore
+            self.credentials()
                 .save(creds)
                 .await
                 .map_err(|e| AppError::Provider(format!("save credentials: {e}")))?;
@@ -1214,7 +1214,8 @@ impl Provider for CorosProvider {
     }
 
     async fn disconnect(&self) -> Result<()> {
-        KeyringCredentialStore
+        let _guard = self.session.write().await;
+        self.credentials()
             .clear()
             .await
             .map_err(|e| AppError::Provider(format!("clear credentials: {e}")))?;
@@ -1223,6 +1224,7 @@ impl Provider for CorosProvider {
     }
 
     async fn sync_activities(&self, store: &Store, days_back: i64) -> Result<u32> {
+        let _guard = self.session.read().await;
         let service = self.client().await?;
         let from = (Utc::now() - Duration::days(days_back)).date_naive();
         // COROS wants yyyyMMdd and chokes on ISO dates; limit generously.
@@ -1248,6 +1250,7 @@ impl Provider for CorosProvider {
     }
 
     async fn sync_health(&self, store: &Store, days_back: i64) -> Result<u32> {
+        let _guard = self.session.read().await;
         let service = self.client().await?;
         let days_arg = json!({ "days": days_back.max(7) as i64 });
         let mut days: HashMap<NaiveDate, HealthDaily> = HashMap::new();
@@ -1374,6 +1377,7 @@ impl Provider for CorosProvider {
     }
 
     async fn sync_fitness(&self, store: &Store) -> Result<()> {
+        let _guard = self.session.read().await;
         let service = self.client().await?;
         let today = Utc::now().date_naive();
 
@@ -1439,6 +1443,7 @@ impl Provider for CorosProvider {
     }
 
     async fn sync_tracks(&self, store: &Store, budget: u32) -> Result<u32> {
+        let _guard = self.session.read().await;
         let service = self.client().await?;
         // Activities with no track and no ledger entry, newest first. The store
         // query carries the provider sport code we need back; deriving it from
@@ -1569,6 +1574,7 @@ impl Provider for CorosProvider {
         workouts: &[PlanWorkout],
         progress: super::Progress<'_>,
     ) -> Result<Option<String>> {
+        let _guard = self.session.read().await;
         let report = |stage: &str, pct: u8| {
             if let Some(p) = progress {
                 p(stage, pct);
@@ -1624,6 +1630,7 @@ impl Provider for CorosProvider {
         pushed_id: Option<&str>,
         progress: super::Progress<'_>,
     ) -> Result<()> {
+        let _guard = self.session.read().await;
         let report = |stage: &str, pct: u8| {
             if let Some(p) = progress {
                 p(stage, pct);
@@ -1648,6 +1655,7 @@ impl Provider for CorosProvider {
     }
 
     async fn list_api_tools(&self) -> Result<Vec<String>> {
+        let _guard = self.session.read().await;
         let service = self.client().await?;
         let result = service
             .list_tools(None)
@@ -2419,9 +2427,115 @@ impl CorosProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::CorosProvider;
+    use super::{interactive_authorization_url, CorosProvider};
+    use crate::providers::Provider;
     use crate::types::{PlanWorkout, WorkoutKind, WorkoutStatus};
     use chrono::NaiveDate;
+
+    #[test]
+    fn signin_requests_fresh_login_without_changing_oauth_proofs() {
+        let original = tauri::Url::parse("https://example.test/authorize?client_id=synthetic&state=a%2Bb%26c&code_challenge=pkce-proof&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A47184%2Fcallback&scope=read+write&prompt=none").unwrap();
+        let interactive =
+            tauri::Url::parse(&interactive_authorization_url(original.as_str()).unwrap()).unwrap();
+        let without_prompt = |url: &tauri::Url| {
+            url.query_pairs()
+                .into_owned()
+                .filter(|(key, _)| key != "prompt")
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(without_prompt(&original), without_prompt(&interactive));
+        assert_eq!(
+            interactive
+                .query_pairs()
+                .filter(|(key, _)| key == "prompt")
+                .collect::<Vec<_>>(),
+            vec![("prompt".into(), "login".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn signin_cannot_race_a_provider_request_or_logout() {
+        let provider = CorosProvider::new();
+        let request = provider.session.read().await;
+        assert!(provider
+            .connect()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("COROS is busy"));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(20), provider.disconnect())
+            .await
+            .is_err());
+        drop(request);
+        let logout = provider.session.write().await;
+        assert!(provider
+            .connect()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("COROS is busy"));
+        drop(logout);
+        assert!(provider.session.try_write().is_ok());
+    }
+
+    #[cfg(not(mobile))]
+    mod loopback {
+        use super::super::wait_for_callback;
+        use std::{net::TcpListener, time::Duration};
+
+        fn listener() -> (TcpListener, String) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            (listener, origin)
+        }
+
+        fn browser() -> reqwest::Client {
+            reqwest::Client::builder().timeout(Duration::from_secs(5)).build().unwrap()
+        }
+
+        #[tokio::test]
+        async fn blocking_listener_receives_the_browser_callback_without_panicking() {
+            let (listener, origin) = listener();
+            let server = tokio::spawn(wait_for_callback(listener, Duration::from_secs(5)));
+            let response = browser().get(format!("{origin}/callback?code=synthetic%2Bcode&state=synthetic%2Bstate&iss=https%3A%2F%2Fissuer.example.test")).send().await;
+            let callback = server.await.expect("The callback listener must not panic").unwrap();
+            assert_eq!(callback, ("synthetic+code".into(), "synthetic+state".into(), Some("https://issuer.example.test".into())));
+            let response = response.unwrap();
+            assert!(response.status().is_success());
+            assert!(response.text().await.unwrap().contains("Runalytics"));
+        }
+
+        #[tokio::test]
+        async fn unrelated_browser_requests_do_not_consume_the_callback_listener() {
+            let (listener, origin) = listener();
+            let server = tokio::spawn(wait_for_callback(listener, Duration::from_secs(5)));
+            let response = browser().get(format!("{origin}/favicon.ico")).send().await.unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+            let response = browser().get(format!("{origin}/callback?code=synthetic-code&state=synthetic-state")).send().await.unwrap();
+            assert!(response.status().is_success());
+            assert_eq!(server.await.unwrap().unwrap().0, "synthetic-code");
+        }
+
+        #[tokio::test]
+        async fn denied_authorization_returns_a_retryable_error_and_a_browser_response() {
+            let (listener, origin) = listener();
+            let server = tokio::spawn(wait_for_callback(listener, Duration::from_secs(5)));
+            let response = browser().get(format!("{origin}/callback?error=access_denied&state=synthetic-state")).send().await.unwrap();
+            let body = response.text().await.unwrap();
+            assert!(body.contains("Runalytics"));
+            assert!(!body.contains("COROS connected"));
+            assert!(server.await.unwrap().unwrap_err().to_string().contains("Try again"));
+        }
+
+        #[tokio::test]
+        async fn abandoned_signin_times_out_and_releases_the_port() {
+            let (listener, origin) = listener();
+            let address = listener.local_addr().unwrap();
+            let result = wait_for_callback(listener, Duration::from_millis(20)).await;
+            assert!(result.unwrap_err().to_string().contains("timed out"));
+            assert!(TcpListener::bind(address).is_ok(), "{origin} must be released for a retry");
+        }
+    }
 
     /// Verbatim shapes from the live COROS report (2026-10-17).
     const RECORDS: &str = "Sport Records — 2026-09-17 to 2026-10-17 (3 records)\n\

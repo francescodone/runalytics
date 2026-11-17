@@ -108,7 +108,7 @@ test("UseAnimations identical result events replay without changing names, geome
     const frames = await animatedSvgFrames(icon, 12);
     expect(frames.every(Boolean)).toBe(true);
     expect(new Set(frames).size).toBeGreaterThan(1);
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(200);
     const settled = await animatedSvgFrames(icon, 8);
     expect(settled.every(Boolean)).toBe(true);
     expect(new Set(settled).size).toBe(1);
@@ -209,7 +209,7 @@ test("UseAnimations action icons preserve keyboard, touch and focus semantics wi
     await expect(icon).toHaveAttribute("data-icon-playback", "ready");
     await expect(icon).toHaveAttribute("aria-hidden", "true");
     await expect(icon.locator('[tabindex], button, a, [role="button"]')).toHaveCount(0);
-    const focusPreview = await animatedSvgFrames(icon, 48);
+    const focusPreview = await animatedSvgFrames(icon, 96);
     expect(focusPreview.every(Boolean)).toBe(true);
     expect(new Set(focusPreview).size).toBeGreaterThan(1);
     expect(new Set(focusPreview.slice(-6)).size).toBe(1);
@@ -1768,6 +1768,7 @@ test.describe("animated icon feedback", () => {
     expect(new Set(playerFrames.map(frame => frame.geometry)).size).toBeGreaterThan(2);
   };
   test("UseAnimations persistent navigation and utilities activate once by mouse, keyboard and touch without waiting for replay", async ({ browser, baseURL }) => {
+    test.setTimeout(45000);
     const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "no-preference" });
     const page = await context.newPage();
     try {
@@ -1797,7 +1798,7 @@ test.describe("animated icon feedback", () => {
         const selector = `.animated-icon[data-icon="${icon}"]`;
         await expect(control.locator(`${selector} [data-useanimations] svg`)).toBeAttached();
         await control.focus();
-        const focusPreview = await svgFrames(control, selector, 48);
+        const focusPreview = await svgFrames(control, selector, 96);
         expect(focusPreview.every(frame => frame.player)).toBe(true);
         expect(new Set(focusPreview.map(frame => frame.geometry)).size).toBeGreaterThan(1);
         expect(new Set(focusPreview.slice(-6).map(frame => frame.geometry)).size).toBe(1);
@@ -1808,7 +1809,7 @@ test.describe("animated icon feedback", () => {
         await page.emulateMedia({ reducedMotion: "no-preference" });
         await expect(control.locator(`${selector} [data-useanimations] svg`)).toBeAttached();
         await expect(control).toBeFocused();
-        const playback = svgFrames(control, selector, 60);
+        const playback = svgFrames(control, selector, 96);
         if (input === "mouse") await control.click();
         else if (input === "touch") await control.tap();
         else await control.press(input);
@@ -2117,7 +2118,7 @@ test.describe("motion system", () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/desk.html#settings/watch");
-    const action = page.getByRole("button", { name: "Disconnect", exact: true });
+    const action = page.getByRole("button", { name: "Log out", exact: true });
     await expect(page.locator(".form-actions").first()).toHaveAttribute("data-reveal", "settled");
     const rest = await action.boundingBox();
     await action.hover({ position: { x: rest.width / 2, y: rest.height / 2 } });
@@ -2143,7 +2144,7 @@ test.describe("motion system", () => {
     await page.mouse.up();
     await action.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: "Disconnect COROS?" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Log out of COROS?" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(action).toBeFocused();
   });
@@ -3991,64 +3992,105 @@ test("schedule mutations retain intent and Undo restores the original date", asy
   await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call=>call.command==='set_workout_skipped').map(call=>call.args.skipped))).toEqual([true,false]);
 });
 
-for (const horizon of ["week", "month"]) test(`${horizon} summary counts only scheduled sessions and their planned distance`, async ({page}) => {
+for (const horizon of ["week", "month"]) for (const width of [390, 1440]) test(`${horizon} summary uses recorded completions without changing planned totals at ${width}px`, async ({page}, testInfo) => {
   await page.clock.setFixedTime(new Date(2026, 10, 17, 12));
   await page.addInitScript(() => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke = async (command, args) => {
       if (command === "current_plan") {
         const [plan, workouts] = await invoke(command, args);
-        const now = new Date();
-        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7, 12);
-        const date = offset => { const day = new Date(monday); day.setDate(day.getDate() + offset); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`; };
         return [plan, [
-          {...workouts[0], id: "summary-done", date: date(0), kind: "easy", distanceM: 5000, done: true},
-          {...workouts[0], id: "summary-pending", date: date(1), kind: "easy", distanceM: 8000, done: false},
-          {...workouts[0], id: "summary-skipped", date: date(2), kind: "easy", distanceM: 7000, done: false, status: "skipped"},
-          {...workouts[0], id: "summary-rest", date: date(3), kind: "rest", distanceM: null, done: false},
+          {...workouts[0], id: "summary-done", date: "2026-11-16", kind: "easy", distanceM: 8000, done: true},
+          {...workouts[0], id: "summary-pending", date: "2026-11-18", kind: "tempo", distanceM: 6000, done: false},
+          {...workouts[0], id: "summary-skipped", date: "2026-11-20", kind: "easy", distanceM: 11000, done: false, status: "skipped"},
+          {...workouts[0], id: "summary-long", date: "2026-11-22", kind: "longRun", distanceM: 17000, done: false},
+          {...workouts[0], id: "summary-rest", date: "2026-11-19", kind: "rest", distanceM: null, done: false},
         ]];
       }
       if (command === "calendar_events") {
         const events = await invoke(command, args);
-        const [, workouts] = await window.__TAURI_INTERNALS__.invoke("current_plan");
-        return events.map(event => event.id === "summary-done" ? {...event, distanceM: 12000} : event).concat({id: "extra", workoutId: null, activityId: 99, date: workouts[0].date, kind: "completed", title: "Extra run", distanceM: 9000, notes: "", status: "planned"});
+        const recorded = (id, date, distanceM) => ({id, workoutId: null, activityId: Number(id), date, kind: "completed", title: "Extra run", distanceM, durationMin: 60, notes: "", status: "planned", allDay: false, start: date, end: date});
+        return events.map(event => event.id === "summary-done" ? {...event, distanceM: 9200} : event).concat([
+          recorded("99", "2026-11-17", 12600),
+          recorded("100", "2026-11-09", 2000),
+          recorded("101", "2026-11-23", 3000),
+        ]).filter(event => event.date >= args.from && event.date <= args.to);
       }
       return invoke(command, args);
     };
   });
-  await page.setViewportSize({width:1440,height:1000});
-  await page.goto(`/desk.html#training/${horizon}`);
+  await page.setViewportSize({width, height:1000});
+  await page.goto(`/desk.html?theme=${width === 390 ? "light" : "dark"}#training/${horizon}`);
   const strip = page.locator('.schedule-summary');
-  await expect(strip).toContainText("1/3 sessions done");
-  await expect(strip).toContainText("5.0 km / 20.0 km done");
-  await expect(page.getByText("Extra run").first()).toBeVisible();
+  await expect(strip).toContainText(`${horizon === "week" ? 2 : 4}/4 sessions done`);
+  await expect(strip).toContainText(`${horizon === "week" ? "21.8" : "26.8"} km / 42.0 km done`);
+  await page.screenshot({path: testInfo.outputPath("recorded-completion.png"), fullPage: true});
+  if (horizon === "week") {
+    await page.getByRole('button', {name: 'Next week', exact: true}).click();
+    await expect(strip).toContainText("1/0 sessions done");
+    await expect(strip).toContainText("3.0 km / 0.0 km done");
+    await page.getByRole('button', {name: 'Previous week', exact: true}).click();
+    await expect(strip).toContainText("2/4 sessions done");
+    await expect(strip).toContainText("21.8 km / 42.0 km done");
+  }
 });
 
-for (const width of [390, 1440]) test(`month summary excludes adjacent calendar days at ${width}px`, async ({page}) => {
+for (const horizon of ["week", "month"]) test(`${horizon} summary counts recorded activities without a plan`, async ({page}) => {
+  await page.clock.setFixedTime(new Date(2026, 10, 17, 12));
+  await page.addInitScript(() => {
+    localStorage.setItem("runalytics.onboarding.complete", "1");
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "calendar_events") return [
+        {id: "activity-99", workoutId: null, activityId: 99, date: "2026-11-17", kind: "completed", title: "Recorded run", distanceM: 6000, durationMin: 30, notes: "", status: "planned", allDay: false, start: "2026-11-17", end: "2026-11-17"},
+        {id: "activity-100", workoutId: null, activityId: 100, date: "2026-11-17", kind: "completed", title: "Distance unavailable", distanceM: null, durationMin: 20, notes: "", status: "planned", allDay: false, start: "2026-11-17", end: "2026-11-17"},
+      ];
+      return invoke(command, args);
+    };
+  });
+  await page.goto(`/desk.html?noPlan=1#training/${horizon}`);
+  const strip = page.locator('.schedule-summary');
+  await expect(strip).toContainText("2/0 sessions done");
+  await expect(strip).toContainText("6.0 km / 0.0 km done");
+});
+
+for (const width of [390, 1440]) test(`month summary uses recorded dates and excludes adjacent calendar days at ${width}px`, async ({page}) => {
   await page.clock.setFixedTime(new Date(2025, 11, 15, 12));
   await page.addInitScript(() => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke = async (command, args) => {
-      if (command !== "current_plan") return invoke(command, args);
-      const [plan, workouts] = await invoke(command, args);
-      return [plan, [
-        ["2025-11-30", 2000, true],
-        ["2025-12-01", 5000, true],
-        ["2025-12-31", 8000, false],
-        ["2026-01-01", 7000, true],
-        ["2026-01-31", 9000, false],
-        ["2026-02-01", 3000, true],
-      ].map(([date, distanceM, done]) => ({...workouts[0], id: `summary-${date}`, date, kind: "easy", distanceM, done}))];
+      if (command === "current_plan") {
+        const [plan, workouts] = await invoke(command, args);
+        return [plan, [
+          ["2025-11-30", 2000, true],
+          ["2025-12-01", 5000, true],
+          ["2025-12-31", 8000, false],
+          ["2026-01-01", 7000, true],
+          ["2026-01-31", 9000, false],
+          ["2026-02-01", 3000, true],
+        ].map(([date, distanceM, done]) => ({...workouts[0], id: `summary-${date}`, date, kind: "easy", distanceM, done}))];
+      }
+      if (command === "calendar_events") {
+        const events = await invoke(command, {...args, from: "2025-11-01", to: "2026-02-28"});
+        const recordings = {
+          "2025-11-30": {date: "2025-12-01", distanceM: 2500},
+          "2025-12-01": {date: "2025-11-30", distanceM: 5500},
+          "2026-01-01": {date: "2025-12-31", distanceM: 7500},
+          "2026-02-01": {date: "2026-01-31", distanceM: 3500},
+        };
+        return events.map(event => ({...event, ...recordings[event.date]})).filter(event => event.date >= args.from && event.date <= args.to);
+      }
+      return invoke(command, args);
     };
   });
   await page.setViewportSize({width, height: 1000});
   await page.goto('/desk.html#training/month');
   const strip = page.locator('.schedule-summary');
-  await expect(strip).toContainText('1/2 sessions done');
-  await expect(strip).toContainText('5.0 km / 13.0 km done');
+  await expect(strip).toContainText('2/2 sessions done');
+  await expect(strip).toContainText('10.0 km / 13.0 km done');
   await page.getByRole('button', {name: 'Next month', exact: true}).click();
   await expect(strip).toContainText('1/2 sessions done');
-  await expect(strip).toContainText('7.0 km / 16.0 km done');
+  await expect(strip).toContainText('3.5 km / 16.0 km done');
 });
 
 test("reset week undoes a scheduled benchmark and a moved session", async ({page}) => {
@@ -4902,7 +4944,7 @@ test("connection transfer camera denial retains image upload fallback", async ({
 test("connection transfer requires a connected watch", async ({page}) => {
   await page.goto("/desk.html#settings/watch");
   await page.evaluate(async () => {
-    await window.__TAURI_INTERNALS__.invoke("disconnect_provider", {provider:"coros"});
+    await window.__deskDisconnectWatch();
     location.hash="settings/transfer";
   });
   await expect(page.getByText("Before importing or exporting connections, sign in to your watch account. Use the same COROS account on both devices.")).toBeVisible();
@@ -4917,7 +4959,7 @@ test("connection transfer rechecks watch before exporting credentials", async ({
   await page.getByRole("button",{name:"Create transfer QR",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"Create connection transfer"});
   await dialog.getByLabel("Transfer passphrase",{exact:true}).fill("synthetic transfer passphrase");
-  await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke("disconnect_provider",{provider:"coros"}));
+  await page.evaluate(()=>window.__deskDisconnectWatch());
   await dialog.getByRole("button",{name:"Generate encrypted QR",exact:true}).click();
   await expect(dialog.getByRole("alert")).toContainText("Sign in to your watch account");
   expect(await page.evaluate(()=>window.__deskCalls.some(call=>call.command === "export_connection_settings"))).toBe(false);
@@ -4960,7 +5002,7 @@ for (const scenario of ["matching", "coros-mismatch", "strava-mismatch", "legacy
       await expect(replace).toBeEnabled();
     } else if(scenario === "watch-disconnected") {
       await expect(replace).toBeEnabled();
-      await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke("disconnect_provider",{provider:"coros"}));
+      await page.evaluate(()=>window.__deskDisconnectWatch());
       await replace.click();
       await expect(dialog.getByRole("alert").first()).toContainText("Sign in to your watch account");
       expect(await writes()).toEqual([]);
@@ -5350,27 +5392,31 @@ for (const width of [320, 1440]) {
 
 const emitStage = (page, event) => page.evaluate(payload => window.__deskEmit('plan://stage', payload), event);
 
-for (const entry of ["header", "settings"]) {
-  test(`manual sync combines its result and progress in one notification from ${entry}`, async ({ page }) => {
-    await page.addInitScript(() => {
+for (const entry of ["header", "settings"]) for (const [activitiesNew, healthDays, width, theme] of [[0, 14, 320, "light"], [2, 3, 1440, "dark"]]) {
+  test(`manual sync shows only update confirmations from ${entry} with ${activitiesNew} new activities`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(report => {
       const invoke = window.__TAURI_INTERNALS__.invoke;
       window.__TAURI_INTERNALS__.invoke = async (command, args) => {
         if (command !== "sync_now") return invoke(command, args);
-        window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "working", targets: ["db"] });
+        const targets = ["coros", "db", "calendar", "strava", "gist"];
+        window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "working", targets });
         window.__deskEmit("sync://started", {});
-        window.__deskEmit("plan://stage", { op: "sync", target: "db", state: "done" });
+        for (const target of targets) window.__deskEmit("plan://stage", { op: "sync", target, state: "done" });
         window.__deskEmit("plan://stage", { op: "sync", target: "op", state: "done" });
         window.__deskEmit("sync://completed", { ok: true });
-        return { activitiesNew: 2, healthDays: 3, messages: ["calendar published"] };
+        return report;
       };
-    });
-    await page.goto(entry === "header" ? "/desk.html#training" : "/desk.html#settings/watch");
+    }, { activitiesNew, healthDays, messages: ["calendar published"] });
+    await page.goto(`/desk.html?theme=${theme}#${entry === "header" ? "training" : "settings/watch"}`);
     await page.getByRole("button", { name: entry === "header" ? "Sync activities" : "Sync history", exact: true }).click();
     const progress = page.getByRole("status", { name: "Plan sync progress" });
-    await expect(progress).toContainText("2 new activities, 3 health days");
-    await expect(progress).toContainText("calendar published");
-    await expect(progress).toContainText("Updated local DB");
+    await expect(progress.locator(".stage-line")).toHaveText(["Updated COROS calendar", "Updated local DB", "Updated calendar", "Updated Strava", "Updated gist"]);
+    await expect(progress).not.toContainText(/new activities|health days|calendar published/);
+    await expect(progress.locator(".notice-content > div")).toHaveCount(0);
     await expect(page.locator(".notification-viewport .desk-notice")).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await progress.screenshot({ path: testInfo.outputPath("sync-confirmations.png") });
   });
 }
 

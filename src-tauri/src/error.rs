@@ -30,4 +30,10 @@ impl Serialize for AppError {
     }
 }
 
+impl From<keyring_core::Error> for AppError {
+    fn from(_: keyring_core::Error) -> Self {
+        Self::Other("The secure credential store is unavailable. No profile was changed.".into())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, AppError>;

@@ -189,10 +189,11 @@ export function Training({ runnerName }: { runnerName: string }) {
     const value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
     setCursor(value); setSelectedDay(value);
   };
-  const scheduled = workouts.filter(workout => workout.kind !== "rest" && (horizon === "month" ? workout.date.slice(0, 7) === cursor.slice(0, 7) : workout.date >= first && workout.date <= days[days.length - 1]));
-  const done = scheduled.filter(workout => workout.done);
+  const inPeriod = (date: string) => horizon === "month" ? date.slice(0, 7) === cursor.slice(0, 7) : date >= first && date <= days[days.length - 1];
+  const scheduled = workouts.filter(workout => workout.kind !== "rest" && inPeriod(workout.date));
+  const done = (events.data ?? []).filter(event => event.activityId != null && inPeriod(event.date));
   const plannedM = scheduled.reduce((total, workout) => total + (workout.distanceM ?? 0), 0);
-  const completedM = done.reduce((total, workout) => total + (workout.distanceM ?? 0), 0);
+  const completedM = done.reduce((total, event) => total + (event.distanceM ?? 0), 0);
   const scheduleSummary = horizon !== "plan" && events.data && <div className="schedule-summary"><CountUp format={progress => t("{{value0}}/{{value1}} sessions done", { value0: number(done.length * progress), value1: number(scheduled.length * progress) })} /><CountUp format={progress => t("{{value0}} / {{value1}} done", { value0: fmtKm(completedM * progress), value1: fmtKm(plannedM * progress) })} />{!compact && horizon === "week" && plan && <Button onClick={() => setReset(true)}><IconRestore size={18} aria-hidden="true" />{t("Reset week")}</Button>}</div>;
   return <>
     <div className="training-context">

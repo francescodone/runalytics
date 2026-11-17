@@ -81,7 +81,7 @@ final class NativeTabIconHost: NSObject {
         case trophy = "trophy"
     }
 
-    static let replayDuration: CFTimeInterval = 0.56
+    static let replayDuration: CFTimeInterval = 1.12
     let item: UITabBarItem
     let artwork: Artwork
     private let originalImage: UIImage?

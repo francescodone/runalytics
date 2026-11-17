@@ -11,7 +11,8 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
+use crate::profiles::State;
 
 #[cfg(target_os = "ios")]
 mod ios_auth;
@@ -53,16 +54,16 @@ struct Tokens {
     athlete_id: i64,
 }
 
-pub(crate) fn transfer_credentials() -> Result<Option<serde_json::Value>> {
-    Ok(credentials()?.map(|config| serde_json::json!({
+pub(crate) fn transfer_credentials(store: &Store) -> Result<Option<serde_json::Value>> {
+    Ok(credentials(store)?.map(|config| serde_json::json!({
         "clientId": config.client_id,
         "clientSecret": config.client_secret,
         "athleteId": config.tokens.as_ref().map(|tokens| tokens.athlete_id),
     })))
 }
 
-fn credentials() -> Result<Option<Credentials>> {
-    match secure_store::entry(SERVICE, "credentials")
+fn credentials(store: &Store) -> Result<Option<Credentials>> {
+    match secure_store::entry_scoped(store.credential_scope.as_deref(), SERVICE, "credentials")
         .map_err(|_| failure("Strava Keychain is unavailable."))?
         .get_password()
     {
@@ -76,15 +77,15 @@ fn credentials() -> Result<Option<Credentials>> {
     }
 }
 
-fn save_credentials(value: &Credentials) -> Result<()> {
-    secure_store::entry(SERVICE, "credentials")
+fn save_credentials(store: &Store, value: &Credentials) -> Result<()> {
+    secure_store::entry_scoped(store.credential_scope.as_deref(), SERVICE, "credentials")
         .map_err(|_| failure("Strava Keychain is unavailable."))?
         .set_password(&serde_json::to_string(value)?)
         .map_err(|_| failure("Could not save Strava credentials in Keychain."))
 }
 
-pub(crate) fn is_configured() -> Result<bool> {
-    Ok(credentials()?.is_some())
+pub(crate) fn is_configured(store: &Store) -> Result<bool> {
+    Ok(credentials(store)?.is_some())
 }
 
 #[derive(Default, Serialize)]
@@ -116,7 +117,7 @@ struct ReviewItem {
 }
 
 fn status(store: &Store) -> Result<Status> {
-    let Some(config) = credentials()? else {
+    let Some(config) = credentials(store)? else {
         return Ok(Status::default());
     };
     let output = Status {
@@ -192,7 +193,7 @@ pub async fn strava_configure(
             "Enter the numeric Client ID from your Strava API settings.",
         ));
     }
-    let existing = credentials()?;
+    let existing = credentials(&state.store)?;
     let supplied = client_secret.filter(|secret| !secret.trim().is_empty());
     let unchanged = existing
         .as_ref()
@@ -224,7 +225,7 @@ pub async fn strava_configure(
     } else {
         None
     };
-    save_credentials(&Credentials {
+    save_credentials(&state.store, &Credentials {
         client_id,
         client_secret: secret,
         tokens,
@@ -236,7 +237,7 @@ pub async fn strava_configure(
 pub async fn strava_set_enabled(state: State<'_, AppState>, enabled: bool) -> Result<Status> {
     let _ = enabled;
     let _guard = operation().lock().await;
-    let config = credentials()?.ok_or_else(|| failure("Configure Strava first."))?;
+    let config = credentials(&state.store)?.ok_or_else(|| failure("Configure Strava first."))?;
     let tokens = config.tokens.ok_or_else(|| failure("Connect Strava first."))?;
     activate_account(&state.store, tokens.athlete_id, &config.client_id, Utc::now().timestamp())?;
     status(&state.store)
@@ -245,7 +246,7 @@ pub async fn strava_set_enabled(state: State<'_, AppState>, enabled: bool) -> Re
 #[tauri::command]
 pub async fn strava_disconnect(state: State<'_, AppState>, forget: bool) -> Result<Status> {
     let _guard = operation().lock().await;
-    if let Some(mut config) = credentials()? {
+    if let Some(mut config) = credentials(&state.store)? {
         if let Some(tokens) = config.tokens.take() {
             state.store.conn.lock().unwrap().execute(
                 "UPDATE strava_accounts SET enabled=0 WHERE athlete_id=?1",
@@ -253,12 +254,12 @@ pub async fn strava_disconnect(state: State<'_, AppState>, forget: bool) -> Resu
             )?;
         }
         if forget {
-            secure_store::entry(SERVICE, "credentials")
+            secure_store::entry_scoped((&state.store).credential_scope.as_deref(), SERVICE, "credentials")
                 .map_err(|_| failure("Strava Keychain is unavailable."))?
                 .delete_credential()
                 .map_err(|_| failure("Could not remove Strava credentials from Keychain."))?;
         } else {
-            save_credentials(&config)?;
+            save_credentials(&state.store, &config)?;
         }
     }
     status(&state.store)
@@ -412,7 +413,7 @@ async fn authorize(app: &AppHandle, client_id: &str, state: &str) -> Result<(tau
 pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Result<Status> {
     let _guard = operation().lock().await;
     let mut config =
-        credentials()?.ok_or_else(|| failure("Save your Strava API credentials first."))?;
+        credentials(&state.store)?.ok_or_else(|| failure("Save your Strava API credentials first."))?;
     let nonce = uuid::Uuid::new_v4().to_string();
     let authorization = tokio::select! {
         result = authorize(&app, &config.client_id, &nonce) => result,
@@ -439,7 +440,7 @@ pub async fn strava_connect(app: AppHandle, state: State<'_, AppState>) -> Resul
         expires_at: response.expires_at,
         athlete_id,
     });
-    save_credentials(&config)?;
+    save_credentials(&state.store, &config)?;
     activate_account(&state.store, athlete_id, &config.client_id, Utc::now().timestamp())?;
     state.store.conn.lock().unwrap().execute("UPDATE strava_exports SET status='pending',next_attempt_at=0 WHERE athlete_id=?1 AND status='auth_required'", [athlete_id])?;
     status(&state.store)
@@ -671,7 +672,7 @@ pub async fn sync(store: &Store) -> Result<(String, bool)> {
     };
     let result = sync_inner(store).await;
     if result.is_err() {
-        if let Ok(Some(config)) = credentials() {
+        if let Ok(Some(config)) = credentials(store) {
             if let Some(tokens) = config.tokens {
                 store.conn.lock().unwrap().execute("UPDATE strava_accounts SET last_message='Strava could not finish. Check your connection or reconnect Strava.',last_attempt_at=?2 WHERE athlete_id=?1", params![tokens.athlete_id,Utc::now().timestamp()])?;
             }
@@ -695,7 +696,7 @@ fn sync_cutoff(store: &Store, athlete: i64) -> Result<Option<i64>> {
 }
 
 pub(crate) fn sync_stage_enabled(store: &Store) -> bool {
-    match credentials() {
+    match credentials(store) {
         Ok(Some(config)) => match config.tokens {
             Some(tokens) => {
                 let _ = activate_account(store, tokens.athlete_id, &config.client_id, Utc::now().timestamp());
@@ -710,7 +711,7 @@ pub(crate) fn sync_stage_enabled(store: &Store) -> bool {
 
 async fn sync_inner(store: &Store) -> Result<(String, bool)> {
     housekeeping(store, Utc::now().timestamp())?;
-    let Some(mut config) = credentials()? else {
+    let Some(mut config) = credentials(store)? else {
         return Ok((String::new(), false));
     };
     let Some(tokens) = config.tokens.as_ref() else {
@@ -759,7 +760,7 @@ async fn sync_inner(store: &Store) -> Result<(String, bool)> {
             expires_at: response.expires_at,
             athlete_id: athlete,
         });
-        save_credentials(&config)?;
+        save_credentials(store, &config)?;
     }
     let mut client = Client {
         http: http()?,
@@ -822,7 +823,7 @@ pub async fn strava_retry(state: State<'_, AppState>) -> Result<Status> {
 #[tauri::command]
 pub async fn strava_resolve_review(state: State<'_, AppState>, source_key: String, retry: bool) -> Result<Status> {
     let _guard = operation().lock().await;
-    let config = credentials()?.ok_or_else(|| failure("Strava is not connected."))?;
+    let config = credentials(&state.store)?.ok_or_else(|| failure("Strava is not connected."))?;
     let athlete = config.tokens.ok_or_else(|| failure("Strava is not connected."))?.athlete_id;
     if retry {
         let enabled: bool = state.store.conn.lock().unwrap().query_row("SELECT enabled FROM strava_accounts WHERE athlete_id=?1", [athlete], |row| row.get(0)).optional()?.unwrap_or(false);

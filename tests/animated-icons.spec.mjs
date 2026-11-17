@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => {
@@ -24,7 +25,7 @@ async function partGeometry(icon) {
   }));
 }
 
-async function partFrames(icon, count = 60) {
+async function partFrames(icon, count = 96) {
   return icon.evaluate(async (element, count) => {
     const frames = [];
     for (let index = 0; index < count; index++) {
@@ -59,7 +60,7 @@ async function iconInk(icon) {
 async function iconFrames(icon) {
   return icon.evaluate(async element => {
     const frames = [];
-    for (let index = 0; index < 60; index++) {
+    for (let index = 0; index < 96; index++) {
       await new Promise(requestAnimationFrame);
       frames.push(JSON.stringify([...element.querySelectorAll("svg, svg *")].map(node => {
         const style = getComputedStyle(node);
@@ -99,7 +100,7 @@ async function runnerSteps(icon) {
   });
 }
 
-async function svgFrames(icon, count = 60) {
+async function svgFrames(icon, count = 96) {
   return icon.evaluate(async (element, count) => {
     const frames = [];
     for (let index = 0; index < count; index++) {
@@ -130,6 +131,52 @@ async function inputIcon(input) {
   await expect(icon.locator('input, button, a, [tabindex], [role="checkbox"], [role="radio"]')).toHaveCount(0);
   return icon;
 }
+
+for (const packaged of [false, true]) test(`animated interaction icons keep moving at the slower pace without activating or changing hosts ${packaged ? "packaged" : "development"}`, async ({ page }) => {
+  if (packaged) {
+    await page.route("**/assets/**", async route => {
+      const pathname = new URL(route.request().url()).pathname;
+      const contentType = pathname.endsWith(".js") ? "text/javascript" : pathname.endsWith(".css") ? "text/css" : "font/woff2";
+      await route.fulfill({ body: await readFile(new URL(`../dist${pathname}`, import.meta.url)), contentType });
+    });
+    await page.route("**/desk.html", async route => route.fulfill({ body: await readFile(new URL("../dist/desk.html", import.meta.url)), contentType: "text/html" }));
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openWorkspace(page, "help");
+  const calls = await page.evaluate(() => window.__deskCalls);
+  for (const name of ["run", "calendar", "settings"]) {
+    const icon = page.locator(`.desk-navigation [data-icon="${name}"], .desk-utilities [data-icon="${name}"]`);
+    const control = icon.locator("..");
+    await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+    const host = await control.elementHandle();
+    const playback = control.evaluate(element => new Promise(resolve => {
+      element.addEventListener("pointerover", () => {
+        const started = performance.now();
+        const frames = [];
+        const sample = () => {
+          const elapsed = performance.now() - started;
+          const geometry = JSON.stringify([...element.querySelectorAll("svg, svg *")].map(node => {
+            const style = getComputedStyle(node);
+            return [node.getAttribute("d"), node.getAttribute("transform"), style.transform, style.opacity, style.strokeDashoffset];
+          }));
+          frames.push({ elapsed, geometry });
+          if (elapsed < 1450) requestAnimationFrame(sample);
+          else resolve(frames);
+        };
+        requestAnimationFrame(sample);
+      }, { once: true });
+    }));
+    await control.hover();
+    const frames = await playback;
+    expect(new Set(frames.filter(frame => frame.elapsed > 600 && frame.elapsed < 1000).map(frame => frame.geometry)).size).toBeGreaterThan(2);
+    expect(new Set(frames.filter(frame => frame.elapsed > 1250).map(frame => frame.geometry)).size).toBe(1);
+    expect(await control.evaluate((element, host) => element === host, host)).toBe(true);
+    await expect(page).toHaveURL(/#help$/);
+    expect(await page.evaluate(() => window.__deskCalls)).toEqual(calls);
+    await page.mouse.move(0, 0);
+    await host.dispose();
+  }
+});
 
 test("animated runner takes connected alternating steps on hover and keyboard focus without activating", async ({ page, browserName }) => {
   await page.setViewportSize({ width: 1100, height: 900 });

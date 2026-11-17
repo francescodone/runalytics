@@ -55,7 +55,7 @@ function PlayerFrame({ events, attributes, activation }: { events: EventProps; a
 function speedFor(animation: Animation, target: number) {
   const data = animation.animationData as { ip: number; op: number; fr: number };
   const duration = (data.op - data.ip) / data.fr;
-  return Number.isFinite(duration) && target > 0 ? Math.max(1, duration / target) : 1;
+  return Number.isFinite(duration) && duration > 0 && target > 0 ? duration / target : 1;
 }
 
 function NativePlayer({ name, size, activation, autoplay }: { name: IconName; size: number; activation: RefObject<Activation | null>; autoplay: boolean }) {

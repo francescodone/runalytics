@@ -42,6 +42,36 @@ The iPhone build is distributed unsigned for sideloading, not through the App St
 4. Use **Activities** to review runs and **Health** to track recovery and
     review proposed adjustments.
 
+### Log out or switch COROS accounts
+
+Each **COROS login ID identifies a separate user profile**. Plans, downloaded
+history, settings, saved connections and unfinished drafts belong to that profile,
+not to the watch model or the browser's current login session.
+
+Open **Settings → Watch connection → Log out** and confirm. Logout waits for
+active work, removes this device's COROS authorization and hides the profile
+without deleting its data or ending plans on the watch. Select **Connect COROS**
+to sign in again; authorization requests fresh authentication. The same COROS
+account restores its saved profile, including after restarting the app. A different
+COROS account starts with separate data and connection settings. Saved Strava,
+GitHub and calendar credentials stay with their original profile.
+
+On desktop, the browser returns to a temporary `127.0.0.1` callback served by
+Runalytics. Keep the app open until sign-in finishes. If authorization is declined
+or expires, retry **Connect COROS** in the app rather than reloading an old
+callback tab. A native authentication update requires restarting the rebuilt app;
+reloading the interface alone does not update its callback listener.
+
+Local training remains usable offline while a profile is open. Logging out is
+local, but signing back in requires COROS authorization. Existing account-specific
+device-sync and conflict rules continue to apply within each profile.
+
+Existing installations migrate automatically when their saved COROS login
+identifies the owner. If previous local data has no verifiable owner, Runalytics
+keeps it separate and offers **Import previous local data** after login. Confirm
+only if that data belongs to the current COROS account. Import is available only
+for an empty profile and never overwrites an existing user's plans or settings.
+
 ### Optional connections
 
 - **Plan sync:** save a GitHub token with `gist` scope on both devices in
@@ -93,6 +123,7 @@ Google Chrome is required for the browser tests.
 npm ci
 npm run build
 npm run test:ui
+node --experimental-strip-types --test tests/profile-storage.unit.mjs
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 

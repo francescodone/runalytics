@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AccountSession,
   FeedbackContext,
   DifficultyOutcome,
   DifficultyPreview,
@@ -56,6 +57,10 @@ try {
   /* storage blocked (private mode): entrances still work, just no skip. */
 }
 
+let profileScope: string | undefined;
+let profileVersion = 0;
+export function setProfileScope(profileKey: string | null) { profileScope = profileKey ?? "signed-out"; profileVersion++; }
+
 type Command = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 /**
@@ -69,19 +74,24 @@ const call: Command = async <T>(cmd: string, args?: Record<string, unknown>): Pr
       "Runalytics needs the desktop app for data — run `npm run tauri dev` and open it there.",
     );
   }
-  return invoke<T>(cmd, args);
+  const version = profileVersion;
+  const result = await invoke<T>(cmd, cmd === "account_session" || profileScope === undefined ? args : { ...args, profileScope });
+  if (version !== profileVersion && !["account_session", "connect_provider", "disconnect_provider", "import_legacy_profile"].includes(cmd)) throw new Error("The COROS profile changed. Reopen the current profile before continuing.");
+  return result;
 };
 
 export const tauri = {
-  sessionFeedback: () => invoke<FeedbackContext | null>("session_feedback"),
-  undoPlanDifficulty: (planId: string) => invoke<void>("undo_plan_difficulty", { planId }),
+  accountSession: () => call<AccountSession>("account_session"),
+  importLegacyProfile: (expectedProfileKey: string) => call<AccountSession>("import_legacy_profile", { expectedProfileKey }),
+  sessionFeedback: () => call<FeedbackContext | null>("session_feedback"),
+  undoPlanDifficulty: (planId: string) => call<void>("undo_plan_difficulty", { planId }),
   saveSessionFeedback: (planId: string, revision: number, workoutId: string, rating: number | null, dismiss = false) =>
-    invoke<DifficultyOutcome>("save_session_feedback", { planId, revision, workoutId, rating, dismiss }),
+    call<DifficultyOutcome>("save_session_feedback", { planId, revision, workoutId, rating, dismiss }),
   adjustPlanDifficulty: (planId: string, revision: number, direction: "easier" | "harder") =>
-    invoke<DifficultyOutcome>("adjust_plan_difficulty", { planId, revision, direction }),
+    call<DifficultyOutcome>("adjust_plan_difficulty", { planId, revision, direction }),
   previewPlanDifficulty: (planId: string, revision: number, direction: "easier" | "harder") =>
-    invoke<DifficultyPreview>("preview_plan_difficulty", { planId, revision, direction }),
-  approvePlanDifficulty: (preview: DifficultyPreview) => invoke<DifficultyOutcome>("approve_plan_difficulty", { preview }),
+    call<DifficultyPreview>("preview_plan_difficulty", { planId, revision, direction }),
+  approvePlanDifficulty: (preview: DifficultyPreview) => call<DifficultyOutcome>("approve_plan_difficulty", { preview }),
   stravaStatus: () => call<import("./types").StravaStatus>("strava_status"),
   stravaConfigure: (clientId: string, clientSecret: string | null) => call<import("./types").StravaStatus>("strava_configure", { clientId, clientSecret }),
   stravaConnect: () => call<import("./types").StravaStatus>("strava_connect"),

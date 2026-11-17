@@ -51,20 +51,20 @@ fn validate_url(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn credential(config: &Publishing) -> Result<keyring_core::Entry> {
-    crate::secure_store::entry("com.fradone.runalytics.calendar", &config.upload_url)
+fn credential(state: &AppState, config: &Publishing) -> Result<keyring_core::Entry> {
+    crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(), "com.fradone.runalytics.calendar", &config.upload_url)
         .map_err(|_| AppError::Other("Calendar Keychain entry unavailable".into()))
 }
 
 #[tauri::command]
-pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Result<serde_json::Value> {
+pub async fn export_connection_settings(state: crate::profiles::State<'_, AppState>) -> Result<serde_json::Value> {
     let config = load(&state.data_dir)?;
     let password = if config.has_password {
-        Some(credential(&config)?.get_password().map_err(|_| AppError::Other("Could not read the calendar credential for transfer".into()))?)
+        Some(credential(&state, &config)?.get_password().map_err(|_| AppError::Other("Could not read the calendar credential for transfer".into()))?)
     } else {
         None
     };
-    let github = crate::secure_store::entry(crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
+    let github = crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(), crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
         .map_err(|_| AppError::Other("GitHub Keychain entry unavailable".into()))?;
     let github_token = match github.get_password() {
         Ok(token) => Some(token),
@@ -82,7 +82,7 @@ pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Re
             "password": password,
         },
         "githubToken": github_token,
-        "strava": crate::strava::transfer_credentials()?,
+        "strava": crate::strava::transfer_credentials(&state.store)?,
         "identity": { "corosCode": identity.code },
     }))
 }
@@ -102,12 +102,12 @@ pub async fn export_connection_settings(state: tauri::State<'_, AppState>) -> Re
 /// Best-effort by design: the shared entry is a convenience for plan sync, and
 /// failing to maintain it must not fail a calendar publish that would otherwise
 /// succeed. Plan sync falls back to its own legacy entry when it is missing.
-fn sync_github_token(config: &Publishing, provided: Option<&str>) {
-    let shared = crate::secure_store::entry(
+fn sync_github_token(state: &AppState, config: &Publishing, provided: Option<&str>) {
+    let shared = crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(),
         crate::secure_store::GITHUB_SERVICE,
         crate::secure_store::GITHUB_TOKEN_USER,
     );
-    let legacy = crate::secure_store::entry(
+    let legacy = crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(),
         crate::secure_store::LEGACY_PLAN_SERVICE,
         crate::secure_store::LEGACY_PLAN_TOKEN_USER,
     );
@@ -135,7 +135,7 @@ fn sync_github_token(config: &Publishing, provided: Option<&str>) {
     // A gist save that left the password field alone still needs the shared
     // entry refreshed, e.g. after the target gist changed.
     if provided.is_none() && gist_file(config).is_some() && config.has_password {
-        if let Some(token) = credential(config)
+        if let Some(token) = credential(state, config)
             .ok()
             .and_then(|entry| entry.get_password().ok())
         {
@@ -170,7 +170,7 @@ pub async fn configure(
     };
     config.last_error = None;
     if let Some(password) = password.as_ref() {
-        let entry = credential(&config)?;
+        let entry = credential(state, &config)?;
         if password.is_empty() {
             match entry.delete_credential() {
                 Ok(()) | Err(keyring_core::Error::NoEntry) => {}
@@ -189,7 +189,7 @@ pub async fn configure(
         }
     }
     save(&state.data_dir, &config)?;
-    sync_github_token(&config, password.as_deref());
+    sync_github_token(state, &config, password.as_deref());
     if password.as_ref().is_some_and(|password| password.is_empty() || gist_file(&config).is_some()) {
         crate::plan_sync::invalidate_channel(state)?;
     }
@@ -368,14 +368,14 @@ pub async fn adopt_gist_target(
         Ok(config) if config.upload_url.is_empty() => config,
         _ => return,
     };
-    let Some(token) = crate::plan_sync::stored_token() else {
+    let Some(token) = crate::plan_sync::stored_token(state) else {
         return;
     };
     config.enabled = true;
     config.upload_url = target.upload_url.clone();
     config.subscription_url = target.subscription_url.clone();
     config.username = target.username.clone();
-    let entry = match credential(&config) {
+    let entry = match credential(state, &config) {
         Ok(entry) => entry,
         Err(_) => return,
     };
@@ -388,7 +388,7 @@ pub async fn adopt_gist_target(
     if save(&state.data_dir, &config).is_err() {
         return;
     }
-    sync_github_token(&config, Some(&token));
+    sync_github_token(state, &config, Some(&token));
     eprintln!("[calendar] adopted the plan channel's gist subscription target");
 }
 
@@ -407,7 +407,7 @@ async fn refresh_locked(state: &AppState) -> Result<String> {
             validate_url(&config.upload_url)?;
             validate_url(&config.subscription_url)?;
             let password = if config.has_password {
-                Some(credential(&config)?.get_password().map_err(|_| {
+                Some(credential(state, &config)?.get_password().map_err(|_| {
                     AppError::Other("Calendar credential unavailable; enter it again".into())
                 })?)
             } else {

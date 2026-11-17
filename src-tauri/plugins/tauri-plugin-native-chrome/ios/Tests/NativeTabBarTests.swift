@@ -32,7 +32,13 @@ final class NativeTabBarTests: XCTestCase {
             icon.tick(interrupted)
             XCTAssertTrue(icon.displayLink === replacement)
             XCTAssertTrue(icon.isPlaying)
-            icon.advance(to: 0.56)
+            icon.advance(to: 0.7)
+            let laterFrame = icon.item.image?.pngData()
+            XCTAssertTrue(icon.isPlaying)
+            icon.advance(to: 0.9)
+            XCTAssertTrue(icon.isPlaying)
+            XCTAssertNotEqual(icon.item.image?.pngData(), laterFrame)
+            icon.advance(to: NativeTabIconHost.replayDuration)
             XCTAssertFalse(icon.isPlaying)
             XCTAssertTrue(icon.item.image === original)
             XCTAssertTrue(icon.item.selectedImage === original)
@@ -113,7 +119,7 @@ final class NativeTabBarTests: XCTestCase {
         let original = item.image
         host.replay()
         let finished = expectation(description: "Bounded native replay completes")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + NativeTabIconHost.replayDuration + 0.2) {
             XCTAssertFalse(host.isPlaying)
             XCTAssertTrue(item.image === original)
             finished.fulfill()

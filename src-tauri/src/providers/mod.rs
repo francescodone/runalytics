@@ -68,9 +68,9 @@ pub trait Provider: Send + Sync {
 }
 
 /// Build the set of providers compiled into this build.
-pub fn build_providers() -> Vec<Arc<dyn Provider>> {
+pub fn build_providers(scope: &str) -> Vec<Arc<dyn Provider>> {
     #[allow(unused_mut)]
-    let mut v: Vec<Arc<dyn Provider>> = vec![Arc::new(coros::CorosProvider::new())];
+    let mut v: Vec<Arc<dyn Provider>> = vec![Arc::new(coros::CorosProvider::for_profile(scope))];
     #[cfg(feature = "garmin")]
     v.push(Arc::new(garmin::GarminProvider::new()));
     v

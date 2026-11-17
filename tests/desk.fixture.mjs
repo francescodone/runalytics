@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
-const dashboardFixture = readFileSync(new URL("../__harness.html", import.meta.url), "utf8").match(/<script>([\s\S]*?)<\/script>/)[1];
-const reviewFixture = readFileSync(new URL("../__review_stub.js", import.meta.url), "utf8");
+const dashboardFixture = readFileSync(new URL("./fixtures/dashboard.html", import.meta.url), "utf8").match(/<script>([\s\S]*?)<\/script>/)[1];
+const reviewFixture = readFileSync(new URL("./fixtures/review.js", import.meta.url), "utf8");
 
 export const deskFixture = `(function () {
   ${reviewFixture}
@@ -25,6 +25,33 @@ export const deskFixture = `(function () {
   let deskConnected = !connectionParams.has('noWatch');
   let deskStrava = {configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,reviewItems:[],lastMessage:null,lastAttemptAt:null};
   if (connectionParams.has('stravaReview')) deskStrava = {...deskStrava,configured:true,clientId:'123',connected:true,athleteId:42,enabled:true,needsReview:2,reviewItems:[{sourceKey:'coros:one',startTs:1793664000,distanceM:5000,message:'Multiple possible Strava activities; no description changed.',retryable:true},{sourceKey:'coros:two',startTs:1793577600,distanceM:10000,message:'Pending description expired after 90 days; no Strava activity was changed.',retryable:false}]};
+  const deskMulti = connectionParams.has('multiUser');
+  const deskProfiles = deskMulti ? JSON.parse(localStorage.getItem('synthetic.profiles') || '{}') : {};
+  const deskActive = localStorage.getItem('synthetic.active-profile');
+  let deskProfile = deskActive !== null ? JSON.parse(deskActive) : connectionParams.has('signedOut') ? null : 'synthetic-profile';
+  let deskLegacyClaimed = localStorage.getItem('synthetic.legacy-claimed');
+  const saveProfile = () => {
+    if (deskMulti && deskProfile) {
+      deskProfiles[deskProfile] = {current:deskCurrent,settings:deskSettings,pain:deskPain,messages:deskMessages,publishing:deskPublishing,sync:deskSync,strava:deskStrava};
+      localStorage.setItem('synthetic.profiles', JSON.stringify(deskProfiles));
+    }
+  };
+  const loadProfile = key => {
+    deskProfile = key;
+    localStorage.setItem('synthetic.active-profile', JSON.stringify(key));
+    const saved = deskMulti && key ? deskProfiles[key] : null;
+    if (saved) {
+      deskCurrent=saved.current; deskSettings=saved.settings; deskPain=saved.pain; deskMessages=saved.messages; deskPublishing=saved.publishing; deskSync=saved.sync; deskStrava=saved.strava;
+    } else if (key !== 'synthetic-profile' || connectionParams.has('legacyOrphan')) {
+      deskCurrent=null; deskSettings=undefined; deskPain=[]; deskMessages=[];
+      deskPublishing={enabled:false,uploadUrl:'',subscriptionUrl:'',username:'',hasPassword:false,lastPublished:null,lastError:null};
+      deskSync={config:{enabled:false,gistId:null,hasToken:false,canPublish:false,lastPushed:null,lastPulled:null,installedRev:null,lastError:null},accountLinked:Boolean(key),code:key ? key+'-channel' : null};
+      deskStrava={configured:false,clientId:'',connected:false,athleteId:null,enabled:false,enabledAt:null,updated:0,alreadyPresent:0,pending:0,needsReview:0,reviewItems:[],lastMessage:null,lastAttemptAt:null};
+    }
+    deskConnected=Boolean(key) && !connectionParams.has('noWatch');
+  };
+  loadProfile(deskProfile);
+  window.__deskDisconnectWatch = () => { deskConnected=false; };
   // Stands in for the backend's original_json snapshot: what a session was
   // before a benchmark overwrote it ('created' when the plan had a rest day).
   const deskBenchmarks = new Map();
@@ -44,9 +71,21 @@ export const deskFixture = `(function () {
   window.__deskCalls = [];
   window.__deskFail = '';
   window.__deskHoldPush = new URLSearchParams(location.search).has('holdPush');
-  window.__TAURI_INTERNALS__.invoke = async (cmd, args = {}) => {
+  const deskInvoke = async (cmd, args = {}) => {
+    const {profileScope, ...businessArgs} = args;
+    if (profileScope !== undefined && profileScope !== (deskProfile ?? 'signed-out')) throw new Error('The COROS profile changed. Reopen the current profile before continuing.');
+    args=businessArgs;
     window.__deskCalls.push({command:cmd, args});
     if (cmd === window.__deskFail) throw new Error('Unable to save right now');
+    if (cmd === 'account_session') return {profileKey:deskProfile,legacyProfile:deskProfile === 'synthetic-profile' && !connectionParams.has('legacyOrphan') || Boolean(deskProfile && deskLegacyClaimed === deskProfile),legacyAvailable:Boolean(deskProfile && connectionParams.has('legacyOrphan') && !deskLegacyClaimed && deskCurrent === null)};
+    if (cmd === 'import_legacy_profile') {
+      if (args.expectedProfileKey !== deskProfile || deskCurrent !== null) throw new Error('No saved profile was overwritten.');
+      deskLegacyClaimed=deskProfile; localStorage.setItem('synthetic.legacy-claimed',deskProfile);
+      deskCurrent=await deskOriginal('current_plan');
+      window.__deskEmit('account://changed',null);
+      return {profileKey:deskProfile,legacyProfile:true,legacyAvailable:false};
+    }
+    if (cmd === 'all_activities' && deskProfile !== 'synthetic-profile') return [];
     if (cmd === 'session_feedback') {
       if (!new URLSearchParams(location.search).has('feedback')) return null;
       if (deskFeedback !== undefined) return deskFeedback;
@@ -95,12 +134,12 @@ export const deskFixture = `(function () {
       if (new URLSearchParams(location.search).has('noPush')) deskCurrent[0] = {...deskCurrent[0], status:'active', pushedId:null};
       return deskCurrent;
     }
-    if (cmd === 'get_settings') return deskSettings ?? {...await deskOriginal(cmd, args), theme:new URLSearchParams(location.search).get('theme') ?? 'light', palette:new URLSearchParams(location.search).get('palette') ?? 'reference',llmEnabled:true,llmEndpoint:'https://example.test/v1',llmModel:'test-model'};
+    if (cmd === 'get_settings') return deskSettings ?? {...await deskOriginal(cmd, args), theme:new URLSearchParams(location.search).get('theme') ?? 'light', palette:new URLSearchParams(location.search).get('palette') ?? 'reference',llmEnabled:deskProfile === 'synthetic-profile',llmEndpoint:deskProfile === 'synthetic-profile' ? 'https://example.test/v1' : null,llmModel:deskProfile === 'synthetic-profile' ? 'test-model' : null};
     if (cmd === 'save_settings') { deskSettings = args.settings; return null; }
     if (cmd === 'provider_status') return [{provider:'coros',connected:deskConnected,lastSync:new Date().toISOString(),detail:'Synthetic account'}];
     if (cmd === 'coros_signin_notice') return null;
-    if (cmd === 'disconnect_provider') { deskConnected=false; return null; }
-    if (cmd === 'connect_provider') { deskConnected=true; return 'connected'; }
+    if (cmd === 'disconnect_provider') { saveProfile(); loadProfile(null); deskConnected=false; window.__deskEmit('account://changed',null); return null; }
+    if (cmd === 'connect_provider') { saveProfile(); loadProfile(window.__deskNextProfile ?? 'synthetic-profile'); deskConnected=true; window.__deskEmit('account://changed',null); return 'connected'; }
     if (cmd === 'sync_now') return {activitiesNew:0,healthDays:0,messages:[]};
     if (cmd === 'check_provider_api') return ['synthetic-list-activities'];
     if (cmd === 'plan_defaults') return {currentWeeklyKm:32, thresholdSecKm:280, predict5kS:connectionParams.has('noWatchPredictions') ? null : 1200, predict10kS:2500, predictHalfS:5400, predictMarathonS:11400, thisWeekKm:12,totalKm:300,weeksObserved:4,lastSync:new Date().toISOString(),activePain:null};
@@ -220,6 +259,11 @@ export const deskFixture = `(function () {
     if (cmd === 'plugin:event|listen') { listeners.set(args.event,args.handler); return args.handler; }
     if (cmd === 'plugin:event|unlisten') { listeners.delete(args.event); return null; }
     return deskOriginal(cmd,args);
+  };
+  window.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
+    const result = await deskInvoke(cmd, args);
+    saveProfile();
+    return result;
   };
 })();`;
 

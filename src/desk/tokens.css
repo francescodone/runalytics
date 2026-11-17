@@ -158,8 +158,8 @@
   --motion-feedback: 180ms;
   --motion-tooltip-delay: 450ms;
   --motion-result-hold: 1000ms;
-  --motion-icon-replay: var(--motion-surface);
-  --motion-icon-result: var(--motion-feedback);
+  --motion-icon-replay: 1120ms;
+  --motion-icon-result: 360ms;
   --motion-loading-delay: 120ms;
   --motion-duration-arrive: 560ms;
   --motion-duration-depart: 500ms;

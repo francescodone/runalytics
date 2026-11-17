@@ -25,16 +25,33 @@ pub const GITHUB_TOKEN_USER: &str = "token";
 pub const LEGACY_PLAN_SERVICE: &str = "com.fradone.runalytics.plan";
 pub const LEGACY_PLAN_TOKEN_USER: &str = "github_token";
 
+pub fn entry_scoped(scope: Option<&str>, service: &str, user: &str) -> Result<Entry, Error> {
+    let scoped_user = scope.map(|scope| format!("{scope}:{user}"));
+    entry(service, scoped_user.as_deref().unwrap_or(user))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_STORE: std::cell::RefCell<std::sync::Arc<keyring_core::CredentialStore>> = std::cell::RefCell::new(keyring_core::mock::Store::new().unwrap());
+}
+
+#[cfg(test)]
+pub(crate) fn reset_test_store() {
+    TEST_STORE.with(|store| *store.borrow_mut() = keyring_core::mock::Store::new().unwrap());
+}
+
 /// An entry for `service`/`user` in the platform's secure store.
 pub fn entry(service: &str, user: &str) -> Result<Entry, Error> {
-    #[cfg(target_os = "ios")]
+    #[cfg(test)]
+    { TEST_STORE.with(|store| store.borrow().build(service, user, None)) }
+    #[cfg(all(not(test), target_os = "ios"))]
     {
         use apple_native_keyring_store::protected::Store;
         use keyring_core::api::CredentialStoreApi as _;
 
         Store::new()?.build(service, user, None)
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(all(not(test), not(target_os = "ios")))]
     {
         keyring::Entry::new(service, user).map(|e| e.inner)
     }

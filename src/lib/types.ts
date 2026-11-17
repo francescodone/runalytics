@@ -49,6 +49,12 @@ export interface DifficultyPreview {
 
 export type ProviderKind = "coros" | "garmin";
 
+export interface AccountSession {
+  profileKey: string | null;
+  legacyAvailable: boolean;
+  legacyProfile: boolean;
+}
+
 export interface StravaStatus {
   configured: boolean;
   clientId: string;

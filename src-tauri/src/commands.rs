@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use tauri::{Emitter, State};
+use tauri::Emitter;
+use crate::profiles::State;
 
 use crate::calendar;
 use crate::calendar_publish::{self, Publishing};
@@ -282,20 +283,6 @@ pub async fn check_provider_api(
     provider: ProviderKind,
 ) -> Result<Vec<String>> {
     get_provider(&state, provider)?.list_api_tools().await
-}
-
-#[tauri::command]
-pub async fn connect_provider(
-    state: State<'_, AppState>,
-    provider: ProviderKind,
-) -> Result<String> {
-    let p = get_provider(&state, provider)?;
-    p.connect().await
-}
-
-#[tauri::command]
-pub async fn disconnect_provider(state: State<'_, AppState>, provider: ProviderKind) -> Result<()> {
-    get_provider(&state, provider)?.disconnect().await
 }
 
 /// Full sync: activities, health, fitness, then tracks + adaptive review.
@@ -1487,9 +1474,9 @@ async fn after_schedule_change(
             let app = app.clone();
             let op = op.to_string();
             stage(&app, &op, Stage::Coros, "working", None);
+            let state = state.owned();
             tauri::async_runtime::spawn(async move {
-                use tauri::Manager;
-                let state = app.state::<AppState>();
+
                 let _guard = state.sync_lock.lock().await;
                 let Some((latest, workouts)) = state.store.current_plan().ok().flatten() else {
                     stage(&app, &op, Stage::Coros, "done", None);

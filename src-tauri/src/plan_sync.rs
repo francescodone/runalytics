@@ -135,7 +135,7 @@ fn load_device(state: &AppState) -> Result<PlanSync> {
         config.channel_code = acknowledged.channel_code;
         config.gist_id = acknowledged.gist_id;
     }
-    apply_token_state(&mut config, stored_token().is_some());
+    apply_token_state(&mut config, stored_token(state).is_some());
     Ok(config)
 }
 
@@ -432,13 +432,13 @@ fn is_reset_plan(config: &PlanSync, plan_id: &str, force: bool) -> bool {
 }
 
 /// The shared GitHub credential — the same one calendar gist publishing uses.
-fn token_entry() -> Result<keyring_core::Entry> {
-    crate::secure_store::entry(crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
+fn token_entry(state: &AppState) -> Result<keyring_core::Entry> {
+    crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(), crate::secure_store::GITHUB_SERVICE, crate::secure_store::GITHUB_TOKEN_USER)
         .map_err(|_| AppError::Other("GitHub Keychain entry unavailable".into()))
 }
 
-fn legacy_token_entry() -> Option<keyring_core::Entry> {
-    crate::secure_store::entry(
+fn legacy_token_entry(state: &AppState) -> Option<keyring_core::Entry> {
+    crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(),
         crate::secure_store::LEGACY_PLAN_SERVICE,
         crate::secure_store::LEGACY_PLAN_TOKEN_USER,
     )
@@ -449,18 +449,18 @@ fn legacy_token_entry() -> Option<keyring_core::Entry> {
 /// that only ever saved it for plan sync is moved across on first read, so the
 /// merge costs the runner nothing — and moving rather than copying keeps
 /// clearing unambiguous, otherwise a deleted token would come back.
-pub(crate) fn stored_token() -> Option<String> {
-    let shared = token_entry().ok()?.get_password().ok();
+pub(crate) fn stored_token(state: &AppState) -> Option<String> {
+    let shared = token_entry(state).ok()?.get_password().ok();
     if shared.is_some() {
         return shared;
     }
-    let legacy = legacy_token_entry()?.get_password().ok()?;
+    let legacy = legacy_token_entry(state)?.get_password().ok()?;
     if legacy.is_empty() {
         return None;
     }
     // If the copy fails the legacy read still works, so nothing is lost.
-    if token_entry().ok()?.set_password(&legacy).is_ok() {
-        let _ = legacy_token_entry()?.delete_credential();
+    if token_entry(state).ok()?.set_password(&legacy).is_ok() {
+        let _ = legacy_token_entry(state)?.delete_credential();
     }
     Some(legacy)
 }
@@ -473,8 +473,8 @@ pub(crate) fn stored_token() -> Option<String> {
 /// and never needs a fresh token. Returns `None` when COROS has never been
 /// connected on this device, which is the app's honest signal that there is no
 /// shared identity to sync against yet.
-fn account_id() -> Option<String> {
-    let blob = crate::secure_store::entry(COROS_SERVICE, COROS_USER)
+fn account_id(state: &AppState) -> Option<String> {
+    let blob = crate::secure_store::entry_scoped(state.store.credential_scope.as_deref(), COROS_SERVICE, COROS_USER)
         .ok()?
         .get_password()
         .ok()?;
@@ -490,7 +490,7 @@ fn account_id() -> Option<String> {
 /// here as an opaque, stable identifier, and the token came from our own
 /// Keychain. Signature verification would need the COROS JWKS and buys nothing
 /// for a value we never use to authorise anything.
-fn jwt_sub(token: &str) -> Option<String> {
+pub(crate) fn jwt_sub(token: &str) -> Option<String> {
     let payload = token.split('.').nth(1)?;
     let json = base64url_decode(payload).ok()?;
     let claims: serde_json::Value = serde_json::from_slice(&json).ok()?;
@@ -825,13 +825,13 @@ pub fn pending_changes(state: &AppState) -> Result<bool> {
 }
 
 pub(crate) fn automatic_push_will_run(state: &AppState) -> bool {
-    load_device(state).map(|config| config.enabled && account_id().is_some()).unwrap_or(true)
+    load_device(state).map(|config| config.enabled && account_id(state).is_some()).unwrap_or(true)
 }
 
 /// `None` when the channel is not configured; `Some` when a push was attempted.
 pub async fn try_push_if_enabled(state: &AppState) -> Option<Result<PlanSync>> {
     let config = match load_device(state) { Ok(config) => config, Err(error) => return Some(Err(error)) };
-    if !config.enabled || account_id().is_none() {
+    if !config.enabled || account_id(state).is_none() {
         return None;
     }
     let result = push(state, false).await;
@@ -873,12 +873,12 @@ async fn push_inner(state: &AppState, explicit: bool) -> Result<PlanSync> {
         }
         return Ok(config);
     }
-    let token = stored_token().ok_or_else(|| {
+    let token = stored_token(state).ok_or_else(|| {
         AppError::Other(
             "Add your GitHub token in Settings → Calendar subscription to publish a plan".into(),
         )
     })?;
-    let sub = account_id().ok_or_else(|| {
+    let sub = account_id(state).ok_or_else(|| {
         AppError::Other("Connect COROS on both devices first — it is how they find each other".into())
     })?;
     sync_channel(state, config, &token, &sub, "https://api.github.com").await
@@ -1027,12 +1027,12 @@ pub struct PullOutcome {
 /// is the worst thing a sync could do.
 pub async fn pull(state: &AppState, force: bool) -> Result<(PlanSync, PullOutcome)> {
     let mut config = load_device(state)?;
-    let token = stored_token().ok_or_else(|| {
+    let token = stored_token(state).ok_or_else(|| {
         AppError::Other(
             "Add your GitHub token in Settings → Calendar subscription to fetch a plan".into(),
         )
     })?;
-    let sub = account_id().ok_or_else(|| {
+    let sub = account_id(state).ok_or_else(|| {
         AppError::Other("Connect COROS on this device first — it is how it finds your plan".into())
     })?;
     let code = sync_code(&sub);
@@ -1280,7 +1280,7 @@ pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
     if !config.enabled {
         return Ok(None);
     }
-    let (Some(token), Some(sub)) = (stored_token(), account_id()) else {
+    let (Some(token), Some(sub)) = (stored_token(state), account_id(state)) else {
         return Ok(None);
     };
     let client = github_client()?;
@@ -1309,7 +1309,7 @@ pub async fn check_remote(state: &AppState) -> Result<Option<RemotePlan>> {
 
 pub async fn refresh(state: &AppState) -> Result<bool> {
     let before = load_device(state)?;
-    if !before.enabled || stored_token().is_none() || account_id().is_none() {
+    if !before.enabled || stored_token(state).is_none() || account_id(state).is_none() {
         return Ok(false);
     }
     match push(state, false).await {
@@ -1343,8 +1343,8 @@ pub fn status(state: &AppState) -> Result<PlanSyncStatus> {
     // Both devices publish and both pull; the field stays on the shape
     // because the UI still reads it, but the platform no longer gates it.
     config.can_publish = true;
-    config.has_token = stored_token().is_some();
-    let sub = account_id();
+    config.has_token = stored_token(state).is_some();
+    let sub = account_id(state);
     Ok(PlanSyncStatus {
         account_linked: sub.is_some(),
         code: sub.as_deref().map(sync_code),
@@ -1363,12 +1363,12 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
     let token_changed = token.is_some();
     if token_changed {
         // Whatever was stored under the old per-feature service is now stale.
-        if let Some(entry) = legacy_token_entry() {
+        if let Some(entry) = legacy_token_entry(state) {
             let _ = entry.delete_credential();
         }
     }
     if let Some(token) = token {
-        let entry = token_entry()?;
+        let entry = token_entry(state)?;
         if token.is_empty() {
             match entry.delete_credential() {
                 Ok(()) | Err(keyring_core::Error::NoEntry) => {}
@@ -1384,7 +1384,7 @@ pub fn configure(state: &AppState, patch: PlanSyncPatch, token: Option<String>) 
             config.has_token = true;
         }
     } else {
-        config.has_token = stored_token().is_some();
+        config.has_token = stored_token(state).is_some();
     }
     config.enabled = config.has_token;
     if token_changed {

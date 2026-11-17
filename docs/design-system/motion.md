@@ -13,10 +13,10 @@ control, selection, layout, disclosure and overlay physics. Icon playback never
 delays an action/navigation, adds a focus target or changes a control's reserved
 footprint.
 
-The runner takes two alternating steps within the shared 560ms replay, with
+The runner takes two alternating steps within the shared 1120ms replay, with
 connected knee/elbow joints, a small body bob and opposing arm swing. Its clock
 is linear so both steps have an even cadence; the joint curves supply their own
-acceleration. Close is a plain, unboxed X throughout its brief 180ms feedback
+acceleration. Close is a plain, unboxed X throughout its brief 360ms feedback
 pulse, without a spin, plus morph or disappearing stroke. Both settle to their
 original SVG pose and use that same artwork when motion is disabled.
 
@@ -46,13 +46,14 @@ replay timing, eligibility and cancellation; they never hide or redraw the strok
 `play` identifies a new command outcome; repeated outcomes have distinct sequence
 keys. Historical done/error stage snapshots do not replay. Decorative/reward
 artwork plays on first eligible visibility, not ordinary rerenders. Clips use
-`speed` to cap action replay at `--motion-icon-replay` (the surface duration) and
-outcomes at `--motion-icon-result` (the feedback duration). Original SVG recipes
-share those timing/easing tokens and cancel rather than queue on repeat input.
-Pending clips retain native playback speed: their multi-rotation timeline is not
-compressed into a one-second loop. Header sync uses that same pending asset,
-without additional CSS rotation. Shorter clips are not stretched. The normal
-1000ms action-result hold is unchanged.
+`speed` to fit action replay to `--motion-icon-replay` (1120ms) and outcomes to
+`--motion-icon-result` (360ms), including shorter clips. These icon-specific tokens
+are independent of surface arrivals and immediate press feedback. Original SVG
+recipes share those timing/easing tokens and cancel rather than queue on repeat
+input. Pending clips retain native playback speed: their multi-rotation timeline
+is not compressed into a one-second loop. Header sync uses that same pending
+asset, without additional CSS rotation. The normal 1000ms action-result hold is
+unchanged.
 
 `MotionSystem` shares visibility/preferences and delegated interaction listeners
 rather than global observers/listeners per icon. Hidden documents, clipped or
@@ -74,7 +75,7 @@ unrelated catalog fallback. Do not import the entire animation/poster catalog.
 
 Native iOS tab activation retains UIKit navigation, selection, layout, tint and
 accessibility ownership. Public item-image updates supply bounded app-authored
-560ms motion after the existing intent is sent; no private UIKit view inspection
+1120ms motion after the existing intent is sent; no private UIKit view inspection
 or web-navigation replacement is involved. Calendar/chart/trophy retain their SF
 Symbols and shared easing. The native runner draws the same articulated two-step
 gait and resting pose as the web glyph, using an even linear clock, connected
@@ -108,6 +109,8 @@ such as `--motion-landing`, `--motion-surface`, `--motion-count`, and
 | `--motion-duration-arrive` | 560ms | Content and surface arrivals |
 | `--motion-duration-depart` | 500ms | Content and surface departures |
 | `--motion-duration-number` | 650ms | Numeric interpolation |
+| `--motion-icon-replay` | 1120ms | Icon hover, focus, activation and first-visible replay |
+| `--motion-icon-result` | 360ms | Icon outcomes and close feedback |
 | `--motion-stagger` | 60ms | Adjacent newly visible units |
 | `--motion-ease-standard` | `cubic-bezier(.22, 1, .36, 1)` | Shared non-overshooting response |
 | `--motion-distance-enter` | 14px | Content entrance travel |

@@ -12,9 +12,10 @@ import { Button, CheckInput, Dialog, Empty, ErrorNotice, InfoDialog, Loading, Se
 import { Change, Disclosure, Presence } from "./interaction";
 import { ConnectionTransfer } from "./connection-transfer";
 import { ControlAnimation } from "./animated-icons";
+import { accountSession, refreshAccount } from "./profiles";
 
 const tasks = [
-  { id: "watch", title: t("Watch connection"), detail: t("COROS, sign-in, history sync, API diagnostics"), Icon: IconDeviceWatch },
+  { id: "watch", title: t("Watch connection"), detail: t("COROS, sign-in, logout, history sync, API diagnostics"), Icon: IconDeviceWatch },
   { id: "strava", title: "Strava", detail: t("Connection, paired activity descriptions, sync status"), Icon: IconBrandStrava },
   { id: "appearance", title: t("Appearance"), detail: t("System theme, light, dark, colour palette"), Icon: IconPalette },
   { id: "language", title: t("Language"), detail: languagePreference() === "system" ? t("System default") : languagePreference().toUpperCase(), Icon: IconLanguage },
@@ -49,16 +50,16 @@ export function SettingsWorkspace() {
 export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding?: boolean; onSyncChange?: (active: boolean) => void } = {}) {
   const status = useRemote(tauri.providerStatus);
   const notice = useRemote(tauri.corosSigninNotice);
-  const { refresh, notifySync } = useWorkspace();
+  const { refresh, syncing } = useWorkspace();
   const command = useCommand();
   const [waiting, setWaiting] = useState(false);
   const [message, setMessage] = useState("");
   const [tools, setTools] = useState<string[] | null>(null);
-  const [disconnect, setDisconnect] = useState(false);
+  const [logout, setLogout] = useState(false);
   const coros = status.data?.find(provider => provider.provider === "coros");
   useEffect(() => {
     if (notice.data === "pending") setWaiting(true);
-    else if (notice.data) setMessage(notice.data);
+    else if (notice.data) { setWaiting(false); setMessage(notice.data); }
   }, [notice.data]);
   useEffect(() => {
     if (!waiting) return;
@@ -69,6 +70,8 @@ export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding
       if (reading || !active) return;
       reading = true;
       try {
+        await refreshAccount();
+        if (!active) return;
         const providers = await tauri.providerStatus();
         if (!active) return;
         if (providers.some(provider => provider.provider === "coros" && provider.connected)) {
@@ -85,12 +88,24 @@ export function WatchSettings({ onboarding = false, onSyncChange }: { onboarding
     const timer = window.setInterval(() => void poll(), 2500);
     return () => { active = false; window.clearInterval(timer); };
   }, [waiting]);
-  return <><ErrorNotice error={status.error ?? notice.error ?? command.error} retry={status.retry} />{status.loading ? <Loading /> : <>
+  return <><section className="connection-settings"><ErrorNotice error={status.error ?? notice.error ?? command.error} retry={status.retry} />{status.loading ? <Loading /> : <>
     <div className="connection-summary"><strong>{coros?.connected ? t("COROS connected") : t("COROS not connected")}</strong><p>{coros?.lastSync ? t("Last synced {{value0}}", { value0: fmtDateTime(coros.lastSync) }) : coros?.detail || t("No training history synced yet.")}</p></div>
-    <div className="form-actions">{coros?.connected ? <><Button tone="primary" icon="sync" busy={command.busy} onClick={() => { onSyncChange?.(true); void command.run(async () => { const report = await tauri.syncNow("coros"); notifySync(t("{{value0}} new activities, {{value1}} health days. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") })); }).finally(() => onSyncChange?.(false)); }}>{t("Sync history")}</Button><Button tone="danger" onClick={() => setDisconnect(true)}>{t("Disconnect")}</Button></> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(t("Finish signing in to COROS when it opens.")); setWaiting(true); if (!await command.run(() => tauri.connectProvider("coros"))) setWaiting(false); }}>{t("Connect COROS")}</Button>}</div>
+    {!coros?.connected && <p>{t("Your profile stays saved on this device. Sign in with the same COROS account to restore your plans and settings, or use a different account for a separate profile.")}</p>}
+    <div className="form-actions">{coros?.connected ? <Button tone="primary" icon="sync" busy={command.busy} disabled={syncing} onClick={() => { onSyncChange?.(true); void command.run(() => tauri.syncNow("coros")).finally(() => onSyncChange?.(false)); }}>{t("Sync history")}</Button> : <Button tone="primary" busy={command.busy || waiting} onClick={async () => { setMessage(""); setWaiting(true); const connected = await command.run(async () => { await tauri.connectProvider("coros"); await refreshAccount(); }); setWaiting(false); if (connected) setMessage(t("COROS connected.")); }}>{t("Connect COROS")}</Button>}{accountSession().profileKey && <Button tone="danger" disabled={command.busy || syncing || waiting} onClick={() => setLogout(true)}>{t("Log out")}</Button>}</div>
+    {coros?.connected && syncing && <p role="status">{t("Wait for history sync to finish before logging out.")}</p>}
     {(waiting || message) && <p role="status">{waiting ? t("Waiting for COROS sign-in...") : message}</p>}
     {!onboarding && <InfoDialog title={t("Connection diagnostics")} className="settings-section"><Button busy={command.busy} onClick={() => void command.run(async () => setTools(await tauri.checkProviderApi("coros")))}>{t("Check COROS API")}</Button><ErrorNotice error={command.error} />{tools && <><p role="status">{t("API reachable: {{value0}} tools exposed.", { value0: tools.length })}</p><ul className="plain-list">{tools.map(tool => <li key={tool}>{tool}</li>)}</ul></>}</InfoDialog>}
-  </>}<Presence>{disconnect && <SetupOrDialog inline={onboarding} title={t("Disconnect COROS?")} onClose={() => setDisconnect(false)}><p>{t("Downloaded training history stays on this device. Future syncing requires signing in again.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button onClick={() => setDisconnect(false)}>{t("Keep connected")}</Button><Button tone="danger" busy={command.busy} onClick={async () => { if (await command.run(() => tauri.disconnectProvider("coros"), t("COROS disconnected."))) setDisconnect(false); }}>{t("Disconnect COROS")}</Button></div></SetupOrDialog>}</Presence></>;
+    {!onboarding && accountSession().legacyAvailable && <LegacyProfileImport />}
+  </>}</section><Presence>{logout && <SetupOrDialog inline={onboarding} title={t("Log out of COROS?")} onClose={() => { if (!command.busy) setLogout(false); }}><p>{t("Your profile stays saved on this device. Sign in with the same COROS account to restore your plans and settings, or use a different account for a separate profile.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button disabled={command.busy} onClick={() => setLogout(false)}>{t("Stay logged in")}</Button><Button tone="danger" busy={command.busy} disabled={syncing} onClick={async () => {
+    if (await command.run(async () => { await tauri.disconnectProvider("coros"); await refreshAccount(); })) { setLogout(false); setMessage(""); setTools(null); }
+  }}>{t("Log out")}</Button></div></SetupOrDialog>}</Presence></>;
+}
+
+export function LegacyProfileImport({ onSkip }: { onSkip?: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const command = useCommand();
+  const profileKey = accountSession().profileKey;
+  return <section><p>{t("These older plans and settings have no verified COROS owner. Import them only if they belong to this account. Existing profile data will not be overwritten.")}</p><div className="form-actions"><Button onClick={() => setConfirm(true)}>{t("Import previous local data")}</Button>{onSkip && <Button onClick={onSkip}>{t("Start a separate profile")}</Button>}</div><Presence>{confirm && <Dialog title={t("Import previous local data?")} onClose={() => { if (!command.busy) setConfirm(false); }}><p>{t("Confirm that the previous local plans, history and connection settings belong to the COROS account you just signed in with.")}</p><ErrorNotice error={command.error} /><div className="form-actions"><Button disabled={command.busy} onClick={() => setConfirm(false)}>{t("Cancel")}</Button><Button tone="primary" busy={command.busy} disabled={!profileKey} onClick={() => void command.run(async () => { await tauri.importLegacyProfile(profileKey!); await refreshAccount(true); })}>{t("Import previous local data")}</Button></div></Dialog>}</Presence></section>;
 }
 
 export function StravaSettings({ mode = "all" }: { mode?: "all" | "connection" | "publishing" } = {}) {

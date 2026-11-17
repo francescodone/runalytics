@@ -11,6 +11,7 @@ use crate::types::*;
 /// All timestamps are stored as unix seconds (UTC) or ISO date strings.
 pub struct Store {
     pub conn: Mutex<Connection>,
+    pub credential_scope: Option<String>,
 }
 
 /// How many times a trackless activity's FIT file may be re-downloaded before
@@ -666,6 +667,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let store = Store {
             conn: Mutex::new(conn),
+            credential_scope: None,
         };
         store.migrate()?;
         Ok(store)

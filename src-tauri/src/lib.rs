@@ -8,6 +8,7 @@ mod metrics;
 mod plan;
 mod plan_sync;
 mod proposal;
+mod profiles;
 mod providers;
 mod secure_store;
 mod state;
@@ -15,11 +16,9 @@ mod store;
 mod strava;
 mod types;
 
-use std::sync::Mutex;
-
 use tauri::{Manager, RunEvent, WindowEvent};
 
-use crate::state::AppState;
+use crate::profiles::ProfileManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,50 +34,8 @@ pub fn run() {
             app.handle().plugin(tauri_plugin_native_chrome::init())?;
 
             let data_dir = app.path().app_data_dir()?;
-            let db_path = data_dir.join("runalytics.sqlite");
-            let existing_installation = db_path.exists();
-            let store = store::Store::open(&db_path)
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            if let Err(error) = calendar::adopt_naming(&store) {
-                eprintln!("could not update plan names: {error}");
-            }
-
-            // Load settings (atomic JSON file, defaults on any problem).
-            let settings_path = data_dir.join("settings.json");
-            let settings = std::fs::read_to_string(&settings_path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(commands::Settings {
-                    pmtiles_path: None,
-                    last_provider: None,
-                    theme: None,
-                    palette: (!existing_installation).then(|| "amethyst".to_string()),
-                    llm_enabled: false,
-                    llm_endpoint: None,
-                    llm_model: None,
-                    thresholds: Default::default(),
-                });
-            if !existing_installation && !settings_path.exists() {
-                if let Err(error) = serde_json::to_vec_pretty(&settings)
-                    .map_err(std::io::Error::other)
-                    .and_then(|json| std::fs::write(&settings_path, json))
-                {
-                    eprintln!("could not save initial settings: {error}");
-                }
-            }
-
-            let providers = providers::build_providers();
             providers::coros::set_app_handle(app.handle().clone());
-
-            app.manage(AppState {
-                store,
-                settings: Mutex::new(settings),
-                providers,
-                data_dir,
-                syncing: std::sync::atomic::AtomicBool::new(false),
-                sync_lock: tokio::sync::Mutex::new(()),
-                calendar_lock: tokio::sync::Mutex::new(()),
-            });
+            app.manage(ProfileManager::open(data_dir)?);
 
             // Single window with in-app navigation between the pages.
             // On mobile the window must fill the device screen: tao sizes the
@@ -134,7 +91,7 @@ pub fn run() {
             // pull, and the wizard owns the first-run experience.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let state = handle.state::<AppState>();
+                let Ok(state) = handle.state::<ProfileManager>().capture(None) else { return; };
                 let connected = state
                     .providers
                     .iter()
@@ -164,8 +121,10 @@ pub fn run() {
             commands::provider_status,
             commands::coros_signin_notice,
             commands::check_provider_api,
-            commands::connect_provider,
-            commands::disconnect_provider,
+            profiles::account_session,
+            profiles::connect_provider,
+            profiles::disconnect_provider,
+            profiles::import_legacy_profile,
             commands::sync_now,
             commands::sync_status,
             commands::dashboard,
@@ -235,7 +194,7 @@ pub fn run() {
             RunEvent::Resumed | RunEvent::WindowEvent { event: WindowEvent::Focused(true), .. } => {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let state = handle.state::<AppState>();
+                    let Ok(state) = handle.state::<ProfileManager>().capture(None) else { return; };
                     let _ = commands::refresh_plan_channel(&handle, &state).await;
                 });
             }
