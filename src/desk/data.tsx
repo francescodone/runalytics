@@ -4,7 +4,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tauri, ymdLocal, inTauri, displayTitle } from "../lib/ipc";
 import { gamificationStats, type Achievement } from "../lib/flow";
 import type { PlanSyncProgress, Settings } from "../lib/types";
-import { IconLoader2, IconCheck, IconClock, IconX } from "@tabler/icons-react";
+import { IconClock } from "./icons";
+import { StatusIcon } from "./animated-icons";
+import { AchievementIcon } from "./achievement-icons";
 import { actionOrigin, Change, Presence, tempo } from "./interaction";
 import { Notification, NotificationViewport } from "./overlays";
 import { Button, Dialog } from "./ui";
@@ -92,6 +94,13 @@ function scheduleNoticeDismissal(node: HTMLElement | null, dismiss: () => void) 
 type StageEvent = { op: string; target: string; state: "working" | "done" | "error" | "skipped"; detail?: string | null; targets?: string[]; lines?: StageLine[] };
 type StageLine = { target: string; state: "waiting" | "working" | "done" | "error"; detail?: string | null };
 type StageOp = { lines: StageLine[]; settled: boolean; planned: boolean };
+
+function StageStatus({ state }: { state: StageLine["state"] }) {
+  const [transition, setTransition] = useState({ state, sequence: 0 });
+  if (transition.state !== state) setTransition({ state, sequence: transition.sequence + 1 });
+  if (state === "waiting") return <IconClock size={16} aria-hidden="true" />;
+  return <StatusIcon key={`${state}-${transition.sequence}`} status={state === "working" ? "pending" : state === "done" ? "success" : "error"} size={16} play={transition.sequence > 0} />;
+}
 const STAGE_LABELS: Record<string, string> = { db: t("local DB"), calendar: "calendar", gist: "gist", coros: t("COROS calendar"), strava: "Strava" };
 function stageText(line: StageLine): string {
   const label = text(STAGE_LABELS[line.target] ?? line.target);
@@ -145,7 +154,7 @@ function AchievementCelebrations() {
   if (!badge) return null;
   return <Dialog title={t("Earned")} onClose={() => setQueue(previous => previous.slice(1))}>
     <div className="achievement-celebration" key={badge.id}>
-      <motion.div className="achievement-celebration-icon" aria-hidden="true" initial={reduced ? false : { opacity: 0, scale: .6, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={tempo.spring} dangerouslySetInnerHTML={{ __html: badge.icon }} />
+      <motion.div className="achievement-celebration-icon" aria-hidden="true" initial={reduced ? false : { opacity: 0, scale: .6, rotate: -12 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={tempo.spring}><AchievementIcon badge={badge} size={56} /></motion.div>
       <div data-entrance><h3>{text(badge.name)}</h3><p>{text(badge.desc)}</p></div>
       <Button tone="primary" onClick={() => setQueue(previous => previous.slice(1))}>{t("Continue")}</Button>
     </div>
@@ -346,7 +355,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     <Presence>{stageEntries.length > 0 && <Notification key="stages" elementRef={stagesRef} label={t("Plan sync progress")} onDismiss={() => { Object.keys(stageOps).forEach(op => dismissedStageOps.current.add(op)); setStageOps({}); if (hasSyncStages) { syncStagesAvailable.current = false; setSyncNotice(null); } }} countdown={stagesQuiet} countdownKey={syncNotice ?? undefined}>
       {hasSyncStages && syncNotice && <div>{text(syncNotice)}</div>}
       <ul className="stage-lines">{stageEntries.flatMap(([opName, op]) => op.lines.map(line => <li key={`${opName}/${line.target}`} className={`stage-line stage-${line.state}`} title={line.detail ?? undefined}>
-        {line.state === "waiting" ? <IconClock size={16} aria-hidden="true" /> : line.state === "working" ? <IconLoader2 size={16} className="spinner" aria-hidden="true" /> : line.state === "done" ? <IconCheck size={16} aria-hidden="true" /> : <IconX size={16} aria-hidden="true" />}
+        <StageStatus state={line.state} />
         <span>{stageText(line)}</span>
       </li>))}</ul>
     </Notification>}</Presence>

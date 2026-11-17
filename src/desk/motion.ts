@@ -14,6 +14,8 @@ export const tempo = {
   press: seconds("--motion-press"),
   feedback: seconds("--motion-feedback"),
   resultHold: seconds("--motion-result-hold") * 1000,
+  iconReplay: seconds("--motion-icon-replay"),
+  iconResult: seconds("--motion-icon-result"),
   change: seconds("--motion-change"),
   surface: seconds("--motion-surface"),
   exit: seconds("--motion-exit"),
@@ -87,6 +89,8 @@ export function motionVisible(element: HTMLElement, departing = false) {
     const clip = parent.getBoundingClientRect();
     if (/auto|scroll|hidden|clip/.test(style.overflowY)) { top = Math.max(top, clip.top + parent.clientTop); bottom = Math.min(bottom, clip.top + parent.clientTop + parent.clientHeight); }
     if (/auto|scroll|hidden|clip/.test(style.overflowX)) { left = Math.max(left, clip.left + parent.clientLeft); right = Math.min(right, clip.left + parent.clientLeft + parent.clientWidth); }
+    // Top-layer dialogs and notification popovers escape their ancestors' clips.
+    if (parent.matches("dialog[open]") || parent.hasAttribute("popover") && "showPopover" in parent && parent.matches(":popover-open")) break;
   }
   return bounds.width > 0 && bounds.height > 0 && Math.min(bounds.bottom, bottom) - Math.max(bounds.top, top) >= Math.min(bounds.height * tempo.viewportThreshold, Math.max(0, bottom - top) * tempo.viewportThreshold) && Math.min(bounds.right, right) > Math.max(bounds.left, left);
 }

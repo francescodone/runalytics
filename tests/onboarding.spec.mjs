@@ -672,7 +672,8 @@ for (const width of [320, 390, 820, 1440]) test(`onboarding resumes and previews
   await page.screenshot({ path: testInfo.outputPath(`onboarding-${width}.png`), fullPage: true });
   await page.getByRole("button", { name: "Build plan" }).click();
   await expect(page.locator(".desk-navigation a")).toHaveCount(4);
-  await expect(page.getByText("Hello, Ada")).toBeVisible();
+  await expect(page.locator(".training-context > div > .muted")).toHaveText(/^Ada's .+/);
+  await expect(page.locator(".workspace-heading")).not.toContainText("Ada");
   expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "create_plan").at(-1).args.request.increase)).toBe("ambitious");
 });
 

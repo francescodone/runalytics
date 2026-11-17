@@ -1,3 +1,350 @@
+## Flat Compact Month Calendar, 2026-11-17
+
+At widths up to 800px, month dates no longer inherit individual pill borders,
+rounded corners, optical rims or button shadows. The existing calendar perimeter
+and cell dividers provide the only persistent grid lines. Today/selected fills,
+native date buttons, shared interaction timing, session counts and itinerary
+selection remain intact. Keyboard focus uses an inset outline so it remains
+visible inside the clipped calendar. Desktop month presentation is unchanged.
+
+Verification: production build, 47 synthetic-IPC Chromium checks and seven focused
+WebKit checks passed. New light/dark regressions at 320/800px cover flat resting,
+hovered, selected and keyboard-focused dates, retained calendar dividers and
+keyboard activation. Existing compact selection and 390/1440px touch-inspector
+checks passed. All 40 Prism responsive checks passed: light/dark route widths
+320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600,
+1920 and 2560px; short viewports 537x740, 913x480 and 667x375; 820px
+settings/detail flows; and 200% text at 320/820/1440px. Screenshots were inspected
+at 320px light and 800px dark, and whitespace checks passed. Native WebViews,
+physical devices and live providers were not tested; these browser checks do not
+establish native integration. The referenced foundations and components documents
+remain absent.
+
+## Consistent Training Headers and Completion Stats, 2026-11-17
+
+The workspace heading no longer repeats the COROS connection badge. Connection
+settings, sync eligibility, offline setup guidance and provider behavior remain
+unchanged. Week, Month and Plan now share the localized owner-prefixed plan label;
+blank runner names retain the plan name alone, and missing plans retain “Your
+training”.
+
+Week and Month place completion stats directly beneath their shared toolbar,
+including compact layouts. Two compact columns prevent monthly mileage from
+pushing the session and distance counts onto separate rows. Desktop metrics
+reserve the shared control-size line independently of the week-only Reset button,
+so wrapped mileage at the 801px rail breakpoint does not shift their top edges.
+Reset confirmation, secondary compact actions, counting motion and summary
+calculations are unchanged.
+
+Verification: production build and 60 synthetic-IPC Chromium checks passed,
+including all 40 Prism responsive checks: light/dark route widths 320, 360, 375,
+390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px;
+short viewports 537x740, 913x480 and 667x375; 820px detail/settings flows; and
+200% text at 320, 820 and 1440px. All 13 focused WebKit checks passed. Focused
+regressions cover personalization, blank/missing-name fallbacks, reloads, removal
+of redundant status, aligned metric positions at 320/801/1440px, month boundaries,
+summary totals and reset behavior. Existing checks also cover scheduling, Undo,
+confirmations, watch-push eligibility and offline draft retention. Screenshots
+were inspected at 320px light and 1440px dark. Whitespace checks passed.
+
+An earlier broader run also hit two existing plan-creation checks that expect a
+Create plan button while the no-plan fixture enters onboarding instead; those
+checks and the onboarding flow were not changed. Browser verification does not
+establish native integration; native WebViews, physical devices and live providers
+were not retested. The referenced foundations and components documents remain
+absent.
+
+## Native Runner Gait Parity, 2026-11-17
+
+The iOS Activities tab now draws the same articulated runner and two-step 560ms
+gait as the shared web glyph, replacing the intact SF Symbol translation. Knees
+and elbows remain connected, legs alternate, arms counter-swing and a small body
+bob follows an even linear clock. Resting and Reduce Motion use the same custom
+pose, so playback does not switch artwork at its endpoints. Template tint and the
+original symbol's image size, alignment and baseline metrics are retained. Other
+tab artwork/motion, UIKit selection/input/accessibility, stable item identifiers,
+bridge intents and lifecycle cancellation are unchanged. In-app close controls
+already use the shared WebView plain-X refinement; the native plugin has no
+separate close glyph. OS-owned window/launcher/picker artwork remains unchanged.
+
+Verification: the native plugin built against its real Tauri dependency and all
+seven XCTest cases passed on iPhone 18 Pro / iOS 27.0 (24A434), using the
+iPhoneSimulator 27.2 SDK. Two new cases cover connected alternating gait/knee
+flexion, opposing arms and stroke bounds, rendered-frame changes, matching rest
+frames and fixed size/alignment/baseline/template metrics. Existing cases cover
+rapid replay, obsolete callbacks, natural completion, weak ownership, lifecycle
+interruptions and retained selection/accessibility. Native light/dark-ink pose
+captures at enlarged and actual tab sizes were inspected. All 13 synthetic bridge
+checks and whitespace checks passed. Lifecycle notifications are posted by tests;
+full-app native integration, physical devices, actual OS Reduce Motion toggling
+and manual VoiceOver/keyboard behavior were not retested. No new browser changes
+were made; the preceding shared-web verification remains separate.
+
+## Runner Gait and Plain Close Feedback, 2026-11-17
+
+The shared web runner now takes two alternating steps within the existing 560ms
+replay, using connected knees/elbows, a small body bob and opposing arm swings
+rather than a limb wobble. A linear clock preserves even cadence while joint
+curves supply acceleration. Close now stays a plain, unboxed X with a restrained
+180ms scale pulse; it does not spin, morph into a plus or hide its strokes. Both
+restore their original pose and retain the same artwork in static fallbacks.
+The retired boxed-close clip/poster was removed: the adapter now selects 53
+library assets and 15 original custom glyphs, with 56 library poster variants.
+Native hosts, sizes, labels, delegated interactions, focus return, cancellation,
+permissions and IPC contracts are unchanged. Native iOS artwork was not modified.
+
+Verification: production build passed. Nine focused synthetic-IPC browser checks
+passed in each of Chromium and WebKit, covering connected footfalls/knee flexion,
+opposing arm swing, hover/keyboard previews, close geometry, single activation,
+touch dismissal/focus return, reduced motion, interruption/teardown and packaged
+offline assets. All 42 selected Chromium Prism checks passed: light/dark route
+matrices at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366,
+1440, 1600, 1920 and 2560px; short viewports 537x740, 913x480 and 667x375;
+820px detail/settings flows; 200% text at 320, 820 and 1440px; and settled
+rendering budgets. Actual paused gait/close poses and Help/dialog screenshots
+were inspected at 320px light and 1440px dark, with no clipped runner strokes,
+page overflow or runtime errors. Whitespace checks passed. These browser checks
+do not establish native integration or physical-device performance; native apps,
+live providers and manual assistive-technology behavior were not retested. The
+referenced foundations and components documents remain absent.
+
+## Catalog-First and Original Custom Icon Motion, 2026-11-17
+
+All production React glyphs now use the shared animated-icon adapter: 54 selected
+UseAnimations assets plus 14 app-authored custom recipes for unmatched artwork.
+The migration covers all 46 previous React icon symbols and 24 achievement SVG
+types, including navigation, settings destinations/headings, activity types,
+buttons, close/save/check glyphs, milestones, celebrations, brands and map controls.
+Existing runner, bicycle, strength, flame, mountain, rest, language, palette,
+unlink, QR, contrast and checkered artwork keeps its meaning; brand geometry is
+not replaced. Achievement computation and legacy fixture contracts are unchanged.
+Raw badge HTML is no longer injected into production presentation.
+
+Library/custom players share visibility/preferences, delegated hover/focus and
+accepted activation. Native selects and check/radio/toggle inputs retain their
+actual focus/submission hosts and checked state. Same-source static SVGs cover
+reduced motion, forced colours, suspension and player failure; library posters
+have per-instance definition IDs. Custom clips are bounded and restore owned
+styles on cancellation. Pending alone loops at the library's native pace, with
+no CSS double spin. Map portals retain provider context, geographic anchors,
+attribution and teardown. Fixed-slot styling replaces direct-SVG selectors;
+search positioning and legacy checked-toggle paint were corrected for the new
+hosts. Actual encoded QR images and data graphics remain unchanged.
+
+Native iOS retains UIKit tab navigation/selection/accessibility ownership and
+uses public item-image updates for bounded 560ms original SF Symbol motion after
+the existing intent. There is no private-view inspection or replacement with web
+navigation. Original artwork is restored on completion or lifecycle interruption.
+OS-managed Dock/tray/window and native picker artwork is not claimed animated by
+the web adapter. No permissions, IPC contracts, credentials or backend training
+algorithms changed. Both UseAnimations and copied Tabler artwork ship their MIT
+notices locally.
+
+Verification: production build passed; 18 focused icon cases passed in Chromium
+and all 18 passed in WebKit, including eight new behavior cases. All 48 selected
+Prism checks passed: light/dark route widths 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports
+537x740, 913x480 and 667x375; rail-breakpoint detail/settings flows; 200% text at
+320, 820 and 1440px; palette/disabled fallbacks; and settled-rendering budgets.
+The corrected checked/unchecked toggle-paint case also passed separately in both
+engines. All eight entry URLs passed synthetic-IPC smoke checks. Motion-enabled
+captures at 320px light, 390px dark, 800px light, 801px dark and 1440px light/dark
+had no page overflow, runtime errors, duplicate icon-definition IDs or leftover
+Tabler SVG rendering. A TypeScript AST gate passed across 26 production modules,
+with no direct Tabler imports, unadapted native field glyphs or legacy icon HTML
+injection. Packaged offline animation checks, byte-for-byte distributed license
+checks and git diff whitespace checks passed. Added JavaScript is 13,817 bytes
+gzip above this rollout's baseline, below the additional 40KiB budget.
+
+Native verification compiled the plugin against its real Tauri dependency and
+passed five simulator XCTest cases on iPhone 18 Pro / iOS 27.0 (24A434), using
+the iPhoneSimulator 27.2 SDK; 13 synthetic bridge tests and an isolated UIKit
+playback host also passed. Full-application native integration remains unverified:
+the GUI build environment lacked npm and the shell retry lacked Tauri's
+CLI-options server. Physical-device performance, manual VoiceOver/keyboard and
+actual OS preference toggling were not verified. Browser checks use synthetic
+IPC, not live-provider/native integration. The full UI suite was not rerun;
+previously documented unrelated baseline failures were not relaxed or repaired.
+The referenced foundations and components documents remain absent.
+
+## Continuous Divider Lists, 2026-11-17
+
+Plan weeks, activity history, settings destinations, compact day itineraries and
+reset previews now read as continuous lists rather than individual cards. Each
+adjacent pair has one divider, with no outer frame, rounded row corners, shadows
+or inter-item gaps. Plan and activity lists no longer reserve horizontal card
+clearance; settings destinations use one full-width column. Vertical scroll
+clearance remains for virtual-history measurements and bottom-edge visibility.
+Calendar-grid tiles and standalone optical controls retain their existing styling.
+
+List rows retain native buttons/links, current/selected highlighting, hover/press
+fills and visible inset keyboard-focus outlines, but do not tilt, shrink or acquire
+a glass rim. Existing layout/reveal motion, navigation, filtering, inspector focus
+return, confirmation guards and IPC contracts remain unchanged.
+
+Verification: the production build and 61 synthetic-IPC Chromium checks passed.
+The Prism route matrix covers light/dark at 320, 360, 375, 390, 414, 430, 600,
+768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short viewports at
+537x740, 913x480 and 667x375; and 200% text at 320, 820 and 1440px. Focused
+checks cover full-width single-divider geometry, contrast, hover/press/focus,
+high-contrast fallback and keyboard activation at 320 and 1440px in both themes,
+plus plan centering, reset confirmation, settings search, activity filters and
+virtual-history scrolling/focus restoration. Inspected screenshots cover the Plan
+at 320/1440px light, Activities at 1440px dark, Settings at 320px light and the
+compact itinerary at 320px dark.
+
+An earlier broader selection hit six existing checks targeting retired Health
+navigation and four compact-plan height assertions: the measured 134.5px row
+height also reproduces with the original HEAD stylesheets. These unrelated
+expectations were not relaxed. Browser checks do not establish native integration;
+native WebViews, physical devices, other engines and live providers were not tested.
+The referenced foundations and components documents remain absent.
+
+## Lighter Shared Toolbar Background, 2026-11-17
+
+Shared toolbars now reuse the outer canvas's `--material-atmospheric` background
+instead of stacking the stronger parent tint and material aura. The change covers
+Week, Month, Plan and Activities filters at desktop and compact widths. Palette
+and light/dark appearance, bounded background drift, control geometry, selection,
+keyboard feedback and opaque accessibility fallbacks remain unchanged. Other
+surface families retain their existing materials.
+
+Verification: the production build, 40 Prism geometry checks and eight focused
+synthetic-IPC toolbar checks in each of Chromium and WebKit passed. Geometry
+coverage includes light/dark at 320, 360, 375, 390, 414, 430, 600, 768, 820, 1024,
+1280, 1366, 1440, 1600, 1920 and 2560px; short viewports at 537x740, 913x480 and
+667x375; rail-breakpoint details; and 200% text at 320, 820 and 1440px. Focused
+checks cover all four toolbar views at 320 and 1440px in both themes, the amethyst
+palette, retained material drift and high-contrast fallback. Screenshots at 320px
+light and 1440px dark and the live 1440px light preview were inspected. The existing
+button pending/result and keyboard-retry check also passed.
+
+Two broader workflow checks still expect the retired Health navigation/heading.
+A combined run also hit a splash-timing timeout; the isolated toolbar/motion rerun
+passed all eight cases. No native WebViews, physical devices or live providers
+were tested. The referenced foundations and components documents remain absent.
+
+## Notification Loader Pace, 2026-11-17
+
+Pending status icons keep the loading asset's native playback speed. Its
+five-second, multi-rotation timeline is no longer accelerated into a one-second
+loop. No second CSS rotation is applied. Action/result playback, header sync
+rotation, notification timing, dismissal and reduced-motion fallbacks are
+unchanged; the unused pending-loop timing token was removed.
+
+Verification: production build, 19 focused synthetic-IPC Chromium checks,
+four WebKit checks and the 40-case Prism responsive matrix passed. New
+rendered-rotation regressions fail before the fix and pass afterward at 320px
+light and 1440px dark, including live reduced-motion changes, stable icon size
+and keyboard dismissal; screenshots at those widths/themes were inspected.
+The matrix covers light/dark at 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px, short viewports at 537x740,
+913x480 and 667x375, 820px detail/settings views, and 200% text at 320, 820
+and 1440px. Existing checks cover mouse/touch/keyboard activation, pending and
+result lifecycles, offline bundled assets and notification workflows. Native
+WebViews, physical devices and live providers were not tested. The referenced
+foundations and components documents remain absent.
+
+## Curated UseAnimations Interactions, 2026-11-17
+
+Production action/status icons now use locally bundled `react-useanimations@3.1.1`
+through the shared adapter. Navigation, utilities, settings links/actions, calendar
+and roadmap navigation, review filters, setup, transfer actions and destructive
+controls reuse the existing native hosts and handlers. Unmatched, brand/provider,
+close, save and earned-art glyphs remain Tabler. Fields, selection, disclosures,
+dragging, scrolling, dialogs and inspectors retain Prism's existing feedback and
+physics. The mirrored clockwise header sync indicator is unchanged.
+
+Buttons retain their original labels and reserved pending/result footprint.
+Completion follows the existing command result; repeated identical results replay
+once per event. Sync-stage snapshots stay static, while actual transitions play
+once. Only pending work loops. Shared eligibility replaces players with static
+fallbacks for reduced motion, forced colors, hidden documents, clipped/offscreen
+slots and inert/exiting/retained content. Returning does not replay stale outcomes
+or replace the focused native control. Package timing is normalized to Prism;
+no action or navigation waits for playback. The distributed assets include the
+upstream MIT notice. No IPC, provider permissions, credentials, native code or
+training algorithms changed.
+
+Verification: the production build and all eight new synthetic-IPC animation
+cases passed in Chromium and WebKit. The broader Chromium selection passed 70
+of 77 checks, including the Prism route/short-height/enlarged-text matrix and
+settled-rendering budget. All 10 scoped WebKit checks and all six palette contrast/
+disabled-fallback checks passed. The width matrix covers light/dark at 320, 360,
+375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and
+2560px, short viewports at 537x740, 913x480 and 667x375, and 200% text at 320,
+820 and 1440px. Motion-enabled screenshots at 320px light, 390px dark, 800px
+light, 801px dark and 1440px light/dark were inspected, with no page overflow or
+runtime errors in those scripted scenarios. A separate synthetic-IPC smoke check
+verified all eight HTML entry URLs and reachable utility controls. Packaged-asset
+tests exercise moving SVGs with external network requests blocked. The total added
+built JavaScript is 16,367 bytes gzip (about 16KiB), within the 40KiB budget.
+
+The seven broader Chromium failures reproduce against an isolated unmodified
+HEAD: two proposal tests still target the retired Health review route, two plan
+creation tests expect Create plan before onboarding, and three dark transfer QR
+tests fail to decode the generated image at 320, 390 and 1440px. They were not
+weakened or repaired in this presentation change. Five pre-change focused tests
+also already failed on retired Health/Log pain or entry-heading assertions.
+`npm install` reported one critical audit advisory; no unrelated dependency
+upgrades were attempted. Native WebViews, physical devices and live providers
+were not tested. The referenced foundations and components documents remain
+absent.
+
+## Runner Name Only in Plan View, 2026-11-17
+
+Workspace headings no longer show the runner greeting. Only the Plan view's
+existing plan label includes the saved name, formatted as “Ada's Spring half
+marathon” in English and localized across all eight catalogs. Week and month
+labels remain unchanged. Missing or blank names keep the original plan label;
+no-plan states keep Your training. Name changes from connection imports and
+onboarding still update the label, without renaming stored plans or device
+payloads. Long names wrap within the existing layout.
+
+Verification: the production build, eight-catalog consistency check and 64
+synthetic-IPC Chromium checks passed. Focused checks cover navigation, reloads,
+name-change events, blank names, missing plans, imported names, onboarding and
+translated plan creation. Prism's route matrix passed in light and dark at 320,
+360, 375, 390, 414, 430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920
+and 2560px; short viewports at 537x740, 913x480 and 667x375 and 200% text at
+320, 820 and 1440px also passed. Personalized-plan screenshots at 320px light
+and 1440px dark and a long-name screenshot at 320px dark were inspected. Native
+WebViews, physical devices and live providers were not tested. The referenced
+foundations and components documents remain absent.
+
+## Connection Settings and Plan Cleanup, 2026-11-17
+
+Watch connection no longer links to the training plan. Device sync exposes its
+sync action and GitHub connection form directly, without More options,
+Connection settings disclosures or sync diagnostics. Device and Strava forms
+share token-based spacing; Strava credential and connection actions use an
+equal-width two-column grid, stacking at 600px and below. Existing credential
+handling, failed drafts, provider permissions and replacement guards are kept.
+
+Training data is now Plans and scheduled training. Both cleanup paths explicitly
+state that they are not device-only: they attempt updates to connected devices,
+COROS and calendar feeds. The existing detailed scope and destructive confirmation
+remain. The current-plan confirmation uses the renamed settings section. FAQ
+pages no longer show the app version; About and updates still does. Copy is
+updated across all eight language catalogs.
+
+Verification: the production build, catalog consistency check, 41 focused
+synthetic-IPC Chromium checks and the end-current-plan guard passed. The 40-case
+Prism matrix passed: light/dark at 320, 360, 375, 390, 414, 430, 600, 768, 820,
+1024, 1280, 1366, 1440, 1600, 1920 and 2560px, short viewports at 537x740,
+913x480 and 667x375, 820px detail views, and 200% text at 320, 820 and 1440px.
+The enlarged-text checks were extended to the edited settings pages and passed
+again. Device-sync and connected-Strava checks cover 320, 390, 768, 820 and
+1440px in both themes; 320px light and 1440px dark screenshots were inspected.
+All eight locales passed text/page-overflow checks for device sync, connected
+Strava, plan cleanup and Help at 320px dark and 1440px light (64 combinations).
+
+Four broader checks fail identically against an isolated unmodified HEAD:
+the two 320px button-family checks cannot find a session tile, and both
+information-dialog checks cannot find Data for readiness on the Health route.
+No native WebViews, physical devices or live providers were tested. The
+referenced foundations and components documents remain absent.
+
 ## Single Sync Notification, 2026-11-17
 
 A sync's result or background failure appears in its existing progress notice,

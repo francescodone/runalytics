@@ -1,5 +1,87 @@
 # Prism Motion
 
+## Animated Icon Ownership
+
+Production glyphs use the catalog-first adapter in `src/desk/animated-icons.tsx`.
+`icon-catalog.ts` explicitly imports selected UseAnimations assets; `icons.tsx`
+keeps existing component call sites on the shared playback path. Runner, plain
+close, cycling, strength, flame, mountain, rest, palette, language, unlink, QR,
+contrast, checkered finish and brand artwork uses app-authored named-part recipes
+in `custom-icons.tsx`. Those recipes retain source attribution and the existing
+brand geometry; they are not UseAnimations catalog exports. Prism still owns
+control, selection, layout, disclosure and overlay physics. Icon playback never
+delays an action/navigation, adds a focus target or changes a control's reserved
+footprint.
+
+The runner takes two alternating steps within the shared 560ms replay, with
+connected knee/elbow joints, a small body bob and opposing arm swing. Its clock
+is linear so both steps have an even cadence; the joint curves supply their own
+acceleration. Close is a plain, unboxed X throughout its brief 180ms feedback
+pulse, without a spin, plus morph or disappearing stroke. Both settle to their
+original SVG pose and use that same artwork when motion is disabled.
+
+`Button` and `IconButton` accept a semantic `icon`, optional `iconSize` and
+`iconPosition` (`start` by default). `ControlAnimation` composes the original
+native host: call its handler first, then activation, honoring `preventDefault`.
+It bridges the package's public render-prop callback to the real accepted event;
+it never dispatches a synthetic click or uses a private player API. `AnimatedIcon`
+also covers existing glyph children, decorative headings, activity rows and badge
+artwork. One shared registry supplies fine-pointer hover, keyboard-focus and
+accepted-activation previews without invoking the control's command. Icon error
+boundaries and static-state changes never replace the focused native host.
+
+`Select` and `CheckInput` keep actual native selects/inputs, labels, refs, keyboard
+operation and form submission; only their artwork is replaced. Checkbox, radio
+and toggle players follow checked state rather than maintaining their own toggle.
+Disclosure orientation follows real `aria-expanded`/native details state through
+shared styling, not route-specific transforms. Native picker popup chrome remains
+OS-owned. Search retains the library's search artwork with a short original accent
+instead of morphing an idle search field into an unrelated clear action.
+
+`StatusIcon` loops only for actual `pending` work. Success/error are static unless
+`play` identifies a new command outcome; repeated outcomes have distinct sequence
+keys. Historical done/error stage snapshots do not replay. Decorative/reward
+artwork plays on first eligible visibility, not ordinary rerenders. Clips use
+`speed` to cap action replay at `--motion-icon-replay` (the surface duration) and
+outcomes at `--motion-icon-result` (the feedback duration). Original SVG recipes
+share those timing/easing tokens and cancel rather than queue on repeat input.
+Pending clips retain native playback speed: their multi-rotation timeline is not
+compressed into a one-second loop. Header sync uses that same pending asset,
+without additional CSS rotation. Shorter clips are not stretched. The normal
+1000ms action-result hold is unchanged.
+
+`MotionSystem` shares visibility/preferences and delegated interaction listeners
+rather than global observers/listeners per icon. Hidden documents, clipped or
+offscreen slots, inert/exiting content, React Activity teardown, reduced motion
+and forced colors replace players with same-size, same-source static SVGs.
+`icon-posters.json` contains selected bundled library exports and captured library
+frames only, with per-instance definition IDs and inherited theme colours; custom
+players settle to their unchanged source SVG. Interrupted one-shots are consumed,
+so returning does not replay stale outcomes/rewards. Still-pending work may resume.
+Custom native animations restore all owned SVG styles on teardown. Actual QR
+payload images, data charts, route geometry, progress rings and palette swatches
+remain data, not decorative catalog replacements. Map icon portals retain the
+shared React provider and map-owned geographic/control hosts.
+
+All assets remain local/offline; MIT notices ship as
+`public/useanimations-LICENSE.txt` and `public/tabler-LICENSE.txt`. Existing Tabler source geometry is retained only
+where it supplies custom artwork or legacy regression contracts, not as an
+unrelated catalog fallback. Do not import the entire animation/poster catalog.
+
+Native iOS tab activation retains UIKit navigation, selection, layout, tint and
+accessibility ownership. Public item-image updates supply bounded app-authored
+560ms motion after the existing intent is sent; no private UIKit view inspection
+or web-navigation replacement is involved. Calendar/chart/trophy retain their SF
+Symbols and shared easing. The native runner draws the same articulated two-step
+gait and resting pose as the web glyph, using an even linear clock, connected
+knees/elbows and opposing arms inside the existing symbol image metrics. Native
+lifecycle and Reduce Motion interruptions restore that same resting artwork
+without stale replay. In-app close controls are shared React/WebView controls and
+already use the plain-X feedback; this plugin has no separate native close glyph.
+These native custom animations are not React/library players; native
+compilation/simulator checks are separate from synthetic-IPC browser tests.
+OS-owned Dock/tray/window and picker artwork remains unchanged.
+
 ## Shared Presets
 
 `src/desk/motion.ts` is the shared reference for animation targets and timing.

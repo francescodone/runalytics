@@ -1,6 +1,6 @@
 import { t, text, decimal, trainingMessage, date as fmtDateDMY, distance as fmtKm, timeRange as fmtTimeRange } from "./i18n";
 import { useState } from "react";
-import { IconCheck } from "@tabler/icons-react";
+import { IconCheck } from "./icons";
 import { tauri, fmtPace, estimatedTimeRange } from "../lib/ipc";
 import type { PlanProposal } from "../lib/types";
 import { useCommand, useRemote } from "./data";

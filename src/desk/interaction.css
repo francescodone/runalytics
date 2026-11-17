@@ -17,6 +17,26 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .day-sessions, .day-lane, .month-day, .mobile-date-ribbon button { transition: background-color var(--motion-feedback) var(--motion-settle), box-shadow var(--motion-feedback) var(--motion-settle); }
 .day-lane[data-drop-target], .month-day[data-drop-target], .mobile-date-ribbon button[data-drop-target] { background: var(--desk-selection); box-shadow: inset 0 0 0 2px var(--desk-action); }
 .button-content { transition: opacity var(--motion-feedback) var(--motion-settle); }
+.animated-icon { --ua-knockout: var(--control-surface, var(--desk-surface)); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 var(--icon-size); width: var(--icon-size); height: var(--icon-size); vertical-align: middle; pointer-events: none; color: inherit; }
+.animated-icon > span, .animated-icon svg { display: block; width: 100%; height: 100%; }
+.stage-line > .animated-icon, .error-notice > .animated-icon, .desk-loading > .animated-icon { flex-shrink: 0; }
+.desk-brand-icon > .animated-icon { width: 100%; height: 100%; }
+.animated-icon[data-icon="chevronDown"][data-icon-state] { rotate: 0deg; transition: rotate var(--motion-feedback) var(--motion-settle); }
+.animated-icon[data-icon="chevronDown"][data-icon-state="true"] { rotate: 180deg; }
+@media (prefers-reduced-motion: reduce) { .animated-icon[data-icon="chevronDown"][data-icon-state] { transition: none; } }
+.native-select { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; width: 100%; max-width: 100%; }
+.native-select > select { grid-area: 1 / 1; width: 100%; min-width: 0; }
+.native-select > .animated-icon { grid-area: 1 / 1; align-self: center; justify-self: end; margin-inline-end: 12px; color: var(--desk-muted); }
+.native-select:has(select:disabled) > .animated-icon { visibility: hidden; }
+.native-check { position: relative; display: inline-block; flex: none; width: 20px; height: 20px; min-width: 20px; vertical-align: middle; color: var(--desk-action); }
+.native-check[data-kind="toggle"] { width: 40px; height: 24px; }
+.native-check > input.native-check-input { position: absolute; inset: 0; appearance: none; -webkit-appearance: none; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; background: transparent; border: 0; border-radius: var(--radius-control); box-shadow: none; cursor: inherit; }
+.native-check > input.native-check-input::before { display: none; }
+.native-check[data-kind="radio"] > input { border-radius: 50%; }
+.native-check > .animated-icon { position: absolute; top: 50%; left: 50%; translate: -50% -50%; }
+.native-check:has(input:disabled) { opacity: var(--disabled-opacity); }
+.palette-options .native-check { z-index: 1; color: #fff; }
+@media (forced-colors: active) { .native-check, .palette-options .native-check { color: CanvasText; } .native-check > input.native-check-input:focus-visible { outline-color: Highlight; } }
 .button-result { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .desk-button[data-result] .button-content { opacity: 0; }
 .desk-button[data-result="error"] { box-shadow: inset 0 0 0 2px var(--desk-danger); }
@@ -213,13 +233,12 @@ progress { accent-color: var(--desk-action); }
   }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary)[data-aura-tracking="true"]:hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(.is-dragging) {
+  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile))[data-aura-tracking="true"]:hover:not(:active):not(:disabled):not([aria-disabled="true"]):not(.is-dragging) {
     transform: perspective(var(--surface-perspective, 1200px)) scale(.998) rotateX(calc(var(--aura-tilt-x, 0deg) * var(--surface-tilt-strength, 1))) rotateY(calc(var(--aura-tilt-y, 0deg) * var(--surface-tilt-strength, 1)));
   }
-  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):active:not(:disabled):not([aria-disabled="true"]):not(.is-dragging) { transform: perspective(var(--surface-perspective, 1200px)) rotateX(calc(var(--aura-tilt-x, 0deg) * var(--surface-tilt-strength, 1) * 1.35)) rotateY(calc(var(--aura-tilt-y, 0deg) * var(--surface-tilt-strength, 1) * 1.35)); }
+  :is(button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label, summary):not(:where(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile)):active:not(:disabled):not([aria-disabled="true"]):not(.is-dragging) { transform: perspective(var(--surface-perspective, 1200px)) rotateX(calc(var(--aura-tilt-x, 0deg) * var(--surface-tilt-strength, 1) * 1.35)) rotateY(calc(var(--aura-tilt-y, 0deg) * var(--surface-tilt-strength, 1) * 1.35)); }
 }
-.plan-roadmap, .activity-library { padding: var(--space-3); }
-.plan-roadmap { padding-inline: var(--space-6); }
+.plan-roadmap, .activity-library { padding: var(--space-3) 0; }
 :is(.session-tile, .activity-row, .roadmap-row, .settings-task-list a) {
   --card-fill: color-mix(in srgb, var(--session-color, var(--desk-action)) 4%, var(--control-surface));
   --surface-tilt-strength: 20;
@@ -228,7 +247,6 @@ progress { accent-color: var(--desk-action); }
 }
 :is(.session-tile.selected, .activity-row[aria-pressed="true"], .roadmap-row.is-current) { --card-fill: var(--state-selected); }
 :is(.roadmap-row, .activity-row, .settings-task-list a) { --surface-tilt-strength: 3; --surface-perspective: 1200px; }
-@media (max-width: 800px) { .plan-roadmap { padding-inline: var(--space-3); } .activity-library { padding-inline: var(--space-1); } }
 :is(.desk-button, .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label) { position: relative; }
 .desk-button .button-content { position: relative; }
 :is(.session-tile, .activity-row, .roadmap-row, .settings-task-list a, .text-button, summary) {
@@ -331,10 +349,56 @@ progress { accent-color: var(--desk-action); }
   }
   :is(button, .desk-button, .desk-navigation a, .horizon-switch a, .settings-task-list a, .choice-row label, .palette-options label):is(:active, [data-aura-pressed="true"])::after { opacity: 1; transition-duration: var(--motion-press); }
 }
+/* Continuous lists opt out of the optical button frame without replacing their native controls or layout motion. */
+:root :is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile):not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
+  --button-sheen: none;
+  --button-aura: none;
+  --material-aura: none;
+  --shadow-button: none;
+  --shadow-button-hover: none;
+  --shadow-button-pressed: none;
+  --shadow-button-selected: none;
+  --button-glass-filter: none;
+  --state-press-scale: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  padding-inline: var(--space-2);
+  background: var(--list-row-fill, transparent);
+  border: 0;
+  border-bottom: var(--list-row-divider, var(--control-border)) solid var(--desk-line);
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  outline-offset: calc(-1 * var(--focus-offset));
+}
+:is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile):last-of-type { --list-row-divider: 0px; }
+:is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile):focus-visible { --list-row-fill: var(--state-hover); }
+@media (hover: hover) and (pointer: fine) {
+  :is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile):hover { --list-row-fill: var(--state-hover); }
+}
+:is(.roadmap-row[aria-current], .activity-row[aria-pressed="true"], .day-itinerary .session-tile.selected),
+:is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile):is(:active, [data-aura-pressed="true"]) { --list-row-fill: var(--button-selected-surface); }
+:root :is(.roadmap-row, .activity-row, .settings-task-list a, .day-itinerary .session-tile)::after { display: none; }
+
 @media (min-width: 801px) {
   .notification-viewport { left: auto; right: max(calc(var(--shell-inset) + var(--space-4)), calc((100vw - var(--content-max)) / 2 + var(--shell-inset) + var(--space-4))); bottom: calc(var(--shell-inset) + var(--space-4)); margin-inline: 0; width: min(420px, calc(100% - var(--navigation-width) - 2 * var(--shell-inset) - var(--shell-gap) - 2 * var(--space-4))); }
 }
 @media (max-width: 800px) {
+  :root .month-board .month-number:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) {
+    --shadow-button: none;
+    --shadow-button-hover: none;
+    --shadow-button-pressed: none;
+    --shadow-button-selected: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    outline-offset: calc(-1 * var(--focus-offset));
+  }
+  :root .month-board .month-number::after { display: none; }
   .desk-dialog, .desk-dialog.wide { width: 100%; max-width: none; max-height: calc(100dvh - 20px - env(safe-area-inset-top)); margin: auto auto 0; border-radius: var(--radius-overlay) var(--radius-overlay) 0 0; }
   .dialog-surface { padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
   .dialog-grip { display: grid; place-items: center; height: 24px; touch-action: none; cursor: grab; }

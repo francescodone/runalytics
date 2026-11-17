@@ -1,9 +1,10 @@
 import { t } from "./i18n";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { AnimatedIcon, type AnimatedIconName } from "./animated-icons";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { IconFocus2, IconPlus, IconMinus } from "@tabler/icons-react";
 import type { HeatPoint, Settings, TrackPoint } from "../lib/types";
 import { IconButton } from "./ui";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -11,7 +12,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 const protocol = new Protocol();
 maplibregl.addProtocol("pmtiles", protocol.tile);
 
-const FLAG_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path class="flag-check" d="M0 0h6v6H0zM12 0h6v6h-6zM6 6h6v6H6zM18 6h6v6h-6zM0 12h6v6H0zM12 12h6v6h-6zM6 18h6v6H6zM18 18h6v6h-6z"/></svg>';
+type MapIconHost = { name: AnimatedIconName; node: HTMLElement; size: number };
 function themeColor(name: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
@@ -28,6 +29,7 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const [failed, setFailed] = useState(false);
+  const [iconHosts, setIconHosts] = useState<MapIconHost[]>([]);
   const fit = useRef(() => {});
   useEffect(() => {
     const points = (heat ?? track).filter(point => Number.isFinite(point.lon) && Number.isFinite(point.lat) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180);
@@ -55,6 +57,9 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
       attribution.classList.remove("maplibregl-compact-show");
       instance.off("sourcedata", collapseInitialAttribution);
     };
+    const attribution = host.current.querySelector<HTMLElement>(".maplibregl-ctrl-attrib-button");
+    if (attribution) attribution.classList.add("animated-map-attribution");
+    setIconHosts(attribution ? [{ name: "info", node: attribution, size: 14 }] : []);
     instance.on("sourcedata", collapseInitialAttribution);
     collapseInitialAttribution();
     map.current = instance;
@@ -106,9 +111,9 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
       finish.className = "route-marker route-marker-end";
       finish.setAttribute("role", "img");
       finish.setAttribute("aria-label", t("Route finish"));
-      finish.innerHTML = FLAG_SVG;
       new maplibregl.Marker({ element: start, anchor: "center" }).setLngLat(coordinates[0]).addTo(instance);
       new maplibregl.Marker({ element: finish, anchor: "center" }).setLngLat(coordinates[coordinates.length - 1]).addTo(instance);
+      setIconHosts(previous => [...previous, { name: "circle", node: start, size: 24 }, { name: "finishFlag", node: finish, size: 16 }]);
       fit.current();
       if (reducedMotion.matches) { revealRoute(1); return; }
       revealRoute(0);
@@ -132,7 +137,7 @@ export default function RouteMap({ track, heat, settings }: { track: TrackPoint[
     });
     const resize = new ResizeObserver(() => instance.resize());
     resize.observe(host.current);
-    return () => { cancelAnimationFrame(animationFrame); themeObserver.disconnect(); reducedMotion.removeEventListener("change", finishForReducedMotion); resize.disconnect(); instance.remove(); map.current = null; };
+    return () => { cancelAnimationFrame(animationFrame); themeObserver.disconnect(); reducedMotion.removeEventListener("change", finishForReducedMotion); resize.disconnect(); setIconHosts([]); instance.remove(); map.current = null; fit.current = () => {}; };
   }, [track, heat, settings.pmtilesPath]);
-  return <figure className="route-figure"><div ref={host} className="route-map" role="region" aria-label={heat ? t("Training route heatmap") : t("Recorded GPS route")} /><div className="route-controls"><IconButton label={t("Zoom in")} onClick={() => map.current?.zoomIn({ duration: 0 })}><IconPlus size={18} /></IconButton><IconButton label={t("Zoom out")} onClick={() => map.current?.zoomOut({ duration: 0 })}><IconMinus size={18} /></IconButton><IconButton label={heat ? t("Fit training area") : t("Fit route")} onClick={() => fit.current()}><IconFocus2 size={18} /></IconButton></div>{failed && <figcaption>{t("Map tiles unavailable. The recorded route remains available when the map renderer is supported.")}</figcaption>}</figure>;
+  return <figure className="route-figure"><div ref={host} className="route-map" role="region" aria-label={heat ? t("Training route heatmap") : t("Recorded GPS route")} />{iconHosts.map(({ name, node, size }) => createPortal(<AnimatedIcon name={name} size={size} />, node, name))}<div className="route-controls"><IconButton label={t("Zoom in")} icon="zoomIn" onClick={() => map.current?.zoomIn({ duration: 0 })} /><IconButton label={t("Zoom out")} icon="zoomOut" onClick={() => map.current?.zoomOut({ duration: 0 })} /><IconButton label={heat ? t("Fit training area") : t("Fit route")} icon="focus" onClick={() => fit.current()} /></div>{failed && <figcaption>{t("Map tiles unavailable. The recorded route remains available when the map renderer is supported.")}</figcaption>}</figure>;
 }

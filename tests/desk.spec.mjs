@@ -5,6 +5,377 @@ import { installDeskFixture } from "./desk.fixture.mjs";
 
 test.beforeEach(async ({ page }) => installDeskFixture(page));
 
+async function deferAnimatedSettings(page) {
+  await page.addInitScript(() => {
+    window.__animatedSettingsAttempts = 0;
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "save_settings") {
+        window.__animatedSettingsAttempts++;
+        await new Promise(resolve => { window.__releaseAnimatedSettings = resolve; });
+      }
+      return invoke(command, args);
+    };
+    window.__animatedDocumentHidden = false;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => window.__animatedDocumentHidden });
+  });
+}
+
+async function animatedSvgFrames(icon, count = 18) {
+  return icon.evaluate(async (element, count) => {
+    const frames = [];
+    for (let index = 0; index < count; index++) {
+      await new Promise(requestAnimationFrame);
+      const svg = element.querySelector("[data-useanimations] svg");
+      frames.push(svg ? [...svg.querySelectorAll("path, g, circle, ellipse, line, polyline, rect")].map(node =>
+        ["d", "transform", "opacity", "stroke-dashoffset", "stroke-dasharray", "cx", "cy", "r"].map(attribute => node.getAttribute(attribute)).join("|")
+      ).join(";") : null);
+    }
+    return frames;
+  }, count);
+}
+
+async function expectStaticAnimatedIcon(icon) {
+  await expect(icon).toHaveAttribute("data-icon-playback", "static");
+  await expect(icon.locator("[data-useanimations]")).toHaveCount(0);
+  await expect(icon.locator(":scope > svg")).toHaveCount(1);
+  await expect(icon).toHaveAttribute("aria-hidden", "true");
+}
+
+test("UseAnimations pending SVG advances through success, error and keyboard retry without resizing or duplicate writes", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await deferAnimatedSettings(page);
+  await page.goto("/desk.html#settings/thresholds");
+  const save = page.getByRole("button", { name: "Save boundaries", exact: true });
+  await save.scrollIntoViewIfNeeded();
+  await page.evaluate(() => document.fonts.ready);
+  const layout = () => save.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }));
+  const resting = await layout();
+  const initialTolerance = Number(await page.getByLabel("Pace tolerance (seconds/km)").inputValue());
+  const attempts = () => page.evaluate(() => window.__animatedSettingsAttempts);
+  const writes = () => page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_settings"));
+  for (const [index, outcome] of ["success", "error", "success"].entries()) {
+    await page.evaluate(outcome => { window.__deskFail = outcome === "error" ? "save_settings" : ""; }, outcome);
+    if (index === 1) await page.getByLabel("Pace tolerance (seconds/km)").fill("5");
+    if (index === 0) await save.click();
+    else await save.press("Enter");
+    await expect(save).toBeDisabled();
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    await expect(save).toHaveAccessibleName("Save boundaries");
+    expect(await layout()).toEqual(resting);
+    const pending = save.locator('.animated-icon[data-icon="pending"]');
+    await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+    const frames = await animatedSvgFrames(pending, 24);
+    expect(frames.every(Boolean)).toBe(true);
+    expect(new Set(frames).size).toBeGreaterThan(2);
+    // Native disabled buttons must reject both programmatic and physical activation.
+    await save.evaluate(element => { element.click(); element.focus(); });
+    await page.keyboard.press("Enter");
+    await expect.poll(attempts).toBe(index + 1);
+    await page.evaluate(() => window.__releaseAnimatedSettings());
+    await expect(save).toHaveAttribute("data-result", outcome);
+    await expect(save).toBeEnabled();
+    await expect(save).toHaveAccessibleName("Save boundaries");
+    await expect(save.locator(`.button-result .animated-icon[data-icon="${outcome}"]`)).toHaveAttribute("aria-hidden", "true");
+    await expect(save.locator('[data-icon="pending"]')).toHaveCount(0);
+    expect(await layout()).toEqual(resting);
+    await expect.poll(async () => (await writes()).length).toBe(index + 1);
+    if (outcome === "error") {
+      await expect(page.getByRole("alert")).toContainText("Unable to save");
+      await expect(page.getByLabel("Pace tolerance (seconds/km)")).toHaveValue("5");
+    } else await expect(page.getByRole("status")).toContainText("Training boundaries saved");
+  }
+  expect((await writes()).map(call => call.args.settings.thresholds.paceToleranceSecKm)).toEqual([initialTolerance, 5, 5]);
+});
+
+test("UseAnimations identical result events replay without changing names, geometry or operation counts", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/desk.html#settings/thresholds");
+  const save = page.getByRole("button", { name: "Save boundaries", exact: true });
+  await save.scrollIntoViewIfNeeded();
+  await page.evaluate(() => document.fonts.ready);
+  await save.click();
+  await expect(save).toHaveAttribute("data-result", "success");
+  const layout = await save.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }));
+  for (const ok of [true, false]) {
+    await save.evaluate((element, ok) => element.dispatchEvent(new CustomEvent("desk:action-result", { detail: { ok } })), ok);
+    const state = ok ? "success" : "error";
+    const icon = save.locator(`.button-result .animated-icon[data-icon="${state}"][data-icon-playback="result"]`);
+    await expect(icon).toHaveCount(1);
+    const previous = await icon.elementHandle();
+    await save.evaluate((element, ok) => element.dispatchEvent(new CustomEvent("desk:action-result", { detail: { ok } })), ok);
+    await expect.poll(() => icon.evaluate((element, previous) => element !== previous, previous)).toBe(true);
+    const frames = await animatedSvgFrames(icon, 12);
+    expect(frames.every(Boolean)).toBe(true);
+    expect(new Set(frames).size).toBeGreaterThan(1);
+    await page.waitForTimeout(100);
+    const settled = await animatedSvgFrames(icon, 8);
+    expect(settled.every(Boolean)).toBe(true);
+    expect(new Set(settled).size).toBe(1);
+    await previous.dispose();
+    await expect(save).toHaveAccessibleName("Save boundaries");
+    expect(await save.evaluate(element => ({ width: element.offsetWidth, height: element.offsetHeight }))).toEqual(layout);
+  }
+  await expect(save).not.toHaveAttribute("data-result");
+  await expect(save.locator(".button-result")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_settings").length)).toBe(1);
+});
+
+test("UseAnimations live reduced motion, hidden documents and clipped scrolling cancel playback without stale result replay", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await deferAnimatedSettings(page);
+  await page.goto("/desk.html#settings/thresholds");
+  const save = page.getByRole("button", { name: "Save boundaries", exact: true });
+  for (const interruption of ["reduced-motion", "hidden-document", "offscreen"]) {
+    const suspend = async () => {
+      if (interruption === "reduced-motion") await page.emulateMedia({ reducedMotion: "reduce" });
+      if (interruption === "hidden-document") await page.evaluate(() => { window.__animatedDocumentHidden = true; document.dispatchEvent(new Event("visibilitychange")); });
+      if (interruption === "offscreen") {
+        await page.locator("#workspace").evaluate(element => element.scrollTo({ top: 0, behavior: "instant" }));
+        await expect(save).not.toBeInViewport();
+      }
+    };
+    const resume = async () => {
+      if (interruption === "reduced-motion") await page.emulateMedia({ reducedMotion: "no-preference" });
+      if (interruption === "hidden-document") await page.evaluate(() => { window.__animatedDocumentHidden = false; document.dispatchEvent(new Event("visibilitychange")); });
+      if (interruption === "offscreen") await save.scrollIntoViewIfNeeded();
+    };
+    await save.click();
+    const pending = save.locator('.animated-icon[data-icon="pending"]');
+    await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+    await suspend();
+    await expectStaticAnimatedIcon(pending);
+    expect(new Set(await animatedSvgFrames(pending, 6))).toEqual(new Set([null]));
+    await resume();
+    await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+    expect(new Set(await animatedSvgFrames(pending, 8)).size).toBeGreaterThan(1);
+    await page.evaluate(() => window.__releaseAnimatedSettings());
+    await expect(save).toHaveAttribute("data-result", "success");
+    const result = save.locator('.button-result .animated-icon[data-icon="success"]');
+    await expect(result).toHaveAttribute("data-icon-playback", "result");
+    await suspend();
+    await expectStaticAnimatedIcon(result);
+    await resume();
+    await expectStaticAnimatedIcon(result);
+    await expect(save).toHaveAccessibleName("Save boundaries");
+    await expect(save).not.toHaveAttribute("data-result");
+    await expect(save.locator(".button-result")).toHaveCount(0);
+  }
+  expect(await page.evaluate(() => window.__animatedSettingsAttempts)).toBe(3);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_settings").length)).toBe(3);
+});
+
+test("UseAnimations inert and retained Activity controls dispose players while preserving drafts", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await deferAnimatedSettings(page);
+  await page.goto("/desk.html#settings/thresholds");
+  const save = page.getByRole("button", { name: "Save boundaries", exact: true });
+  const draft = page.getByLabel("Pace tolerance (seconds/km)");
+  await draft.fill("7");
+  await save.click();
+  const pending = save.locator('.animated-icon[data-icon="pending"]');
+  await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+  await save.evaluate(element => { element.closest("form").inert = true; });
+  const retainedSave = page.locator('.settings-editor button[type="submit"]');
+  await expectStaticAnimatedIcon(retainedSave.locator('[data-icon="pending"]'));
+  await retainedSave.evaluate(element => { element.closest("form").inert = false; });
+  await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+  const original = await save.elementHandle();
+  await page.getByRole("link", { name: "Training", exact: true }).click();
+  await expect(page.locator(".workspace-heading h1")).toHaveText("Training");
+  expect(await original.evaluate(element => element.isConnected && !element.checkVisibility())).toBe(true);
+  await expect(retainedSave.locator("[data-useanimations]")).toHaveCount(0);
+  await page.evaluate(() => window.__releaseAnimatedSettings());
+  await expect.poll(() => page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_settings").length)).toBe(1);
+  await page.goBack();
+  await expect(save).toBeVisible();
+  await expect(draft).toHaveValue("7");
+  expect(await save.evaluate((element, original) => element === original, original)).toBe(true);
+  await expect(save.locator('.button-result [data-useanimations]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__animatedSettingsAttempts)).toBe(1);
+  await original.dispose();
+});
+
+test("UseAnimations action icons preserve keyboard, touch and focus semantics without duplicate activation", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "no-preference" });
+  const page = await context.newPage();
+  try {
+    await installDeskFixture(page);
+    await page.goto("/desk.html#help");
+    const opener = page.getByRole("button", { name: "A recent workout is missing", exact: true });
+    await opener.focus();
+    const icon = opener.locator('.animated-icon[data-icon="next"]');
+    await expect(icon).toHaveAttribute("data-icon-playback", "ready");
+    await expect(icon).toHaveAttribute("aria-hidden", "true");
+    await expect(icon.locator('[tabindex], button, a, [role="button"]')).toHaveCount(0);
+    const focusPreview = await animatedSvgFrames(icon, 48);
+    expect(focusPreview.every(Boolean)).toBe(true);
+    expect(new Set(focusPreview).size).toBeGreaterThan(1);
+    expect(new Set(focusPreview.slice(-6)).size).toBe(1);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await opener.evaluate(element => { window.__animatedOpenings = 0; element.addEventListener("click", () => window.__animatedOpenings++); });
+    await page.keyboard.down("Space");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.keyboard.up("Space");
+    const dialog = page.getByRole("dialog", { name: "A recent workout is missing", exact: true });
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => window.__animatedOpenings)).toBe(1);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await opener.tap();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    expect(await page.evaluate(() => window.__animatedOpenings)).toBe(2);
+    await page.getByRole("button", { name: "Close A recent workout is missing", exact: true }).tap();
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(opener).toHaveAccessibleName("A recent workout is missing");
+    expect(await page.evaluate(() => window.__deskCalls.filter(call => ["save_settings", "sync_now", "check_provider_api"].includes(call.command)))).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("UseAnimations packaged offline assets render moving SVG without remote animation requests", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await deferAnimatedSettings(page);
+  const remote = [];
+  const failures = [];
+  page.on("pageerror", error => failures.push(error.message));
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== "http://127.0.0.1:1500") {
+      remote.push(url.href);
+      return route.abort();
+    }
+    const pathname = url.pathname === "/" ? "/desk.html" : url.pathname;
+    const contentType = pathname.endsWith(".html") ? "text/html" : pathname.endsWith(".js") ? "text/javascript" : pathname.endsWith(".css") ? "text/css" : pathname.endsWith(".svg") ? "image/svg+xml" : pathname.endsWith(".woff2") ? "font/woff2" : "application/octet-stream";
+    await route.fulfill({ body: await readFile(new URL(`../dist${pathname}`, import.meta.url)), contentType });
+  });
+  await page.goto("/desk.html#settings/thresholds");
+  const save = page.getByRole("button", { name: "Save boundaries", exact: true });
+  await save.click();
+  const pending = save.locator('.animated-icon[data-icon="pending"]');
+  await expect(pending).toHaveAttribute("data-icon-playback", "pending");
+  const frames = await animatedSvgFrames(pending);
+  expect(frames.every(Boolean)).toBe(true);
+  expect(new Set(frames).size).toBeGreaterThan(2);
+  await page.evaluate(() => window.__releaseAnimatedSettings());
+  await expect(save).toHaveAttribute("data-result", "success");
+  await expect(save).toHaveAccessibleName("Save boundaries");
+  const modules = await page.evaluate(() => [...document.scripts].filter(script => script.src && script.type === "module").map(script => new URL(script.src).pathname));
+  expect(modules.length).toBeGreaterThan(0);
+  expect(modules.every(pathname => pathname.startsWith("/assets/"))).toBe(true);
+  expect(remote).toEqual([]);
+  expect(failures).toEqual([]);
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "save_settings").length)).toBe(1);
+});
+
+for (const width of [320, 1440]) for (const theme of ["light", "dark"]) {
+  test(`runner name appears with every training horizon at ${width}px ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(() => {
+      localStorage.setItem("runalytics.runnerName", "Ada");
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        return command === "current_plan" && result ? [{ ...result[0], name: "Spring half marathon" }, result[1]] : result;
+      };
+    });
+    await page.goto(`/desk.html?theme=${theme}#training/plan`);
+    const label = page.locator(".training-context > div > .muted");
+    await expect(label).toHaveText("Ada's Spring half marathon");
+    await expect(page.locator(".workspace-heading")).not.toContainText("Ada");
+    await expect(page.locator(".workspace-heading")).not.toContainText("COROS connected");
+    await page.screenshot({ path: testInfo.outputPath("personalized-plan.png"), fullPage: true });
+    for (const horizon of ["Week", "Month"]) {
+      await page.getByRole("link", { name: horizon, exact: true }).click();
+      await expect(label).toHaveText("Ada's Spring half marathon");
+      await expect(page.locator(".workspace-heading")).not.toContainText("COROS connected");
+    }
+    for (const workspace of ["Activities", "Pace insights", "Milestones"]) {
+      await page.locator(".desk-navigation").getByRole("link", { name: workspace, exact: true }).click();
+      await expect(page.locator(".workspace-heading h1")).toHaveText(workspace);
+      await expect(page.locator(".workspace-heading")).not.toContainText("COROS connected");
+      await expect(page.locator("#workspace")).not.toContainText("Ada", { useInnerText: true });
+    }
+    for (const workspace of ["Settings", "Help"]) {
+      await page.getByRole("button", { name: workspace, exact: true }).click();
+      await expect(page.locator(".workspace-heading h1")).toHaveText(workspace);
+      await expect(page.locator(".workspace-heading")).not.toContainText("COROS connected");
+      await expect(page.locator("#workspace")).not.toContainText("Ada", { useInnerText: true });
+    }
+    await page.getByRole("link", { name: "Training", exact: true }).click();
+    await page.getByRole("link", { name: "Plan", exact: true }).click();
+    await expect(label).toHaveText("Ada's Spring half marathon");
+    await page.reload();
+    await expect(label).toHaveText("Ada's Spring half marathon");
+    await page.evaluate(() => {
+      localStorage.setItem("runalytics.runnerName", "AlexandertheGreat".repeat(4));
+      window.dispatchEvent(new Event("runalytics:runner-name-changed"));
+    });
+    await expect(label).toHaveText(`${"AlexandertheGreat".repeat(4)}'s Spring half marathon`);
+    expect(await page.evaluate(() => {
+      const workspace = document.getElementById("workspace");
+      return document.documentElement.scrollWidth <= innerWidth && workspace.scrollWidth <= workspace.clientWidth + 1;
+    })).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("long-personalized-plan.png"), fullPage: true });
+    await page.evaluate(() => {
+      localStorage.setItem("runalytics.runnerName", "  ");
+      window.dispatchEvent(new Event("runalytics:runner-name-changed"));
+    });
+    for (const horizon of ["Plan", "Week", "Month"]) {
+      await page.getByRole("link", { name: horizon, exact: true }).click();
+      await expect(label).toHaveText("Spring half marathon");
+    }
+  });
+}
+
+for (const width of [320, 801, 1440]) {
+  test(`week and month completion stats keep the same height at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    await page.clock.setFixedTime(new Date(2026, 10, 17, 12));
+    await page.goto(`/desk.html?theme=${width === 320 ? "light" : "dark"}#training/week`);
+    const summary = page.locator(".schedule-summary");
+    const metrics = summary.locator(":scope > span");
+    const positions = [];
+    for (const horizon of ["Week", "Month", "Week"]) {
+      await page.getByRole("link", { name: horizon, exact: true }).click();
+      await expect(metrics).toHaveCount(2);
+      await expect(summary).toContainText("sessions done");
+      const board = page.locator(horizon === "Month" ? ".month-board" : width <= 800 ? ".mobile-date-ribbon" : ".week-board");
+      await expect(board).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await page.locator("#workspace").evaluate(element => { element.scrollTop = 0; });
+      const geometry = await summary.evaluate(element => {
+        const toolbar = document.querySelector(".training-toolbar").getBoundingClientRect();
+        return { top: element.getBoundingClientRect().top, toolbarBottom: toolbar.bottom, metrics: [...element.querySelectorAll(":scope > span")].map(metric => ({ top: metric.getBoundingClientRect().top, bottom: metric.getBoundingClientRect().bottom })) };
+      });
+      expect(geometry.top).toBeGreaterThanOrEqual(geometry.toolbarBottom);
+      expect(geometry.metrics[0].top).toBeCloseTo(geometry.metrics[1].top, 0);
+      expect(geometry.metrics[0].bottom).toBeLessThan((await board.boundingBox()).y);
+      positions.push(geometry.metrics.map(metric => metric.top));
+      await page.screenshot({ path: testInfo.outputPath(`completion-${horizon.toLowerCase()}.png`) });
+    }
+    for (const position of positions.slice(1)) {
+      expect(position[0]).toBeCloseTo(positions[0][0], 0);
+      expect(position[1]).toBeCloseTo(positions[0][1], 0);
+    }
+  });
+}
+
+test("runner name is omitted when no plan exists", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("runalytics.onboarding.complete", "1");
+    localStorage.setItem("runalytics.runnerName", "Ada");
+  });
+  await page.goto("/desk.html?noPlan=1#training/plan");
+  await expect(page.locator(".training-context > div > .muted")).toHaveText("Your training");
+  await expect(page.locator("#workspace")).not.toContainText("Ada");
+});
+
 for (const width of [320, 1440]) {
   const theme = width === 320 ? "light" : "dark";
   test(`workspace actions avoid generic duplicates at ${width}px`, async ({ page }, testInfo) => {
@@ -18,7 +389,6 @@ for (const width of [320, 1440]) {
     await page.getByRole("button", { name: "Settings", exact: true }).press("Enter");
     await page.locator('.settings-directory a[href="#settings/devices"]').click();
     await expect(page.getByText("Plan up to date", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "More options", exact: true }).click();
     const syncCalls = () => page.evaluate(() => window.__deskCalls.filter(call => call.command === "plan_sync_refresh").length);
     const beforeSync = await syncCalls();
     await page.getByRole("button", { name: "Sync now", exact: true }).click();
@@ -1182,8 +1552,15 @@ test.describe("plan freshness", () => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(`/desk.html?theme=${theme}#settings/devices`);
         await expect(page.getByText("Plan up to date", { exact: true })).toBeVisible();
-        await page.getByRole("button", { name: "More options", exact: true }).click();
         await expect(page.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled();
+        await expect(page.getByRole("button", { name: "More options", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Connection settings", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Sync diagnostics", exact: true })).toHaveCount(0);
+        await expect(page.getByLabel("GitHub token", { exact: true })).toBeVisible();
+        const save = page.getByRole("button", { name: "Save device connection", exact: true });
+        await expect(save).toBeVisible();
+        const formGap = await save.evaluate(element => element.getBoundingClientRect().top - element.closest("form").querySelector("input").getBoundingClientRect().bottom);
+        expect(formGap).toBeGreaterThanOrEqual(16);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         expect((await new AxeBuilder({ page }).include(".settings-editor").analyze()).violations).toEqual([]);
         await page.screenshot({ path: test.info().outputPath(`plan-sync-${width}-${theme}.png`), fullPage: true });
@@ -1340,9 +1717,24 @@ test.describe("Strava settings", () => {
     for (const theme of ["light", "dark"]) {
       test(`strava settings fit ${width}px ${theme}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
-        await page.goto(`/desk.html?theme=${theme}#settings/strava`);
+        await page.goto(`/desk.html?theme=${theme}&stravaReview=1#settings/strava`);
         await expect(page.getByRole("heading", { name: "Strava", exact: true })).toBeVisible();
         await expect(page.getByLabel("Strava Client ID", { exact: true })).toBeVisible();
+        const actions = page.locator(".settings-action-grid > button");
+        await expect(actions).toHaveCount(4);
+        const bounds = await actions.evaluateAll(elements => elements.map(element => {
+          const { x, y, width, height } = element.getBoundingClientRect();
+          return { x, y, width, height, overflow: element.scrollWidth - element.clientWidth };
+        }));
+        expect(Math.max(...bounds.map(rect => rect.width)) - Math.min(...bounds.map(rect => rect.width))).toBeLessThan(1);
+        expect(bounds.every(rect => rect.height >= 44 && rect.overflow <= 1)).toBe(true);
+        if (width > 600) {
+          expect(bounds[0].y).toBe(bounds[1].y);
+          expect(bounds[2].y).toBe(bounds[3].y);
+          expect(bounds[2].y).toBeGreaterThan(bounds[0].y);
+          expect(bounds[0].height).toBe(bounds[1].height);
+          expect(bounds[2].height).toBe(bounds[3].height);
+        } else expect(bounds.every((rect, index) => index === 0 || rect.y >= bounds[index - 1].y + bounds[index - 1].height + 8)).toBe(true);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         const accessibility = await new AxeBuilder({ page }).include(".settings-editor").analyze();
         expect(accessibility.violations).toEqual([]);
@@ -1350,6 +1742,222 @@ test.describe("Strava settings", () => {
       });
     }
   }
+});
+
+test.describe("animated icon feedback", () => {
+  async function svgFrames(root, selector, count = 24) {
+    return root.evaluate(async (element, { selector, count }) => {
+      const frames = [];
+      for (let frame = 0; frame < count; frame++) {
+        const icon = element.querySelector(selector);
+        const svg = icon?.querySelector("svg");
+        if (svg) frames.push({
+          icon: icon.dataset.icon,
+          player: Boolean(icon.querySelector("[data-useanimations] svg")),
+          geometry: JSON.stringify([...svg.querySelectorAll("[d], [transform], [stroke-dashoffset]")].map(node => ["d", "transform", "stroke-dashoffset", "opacity"].map(attribute => node.getAttribute(attribute)))),
+        });
+        await new Promise(requestAnimationFrame);
+      }
+      return frames;
+    }, { selector, count });
+  }
+
+  const expectPlayback = frames => {
+    const playerFrames = frames.filter(frame => frame.player);
+    expect(playerFrames.length).toBeGreaterThan(4);
+    expect(new Set(playerFrames.map(frame => frame.geometry)).size).toBeGreaterThan(2);
+  };
+  test("UseAnimations persistent navigation and utilities activate once by mouse, keyboard and touch without waiting for replay", async ({ browser, baseURL }) => {
+    const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "no-preference" });
+    const page = await context.newPage();
+    try {
+      await installDeskFixture(page);
+      await page.goto("/desk.html#journal");
+      await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+      await expect(page.locator(".brand-splash")).toHaveCount(0);
+      await page.evaluate(() => {
+        window.__iconNavigationClicks = [];
+        window.__iconNavigationRoutes = [];
+        document.addEventListener("click", event => {
+          const control = event.target.closest('.desk-navigation a, .desk-utilities button');
+          if (control?.querySelector(".animated-icon")) window.__iconNavigationClicks.push({ label: control.getAttribute("aria-label"), trusted: event.isTrusted, at: performance.now() });
+        }, true);
+        window.addEventListener("hashchange", () => {
+          window.__iconNavigationRoutes.push({ hash: location.hash, elapsed: performance.now() - window.__iconNavigationClicks.at(-1).at });
+        });
+      });
+      const actions = [
+        { control: page.locator('.desk-navigation a[href="#training"]'), icon: "calendar", heading: "Training", hash: "#training", input: "mouse" },
+        { control: page.locator('.desk-navigation a[href="#milestones"]'), icon: "milestones", heading: "Milestones", hash: "#milestones", input: "Enter" },
+        { control: page.locator('.desk-utilities button[aria-label="Help"]'), icon: "help", heading: "Help", hash: "#help", input: "Space" },
+        { control: page.locator('.desk-utilities button[aria-label="Settings"]'), icon: "settings", heading: "Settings", hash: "#settings", input: "touch" },
+      ];
+      const hosts = await Promise.all(actions.map(({ control }) => control.elementHandle()));
+      for (const [index, { control, icon, heading, hash, input }] of actions.entries()) {
+        const selector = `.animated-icon[data-icon="${icon}"]`;
+        await expect(control.locator(`${selector} [data-useanimations] svg`)).toBeAttached();
+        await control.focus();
+        const focusPreview = await svgFrames(control, selector, 48);
+        expect(focusPreview.every(frame => frame.player)).toBe(true);
+        expect(new Set(focusPreview.map(frame => frame.geometry)).size).toBeGreaterThan(1);
+        expect(new Set(focusPreview.slice(-6).map(frame => frame.geometry)).size).toBe(1);
+        expect(await page.evaluate(() => window.__iconNavigationClicks.length)).toBe(index);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await expect(control.locator(`${selector} > svg`)).toHaveCount(1);
+        await expect(control).toBeFocused();
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await expect(control.locator(`${selector} [data-useanimations] svg`)).toBeAttached();
+        await expect(control).toBeFocused();
+        const playback = svgFrames(control, selector, 60);
+        if (input === "mouse") await control.click();
+        else if (input === "touch") await control.tap();
+        else await control.press(input);
+        await expect(page).toHaveURL(new RegExp(`${hash}$`));
+        await expect(page.locator(".workspace-heading h1")).toHaveText(heading);
+        await expect(page.locator("#workspace")).toBeFocused();
+        const frames = await playback;
+        expectPlayback(frames);
+        expect(new Set(frames.slice(-8).map(frame => frame.geometry)).size).toBe(1);
+        expect(await control.evaluate((element, host) => element === host, hosts[index])).toBe(true);
+        await expect(control).toHaveAccessibleName(heading);
+        await expect(control.locator(`${selector} [tabindex], ${selector} button, ${selector} a`)).toHaveCount(0);
+        if (input === "mouse" || input === "Enter") await expect(control).toHaveAttribute("aria-current", "page");
+        else await expect(control).toHaveAttribute("aria-pressed", "true");
+      }
+      const routes = await page.evaluate(() => window.__iconNavigationRoutes);
+      expect(routes.map(route => route.hash)).toEqual(actions.map(action => action.hash));
+      expect(routes.every(route => route.elapsed < 300)).toBe(true);
+      expect(await page.evaluate(() => window.__iconNavigationClicks.map(({ label, trusted }) => ({ label, trusted })))).toEqual(actions.map(({ heading }) => ({ label: heading, trusted: true })));
+      expect(await page.evaluate(() => window.__deskCalls.filter(call => ["save_settings", "sync_now", "check_provider_api", "connect_provider", "plan_sync_push"].includes(call.command)))).toEqual([]);
+      for (const [index, { control }] of actions.entries()) {
+        expect(await control.evaluate((element, host) => element === host, hosts[index])).toBe(true);
+        await hosts[index].dispose();
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
+  for (const [width, theme] of [[320, "light"], [1440, "dark"]]) test(`UseAnimations notification loaders keep their native pace without stacked rotation ${width}px ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: theme });
+    await page.goto(`/desk.html?theme=${theme}#journal`);
+    await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    await emitStage(page, { op: "sync", target: "calendar", state: "working", lines: [{ target: "calendar", state: "working" }] });
+    const progress = page.getByRole("status", { name: "Plan sync progress", exact: true });
+    const icon = progress.locator('[data-icon="pending"]');
+    await expect(icon.locator("[data-useanimations] svg")).toBeAttached();
+    const pace = await icon.evaluate(async element => {
+      let previous = new Map();
+      let degrees = 0;
+      const started = performance.now();
+      while (performance.now() - started < 1200) {
+        await new Promise(requestAnimationFrame);
+        const current = new Map();
+        for (const group of element.querySelectorAll("g[transform]")) {
+          if (group.closest('g[display="none"]')) continue;
+          const matrix = new DOMMatrix(group.getAttribute("transform"));
+          const angle = Math.atan2(matrix.b, matrix.a) * 180 / Math.PI;
+          if (previous.has(group)) degrees += Math.abs(((angle - previous.get(group) + 540) % 360) - 180);
+          current.set(group, angle);
+        }
+        previous = current;
+      }
+      return { degreesPerSecond: degrees / ((performance.now() - started) / 1000), animations: element.getAnimations({ subtree: true }).length };
+    });
+    expect(pace.degreesPerSecond).toBeGreaterThan(60);
+    expect(pace.degreesPerSecond).toBeLessThan(900);
+    expect(pace.animations).toBe(0);
+    await page.screenshot({ path: testInfo.outputPath(`notification-loader-${width}-${theme}.png`) });
+    const bounds = await icon.boundingBox();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expectStaticAnimatedIcon(icon);
+    const reducedBounds = await icon.boundingBox();
+    expect(reducedBounds.width).toBeCloseTo(bounds.width, 1);
+    expect(reducedBounds.height).toBeCloseTo(bounds.height, 1);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(icon).toHaveAttribute("data-icon-playback", "pending");
+    await progress.getByRole("button", { name: "Dismiss notification" }).press("Enter");
+    await expect(progress).toHaveCount(0);
+  });
+
+  test("UseAnimations sync snapshots stay static while real stage transitions play once without stale outcome replay", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/desk.html#journal");
+    await expect(page.locator(".workspace-heading h1")).toHaveText("Activities");
+    await expect(page.locator(".brand-splash")).toHaveCount(0);
+    const progress = page.getByRole("status", { name: "Plan sync progress", exact: true });
+    const lines = [
+      { target: "db", state: "done" },
+      { target: "coros", state: "error", detail: "Watch unavailable" },
+      { target: "calendar", state: "working" },
+      { target: "gist", state: "waiting" },
+    ];
+    await emitStage(page, { op: "sync", target: "calendar", state: "working", lines });
+    await expect(progress.locator(".stage-line")).toHaveCount(4);
+    for (const row of [progress.locator(".stage-line").nth(0), progress.locator(".stage-line").nth(1)]) {
+      await expect(row.locator(".animated-icon > svg")).toHaveCount(1);
+      const frames = await svgFrames(row, ".animated-icon", 12);
+      expect(frames.every(frame => !frame.player)).toBe(true);
+      expect(new Set(frames.map(frame => frame.geometry)).size).toBe(1);
+    }
+    const calendar = progress.locator(".stage-line").nth(2);
+    const gist = progress.locator(".stage-line").nth(3);
+    const calendarHost = await calendar.elementHandle();
+    await expect(calendar.locator('[data-icon="pending"] [data-useanimations] svg')).toBeAttached();
+    const working = await svgFrames(calendar, ".animated-icon", 72);
+    expectPlayback(working.slice(0, 24));
+    expectPlayback(working.slice(-24));
+    for (const [row, target, state, icon] of [[calendar, "calendar", "done", "success"], [gist, "gist", "error", "error"]]) {
+      if (target === "gist") {
+        await emitStage(page, { op: "sync", target, state: "working" });
+        await expect(row.locator('[data-icon="pending"] [data-useanimations] svg')).toBeAttached();
+      }
+      const playback = svgFrames(row, ".animated-icon", 30);
+      await emitStage(page, { op: "sync", target, state });
+      await expect(row).toHaveClass(`stage-line stage-${state}`);
+      const frames = (await playback).filter(frame => frame.player && frame.icon === icon);
+      expectPlayback(frames);
+      expect(new Set(frames.slice(-5).map(frame => frame.geometry)).size).toBe(1);
+      lines.find(line => line.target === target).state = state;
+    }
+    expect(await calendar.evaluate((element, host) => element === host, calendarHost)).toBe(true);
+    const outcomes = progress.locator(".stage-line").filter({ has: page.locator("[data-useanimations]") });
+    const outcomePlayers = await outcomes.locator("[data-useanimations] svg").elementHandles();
+    expect(outcomePlayers.length).toBe(2);
+    await emitStage(page, { op: "sync", target: "gist", state: "error", lines });
+    await page.evaluate(() => window.dispatchEvent(new Event("runalytics:calendar-updated")));
+    for (const row of [calendar, gist]) {
+      const frames = await svgFrames(row, ".animated-icon", 18);
+      expect(frames.every(frame => frame.player)).toBe(true);
+      expect(new Set(frames.map(frame => frame.geometry)).size).toBe(1);
+    }
+    for (const player of outcomePlayers) expect(await player.evaluate(element => element.isConnected)).toBe(true);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(progress.locator("[data-useanimations]")).toHaveCount(0);
+    await page.evaluate(() => {
+      delete document.hidden;
+      delete document.visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("runalytics:calendar-updated"));
+    });
+    await emitStage(page, { op: "sync", target: "gist", state: "error", lines });
+    for (const row of [calendar, gist]) {
+      await expect(row.locator(".animated-icon > svg")).toHaveCount(1);
+      const frames = await svgFrames(row, ".animated-icon", 18);
+      expect(frames.every(frame => !frame.player)).toBe(true);
+      expect(new Set(frames.map(frame => frame.geometry)).size).toBe(1);
+    }
+    await expect(progress.locator(".stage-line [data-useanimations]")).toHaveCount(0);
+    await expect(progress.locator(".stage-line")).toHaveCount(4);
+    for (const player of outcomePlayers) await player.dispose();
+    await calendarHost.dispose();
+  });
 });
 
 test.describe("motion system", () => {
@@ -4206,9 +4814,9 @@ test("calendar settings never publish on read and retain blank credentials and s
   await expect(page.getByRole("checkbox", { name: "Sync this plan across devices" })).toHaveCount(0);
   expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "plan_sync_configure"))).toBe(false);
   await expect(page.getByRole("button", { name: "Import plan", exact:true })).toHaveCount(0);
-  await page.getByRole("button", { name:"More options", exact:true }).click();
-  await page.getByRole("button", { name:"Sync diagnostics", exact:true }).click();
-  await expect(page.getByText("synthetic-account-channel", {exact:true})).toBeVisible();
+  await expect(page.getByLabel("GitHub token", {exact:true})).toBeVisible();
+  await expect(page.getByRole("button", { name:"Sync diagnostics", exact:true })).toHaveCount(0);
+  await expect(page.getByText("synthetic-account-channel", {exact:true})).toHaveCount(0);
 });
 
 test("connection transfer QR encrypts credentials and enables device sync after review", async ({page}) => {
@@ -4265,7 +4873,10 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   await dialog.getByRole("button", {name:"Replace connections", exact:true}).click();
   await expect(dialog).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("runalytics.runnerName"))).toBe("Ada");
-  await expect(page.locator(".runner-greeting")).toHaveText("Hello, Ada");
+  await expect(page.locator(".workspace-heading")).not.toContainText("Ada");
+  await page.getByRole("link", { name: "Training", exact: true }).click();
+  await page.getByRole("link", { name: "Plan", exact: true }).click();
+  await expect(page.locator(".training-context > div > .muted")).toHaveText(/^Ada's .+/);
   const calls=await page.evaluate(() => window.__deskCalls);
   expect(calls.find(call => call.command === "save_calendar_publishing").args.password).toBe("synthetic-calendar-secret");
   expect(calls.find(call => call.command === "save_calendar_publishing").args.config.enabled).toBe(false);
@@ -4537,6 +5148,7 @@ for (const [state, action] of [["unpublished", "Sync now"], ["updateAvailable", 
   test(`device connections select one main action for ${state}`, async ({page}) => {
     await page.goto(`/desk.html?syncState=${state}${state === "otherPlan" ? "&syncConflict=1" : ""}#settings/devices`);
     await expect(page.locator(".settings-editor .desk-button.primary:visible")).toHaveCount(1);
+    await expect(page.getByLabel("GitHub token", {exact:true})).toBeVisible();
     await expect(page.getByRole("button", {name:action, exact:true})).toBeVisible();
     await expect(page.getByRole("button", {name:"Publish plan", exact:true})).toHaveCount(0);
     await expect(page.getByRole("button", {name:"Import plan", exact:true})).toHaveCount(0);
@@ -4550,7 +5162,7 @@ for (const [state, action] of [["unpublished", "Sync now"], ["updateAvailable", 
 
 test("device connections save credentials independently and retain failed drafts", async ({page}) => {
   await page.goto("/desk.html?syncSetup=1#settings/devices");
-  await page.getByRole("button", {name:"Set up device sync", exact:true}).click();
+  await expect(page.getByRole("button", {name:"Sync now", exact:true})).toBeDisabled();
   await page.getByLabel("GitHub token", {exact:true}).fill("synthetic-device-token");
   await page.evaluate(() => { window.__deskFail="plan_sync_configure"; });
   await page.getByRole("button", {name:"Save device connection", exact:true}).click();
@@ -4569,8 +5181,6 @@ test("device connections keep settings accessible when checks fail or prerequisi
   await page.addInitScript(() => { window.__deskFail="plan_sync_check"; });
   await page.goto("/desk.html#settings/devices");
   await expect(page.getByRole("button", {name:"Retry sync", exact:true})).toBeVisible();
-  await page.getByRole("button", {name:"More options", exact:true}).click();
-  await page.getByRole("button", {name:"Connection settings", exact:true}).click();
   await expect(page.getByLabel("GitHub token", {exact:true})).toBeVisible();
   await page.goto("/desk.html?noAccount=1#settings/devices");
   await expect(page.getByRole("link", {name:"Connect COROS"})).toHaveAttribute("href", "#settings/watch");
@@ -4614,7 +5224,12 @@ for (const width of [320,390,768,820,1440]) for (const theme of ["light","dark"]
 
 test("clearing training data needs confirmation and never touches recorded history", async ({ page }) => {
   await page.goto("/desk.html#settings/training");
-  await expect(page.getByRole("link", { name: "Only end the current plan" })).toHaveAttribute("href", "#training/plan");
+  await expect(page.getByRole("heading", { name: "Plans and scheduled training", exact: true })).toBeVisible();
+  const review = page.getByRole("link", { name: "Review ending the current plan", exact: true });
+  await expect(review).toHaveAttribute("href", "#training/plan");
+  await expect(review).toHaveAccessibleDescription(/Neither action is device-only/);
+  await expect(page.getByRole("button", { name: "Clear plans and scheduled training", exact: true })).toHaveAccessibleDescription(/Neither action is device-only/);
+  await expect(page.locator("#plan-cleanup-scope")).toContainText("connected devices, COROS and calendar feeds");
   await expect(page.getByRole("button", { name: "Clear plans and scheduled training", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Clear plans and scheduled training", exact: true }).click();
   const confirmation = page.getByRole("dialog");
@@ -4679,11 +5294,9 @@ for (const width of [320, 1440]) {
       ["health", "Estimate basis", "Riegel model"],
       ["health/pace", "About pace insights", "Rep boundaries are inferred"],
       ["settings/watch", "Connection diagnostics", "Check COROS API"],
-      ["settings/devices", "Sync diagnostics", "synthetic-account-channel"],
       ["help", "A recent workout is missing", "Check watch connection"],
     ]) {
       await page.goto(`/desk.html#${route}`);
-      if (route === "settings/devices") await page.getByRole("button", { name: "More options", exact: true }).click();
       if (route === "health" && title !== "Data for readiness") {
         const detailsToggle = page.getByRole("button", { name: /^(Show|Hide) health details$/ });
         await expect(detailsToggle).toBeVisible();
@@ -4719,11 +5332,14 @@ for (const width of [320, 1440]) {
       await page.goto(`/desk.html?theme=${theme}#settings${section}`);
       await expect(page.locator(".desk-loading")).toHaveCount(0);
       await expect(page.getByRole("heading", {name:"Settings",exact:true})).toBeVisible();
+      if (section === "/watch") await expect(page.getByRole("link", {name:"Open your training plan",exact:true})).toHaveCount(0);
+      if (section === "/about") await expect(page.locator(".about-settings h3")).toHaveText(/^Runalytics \d+\.\d+\.\d+/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${section}`).toBe(true);
       expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa","wcag21aa"]).analyze()).violations, `${theme} ${section}`).toEqual([]);
       await page.screenshot({path:`test-results/glass-settings${section.replace("/", "-")}-${theme}-${width}.png`,fullPage:true});
     }
     await page.goto("/desk.html#help");
+    await expect(page.locator(".help-workspace")).not.toContainText(/Runalytics \d+\.\d+\.\d+/);
     await page.getByRole("searchbox", {name:"Search help"}).fill("missing");
     await expect(page.locator(".help-articles > .dialog-action")).toHaveCount(1);
     await page.getByText("A recent workout is missing", {exact:true}).click();

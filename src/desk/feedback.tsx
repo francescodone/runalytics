@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { IconArrowDown, IconArrowUp, IconCheck, IconX } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconCheck, IconX } from "./icons";
 import { fmtPace, tauri } from "../lib/ipc";
 import type { DifficultyDetails, FeedbackContext, FeedbackSession } from "../lib/types";
 import { sessionTitle, shortDate, useCommand, useRemote, useWorkspace } from "./data";
 import { distance, t, text } from "./i18n";
 import { Presence } from "./interaction";
-import { Button, Dialog, ErrorNotice, Loading } from "./ui";
+import { Button, CheckInput, Dialog, ErrorNotice, Loading } from "./ui";
 
 const labels = ["Much too easy", "Slightly easy", "About right", "Slightly hard", "Much too hard"] as const;
 
@@ -30,7 +30,7 @@ function Rating({ context, session, draft, onSaved }: { context: FeedbackContext
     <form onSubmit={event => { event.preventDefault(); if (rating !== null) void submit(rating); }}>
       <fieldset disabled={command.busy}><legend>{t("Compared with the prescription (optional)")}</legend>
         <div className="feedback-scale">{labels.map((label, index) => <label key={label}>
-          <input type="radio" name={`${id}-rating`} value={index + 1} checked={rating === index + 1} onChange={() => setRating(index + 1)} />
+          <CheckInput type="radio" name={`${id}-rating`} value={index + 1} checked={rating === index + 1} onChange={() => setRating(index + 1)} />
           <strong>{index + 1}</strong><span>{t(label)}</span>
         </label>)}</div>
       </fieldset>

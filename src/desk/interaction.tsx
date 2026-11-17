@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useIsPresent, useReducedMotion, type AnimationPlaybackControls } from "motion/react";
 import { animate as animateNative } from "motion/mini";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -15,6 +15,116 @@ export function markActionOrigin(control: HTMLButtonElement) {
 export function actionOrigin() {
   const active = document.activeElement;
   return initiatingControl ?? (active instanceof HTMLButtonElement ? active : active?.closest("form")?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null);
+}
+
+export type IconInteraction = { reason: "hover" | "focus" | "activate" | "state"; event?: Event };
+const iconControlSelector = 'button, a[href], summary, label, .native-select, .native-check, [role="button"]';
+export function iconControl(element: Element) {
+  return element.closest<HTMLElement>(iconControlSelector);
+}
+
+function createIconPlaybackRegistry() {
+  const entries = new Map<HTMLElement, { notify: (eligible: boolean) => void; interact?: (interaction: IconInteraction) => void; managed: boolean; eligible?: boolean }>();
+  let dispose: (() => void) | undefined;
+  let observer: IntersectionObserver | undefined;
+  let refresh = () => {};
+  const start = () => {
+    const preferences = ["(prefers-reduced-motion: reduce)", "(forced-colors: active)"].map(query => matchMedia(query));
+    let frame = 0;
+    refresh = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      const enabled = !document.hidden && !preferences.some(media => media.matches);
+      for (const [element, entry] of entries) {
+        const feedback = element.dataset.icon === "pending" || element.closest('.button-progress, .button-result');
+        const covered = !feedback && element.closest(".button-content")?.closest('button[aria-busy="true"], button[data-result]');
+        const owner = iconControl(element);
+        const disabled = !feedback && owner?.matches(':disabled, [aria-disabled="true"], :has(input:disabled), :has(select:disabled)');
+        const eligible = enabled && !covered && !disabled && !element.closest('[data-state="closing"], [data-transition-state="exiting"], [data-step-state="exiting"]') && motionVisible(element);
+        if (entry.eligible !== eligible) { entry.eligible = eligible; entry.notify(eligible); }
+        entry.interact?.({ reason: "state" });
+      }
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(refresh); };
+    const interact = (event: Event) => {
+      if (event.defaultPrevented || document.hidden || !(event.target instanceof Element)) return;
+      const target = event.target;
+      const owner = target.matches('input, select') ? target.closest<HTMLElement>('.native-select, .native-check, label') : iconControl(target);
+      if (!owner || owner.closest('[inert], [aria-disabled="true"]') || owner.matches(':disabled, .is-dragging, :has(input:disabled), :has(select:disabled)')) return;
+      const reason = event.type === "pointerover" ? "hover" : event.type === "focusin" ? "focus" : event.type === "change" || event.type === "toggle" ? "state" : "activate";
+      if (reason === "hover" && ((event as PointerEvent).pointerType === "touch" || !matchMedia('(hover: hover) and (pointer: fine)').matches || (event as PointerEvent).relatedTarget instanceof Node && owner.contains((event as PointerEvent).relatedTarget as Node))) return;
+      if (reason === "focus" && !target.matches(':focus-visible')) return;
+      refresh();
+      for (const [element, entry] of entries) {
+        if (reason === "state" || owner.contains(element)) {
+          if (reason === "state" || entry.eligible && !(reason === "activate" && entry.managed)) entry.interact?.({ reason, event });
+        }
+      }
+    };
+    for (const event of ["pointerover", "focusin", "click", "change", "toggle"]) document.addEventListener(event, interact);
+    const reset = () => queueMicrotask(refresh);
+    document.addEventListener("reset", reset);
+    observer = new IntersectionObserver(schedule, { threshold: [0, tempo.viewportThreshold] });
+    const visibilityStyle = (value: string | null) => (value ?? "").match(/(?:^|;)\s*(?:display|visibility)\s*:[^;]*/g)?.join(";") ?? "";
+    const mutations = new MutationObserver(records => {
+      if (records.some(record => {
+        if (!(record.target instanceof HTMLElement) || record.target.closest(".animated-icon")) return false;
+        return record.attributeName !== "style" || visibilityStyle(record.oldValue) !== visibilityStyle(record.target.getAttribute("style"));
+      })) schedule();
+    });
+    mutations.observe(document.body, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ["style", "class", "hidden", "open", "inert", "disabled", "aria-disabled", "aria-expanded", "aria-checked", "aria-pressed", "data-state", "data-transition-state", "data-step-state", "aria-busy", "data-result"] });
+    document.addEventListener("scroll", schedule, { capture: true, passive: true });
+    window.addEventListener("resize", schedule);
+    document.addEventListener("visibilitychange", refresh);
+    for (const media of preferences) media.addEventListener("change", refresh);
+    dispose = () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      mutations.disconnect();
+      document.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+      document.removeEventListener("visibilitychange", refresh);
+      for (const event of ["pointerover", "focusin", "click", "change", "toggle"]) document.removeEventListener(event, interact);
+      document.removeEventListener("reset", reset);
+      for (const media of preferences) media.removeEventListener("change", refresh);
+      dispose = undefined;
+    };
+  };
+  return {
+    register(element: HTMLElement, notify: (eligible: boolean) => void, interact?: (interaction: IconInteraction) => void, managed = false) {
+      if (!dispose) start();
+      entries.set(element, { notify, interact, managed });
+      observer!.observe(element);
+      refresh();
+      return () => {
+        observer?.unobserve(element);
+        entries.delete(element);
+        if (!entries.size) dispose?.();
+      };
+    },
+    destroy() { dispose?.(); entries.clear(); },
+  };
+}
+
+const IconPlaybackContext = createContext<ReturnType<typeof createIconPlaybackRegistry> | null>(null);
+
+function IconPlaybackProvider({ children }: { children: ReactNode }) {
+  const registry = useMemo(createIconPlaybackRegistry, []);
+  useEffect(() => () => registry.destroy(), [registry]);
+  return <IconPlaybackContext.Provider value={registry}>{children}</IconPlaybackContext.Provider>;
+}
+
+export function useIconPlaybackEligibility(host: RefObject<HTMLElement | null>, interact?: (interaction: IconInteraction) => void, managed = false) {
+  const registry = useContext(IconPlaybackContext);
+  const callback = useRef(interact);
+  callback.current = interact;
+  const [eligible, setEligible] = useState<boolean | null>(null);
+  useLayoutEffect(() => {
+    if (!host.current || !registry) return;
+    const unregister = registry.register(host.current, setEligible, interaction => callback.current?.(interaction), managed);
+    return () => { unregister(); setEligible(false); };
+  }, [host, registry, managed]);
+  return eligible;
 }
 
 export function MotionSystem({ children }: { children: ReactNode }) {
@@ -431,7 +541,7 @@ export function MotionSystem({ children }: { children: ReactNode }) {
       resize.disconnect();
     };
   }, []);
-  return <MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig>;
+  return <IconPlaybackProvider><MotionConfig reducedMotion="user" transition={tempo.spring}>{children}</MotionConfig></IconPlaybackProvider>;
 }
 
 export function Presence({ children }: { children: ReactNode }) {

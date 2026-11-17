@@ -34,7 +34,7 @@ private struct Snapshot: Decodable {
 }
 
 private final class ChromeView: UIView {
-    let tabBar = UITabBar()
+    let tabBar = NativeTabBar()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -49,7 +49,22 @@ private final class ChromeView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let height = tabBar.sizeThatFits(bounds.size).height
-        tabBar.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+        let frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+        if tabBar.frame != frame { tabBar.cancelIconPlayback() }
+        tabBar.frame = frame
+    }
+
+    override var isHidden: Bool {
+        didSet { if isHidden { tabBar.cancelIconPlayback() } }
+    }
+
+    override var alpha: CGFloat {
+        didSet { if alpha <= 0 { tabBar.cancelIconPlayback() } }
+    }
+
+    override func willMove(toSuperview newSuperview: UIView?) {
+        if newSuperview == nil { tabBar.cancelIconPlayback() }
+        super.willMove(toSuperview: newSuperview)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -119,13 +134,7 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
                 view.tabBar.scrollEdgeAppearance = appearance
             }
             view.tabBar.delegate = self
-            let symbols = ["calendar", "figure.run", "chart.line.uptrend.xyaxis", "trophy"]
-            view.tabBar.items = next.tabs.enumerated().map { index, tab in
-                let item = UITabBarItem(title: nil, image: UIImage(systemName: symbols[index]), tag: index)
-                item.accessibilityLabel = tab.title
-                item.accessibilityIdentifier = "runalytics.tab.\(tab.id)"
-                return item
-            }
+            view.tabBar.configureIcons(titles: next.tabs.map(\.title), ids: ids)
             view.tabBar.selectedItem = next.selected.flatMap { selected in
                 ids.firstIndex(of: selected).flatMap { view.tabBar.items?[$0] }
             }
@@ -161,9 +170,11 @@ final class NativeChromePlugin: Plugin, UITabBarDelegate {
             "action": "navigate",
             "workspace": snapshot.tabs[item.tag].id
         ])
+        chrome?.tabBar.replayIcon(at: item.tag)
     }
 
     private func removeChrome() {
+        chrome?.tabBar.cancelIconPlayback()
         chrome?.removeFromSuperview()
         chrome = nil
         snapshot = nil

@@ -1,6 +1,7 @@
 import { t, text, number } from "./i18n";
-import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { IconArrowLeft, IconX, IconAlertCircle, IconLoader2, IconCheck, IconChevronRight } from "@tabler/icons-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentPropsWithRef, type ReactNode } from "react";
+import { IconX } from "./icons";
+import { AnimatedIcon, ControlAnimation, StatusIcon, type AnimatedIconName } from "./animated-icons";
 import { animate, motion, useDragControls, useIsPresent, useReducedMotion } from "motion/react";
 import { animate as animateNative } from "motion/mini";
 import { isTauri } from "@tauri-apps/api/core";
@@ -9,35 +10,43 @@ import { lockPageScroll } from "./overlays";
 import { motionVisible } from "./motion";
 
 export function BrandMark() {
-  return <span className="desk-brand-icon" data-entrance aria-hidden="true"><svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor" focusable="false">
-    <path d="M32 4C8 4 4 8 4 32s4 28 28 28 28-4 28-28S56 4 32 4Z" />
-    <rect x="12" y="12" width="40" height="40" rx="15" fill="var(--desk-on-action)" />
-    <path d="M23.044 40.875 27.481 23.125H35.606Q37.581 23.125 38.879 23.775Q40.176 24.425 40.678 25.608Q41.18 26.79 40.777 28.4Q40.467 29.64 39.735 30.598Q39.004 31.555 37.956 32.165Q36.909 32.775 35.651 32.965L35.642 32.72Q37.467 32.72 38.2 33.5Q38.932 34.28 38.655 35.83L37.814 40.875H33.379L34.169 36.555Q34.359 35.555 33.96 35.08Q33.561 34.605 32.291 34.605H28.961L27.394 40.875ZM29.851 31.045H32.961Q34.266 31.045 35.11 30.47Q35.954 29.895 36.215 28.85Q36.482 27.78 35.914 27.232Q35.346 26.685 33.996 26.685H30.941Z" />
-  </svg></span>;
+  return <span className="desk-brand-icon" data-entrance aria-hidden="true"><AnimatedIcon name="brand" size={44} /></span>;
 }
 
-export function Button({ children, tone = "normal", busy, className = "", onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean }) {
+export function Select({ children, ...props }: ComponentPropsWithRef<"select">) {
+  return <span className="native-select"><select {...props}>{children}</select><AnimatedIcon name="chevronDown" size={18} reveal={false} /></span>;
+}
+
+export function CheckInput({ type = "checkbox", kind, className = "", ...props }: ComponentPropsWithRef<"input"> & { kind?: "toggle" }) {
+  const name = kind === "toggle" ? "toggle" : type === "radio" ? "radio" : "checkbox";
+  return <span className="native-check" data-kind={name}><input {...props} type={type} className={`native-check-input ${className}`.trim()} /><AnimatedIcon name={name} size={kind === "toggle" ? 54 : 24} state={props.checked} reveal={false} /></span>;
+}
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "normal" | "primary" | "danger"; busy?: boolean; icon?: AnimatedIconName; iconSize?: number; iconPosition?: "start" | "end" };
+
+export function Button({ children, tone = "normal", busy, icon, iconSize = 18, iconPosition = "start", className = "", onClick, ...props }: ButtonProps) {
   const button = useRef<HTMLButtonElement>(null);
-  const [result, setResult] = useState<"success" | "error" | null>(null);
+  const sequence = useRef(0);
+  const [result, setResult] = useState<{ state: "success" | "error"; sequence: number } | null>(null);
   useEffect(() => {
     const element = button.current!;
     let timer: ReturnType<typeof setTimeout>;
     const feedback = (event: Event) => {
       clearTimeout(timer);
-      setResult((event as CustomEvent<{ ok: boolean }>).detail.ok ? "success" : "error");
+      setResult({ state: (event as CustomEvent<{ ok: boolean }>).detail.ok ? "success" : "error", sequence: ++sequence.current });
       timer = setTimeout(() => setResult(null), tempo.resultHold);
     };
     element.addEventListener("desk:action-result", feedback);
     return () => { clearTimeout(timer); element.removeEventListener("desk:action-result", feedback); };
   }, []);
   useEffect(() => { if (busy) setResult(null); }, [busy]);
-  return <button type="button" {...props} ref={button} onClick={event => { markActionOrigin(event.currentTarget); onClick?.(event); }} disabled={props.disabled || busy} className={`desk-button ${tone} ${className}`} aria-busy={busy || undefined} data-result={result ?? undefined}>
-    <span className="button-content">{children}</span>
-    <Presence>{busy ? <motion.span key="pending" className="button-progress" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconLoader2 size={18} className="spinner" /></motion.span>
-      : result && <motion.span key={result} className="button-result" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}>{result === "success" ? <IconCheck size={20} /> : <IconAlertCircle size={20} />}</motion.span>}</Presence>
-  </button>;
+  return <ControlAnimation name={icon} size={iconSize}>{(activate, glyph) => <button type="button" {...props} ref={button} onClick={event => { markActionOrigin(event.currentTarget); onClick?.(event); activate(event); }} disabled={props.disabled || busy} className={`desk-button ${tone} ${className}`} aria-busy={busy || undefined} data-result={result?.state}>
+    <span className="button-content">{iconPosition === "start" && glyph}{children}{iconPosition === "end" && glyph}</span>
+    <Presence>{busy ? <motion.span key="pending" className="button-progress" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><StatusIcon status="pending" /></motion.span>
+      : result && <motion.span key={`${result.state}-${result.sequence}`} className="button-result" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><StatusIcon status={result.state} size={20} play /></motion.span>}</Presence>
+  </button>}</ControlAnimation>;
 }
-export function IconButton({ label, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+export function IconButton({ label, children, ...props }: ButtonProps & { label: string }) {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -56,10 +65,10 @@ export function IconButton({ label, children, ...props }: ButtonHTMLAttributes<H
   </Button>;
 }
 export function ErrorNotice({ error, retry }: { error: string | null; retry?: () => void }) {
-  return <Presence>{error && <motion.div key="error" className="error-notice" role="alert" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><IconAlertCircle size={20} aria-hidden="true" /><p>{text(error)}</p>{retry && <Button onClick={retry}>{t("Try again")}</Button>}</motion.div>}</Presence>;
+  return <Presence>{error && <motion.div key="error" className="error-notice" role="alert" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: tempo.feedback }}><StatusIcon key={error} status="error" size={20} play /><p>{text(error)}</p>{retry && <Button onClick={retry}>{t("Try again")}</Button>}</motion.div>}</Presence>;
 }
 export function Loading({ label = t("Loading your training") }: { label?: string }) {
-  return <div className="desk-loading" role="status"><IconLoader2 className="spinner" aria-hidden="true" /><span>{label}</span></div>;
+  return <div className="desk-loading" role="status"><StatusIcon status="pending" size={24} /><span>{label}</span></div>;
 }
 export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return <div className="desk-empty"><h2>{title}</h2>{children && <p>{children}</p>}{action}</div>;
@@ -102,7 +111,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
 }
 export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {
   const [open, setOpen] = useState(false);
-  return <div className={`dialog-action ${className}`}><Button aria-haspopup="dialog" onClick={() => setOpen(true)}><span>{title}</span><IconChevronRight size={18} aria-hidden="true" /></Button><Presence>{open && <Dialog title={title} wide={wide} onClose={() => setOpen(false)}>{children}</Dialog>}</Presence></div>;
+  return <div className={`dialog-action ${className}`}><Button aria-haspopup="dialog" icon="next" iconPosition="end" onClick={() => setOpen(true)}><span>{title}</span></Button><Presence>{open && <Dialog title={title} wide={wide} onClose={() => setOpen(false)}>{children}</Dialog>}</Presence></div>;
 }
 
 export function Inspector({ title, children, onClose, modal = false, origin, restoreMissingOrigin }: { title: string; children: ReactNode; onClose: () => void; modal?: boolean; origin?: HTMLElement | null; restoreMissingOrigin?: () => void }) {
@@ -168,7 +177,7 @@ export function Inspector({ title, children, onClose, modal = false, origin, res
     drag={surface.compact && !surface.reduced ? "x" : false} dragListener={false} dragControls={drag} dragConstraints={{ left: 0, right: 0 }} dragElastic={{ left: .025, right: .8 }} dragTransition={{ bounceStiffness: 500, bounceDamping: 42 }}
     onDragEnd={(_, info) => { if (info.offset.x > Math.min(120, innerWidth * .28) || info.offset.x > 24 && info.velocity.x > 650) onClose(); }}>
     <motion.div initial={false} animate={{ opacity: 1 }}>
-    <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label={t("Back")} onClick={onClose}><IconArrowLeft size={20} aria-hidden="true" /></IconButton><span>{title}</span></>}</div>{children}
+    <div className={`inspector-bar${modal ? " modal-bar" : ""}`} onPointerDown={event => { if (surface.compact && !surface.reduced && !(event.target as HTMLElement).closest("button")) drag.start(event); }}>{modal ? <><span>{title}</span><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></> : <><IconButton label={t("Back")} icon="back" iconSize={20} onClick={onClose} /><span>{title}</span></>}</div>{children}
     </motion.div>
   </motion.aside></>;
 }

@@ -9,6 +9,7 @@ let package = Package(
     ],
     dependencies: [.package(name: "Tauri", path: "../.tauri/tauri-api")],
     targets: [
-        .target(name: "NativeChrome", dependencies: [.byName(name: "Tauri")], path: "Sources")
+        .target(name: "NativeChrome", dependencies: [.byName(name: "Tauri")], path: "Sources"),
+        .testTarget(name: "NativeChromeTests", dependencies: ["NativeChrome"], path: "Tests")
     ]
 )

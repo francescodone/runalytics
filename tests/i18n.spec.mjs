@@ -75,6 +75,8 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
     await installDeskFixture(page);
     await page.addInitScript(language => {
       Object.defineProperty(navigator, "language", { configurable: true, value: language });
+      localStorage.setItem("runalytics.runnerName", "Ada");
+      localStorage.setItem("runalytics.onboarding.complete", "1");
     }, language);
     await page.goto("/desk.html?noPlan=1");
     await page.getByRole("button", { name: messages["Create plan"], exact: true }).click();
@@ -87,7 +89,10 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
     await expect(dialog).toHaveCount(0);
     const request = await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request);
     expect(request).toMatchObject({ kind: "race", trainingMethod: "norwegian", distance: "21K", thresholdSecKm: 280, weeklyFrequency: 4, currentWeeklyKm: 40, name: "My unchanged custom plan" });
-    await expect(page.locator(".training-context")).toContainText("My unchanged custom plan");
+    await expect(page.locator(".workspace-heading")).not.toContainText("Ada");
+    await page.getByRole("link", { name: messages.Plan, exact: true }).click();
+    const planLabel = messages["{{name}}'s {{plan}}"].replace("{{name}}", "Ada").replace("{{plan}}", "My unchanged custom plan");
+    await expect(page.locator(".training-context > div > .muted")).toHaveText(planLabel);
   });
 
   test(`translated routes and settings for ${language}`, async ({ page }) => {
@@ -110,7 +115,7 @@ for (const language of ["es", "fr", "de", "it", "pt", "ja", "zh"]) {
       ["settings/strava", "Activity descriptions"],
       ["settings/appearance", "Colour palette"],
       ["settings/thresholds", "Training boundaries"],
-      ["settings/training", "Training data"],
+      ["settings/training", "Plans and scheduled training"],
       ["settings/calendar", "Calendar apps"],
       ["settings/devices", "Device sync"],
       ["settings/transfer", "Transfer connections"],

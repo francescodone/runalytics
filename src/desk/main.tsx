@@ -3,12 +3,13 @@ import { Activity, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
-import { IconCalendarWeek, IconRun, IconChartLine, IconTrophy, IconSettings, IconHelp, IconRefresh } from "@tabler/icons-react";
+import { IconCalendarWeek, IconRun, IconChartLine, IconTrophy } from "./icons";
 import { motion, useReducedMotion } from "motion/react";
 import { tauri } from "../lib/ipc";
 import { navigate, useCommand, useRemote, useRoute, useWorkspace, WorkspaceProvider } from "./data";
 import type { Workspace } from "./data";
 import { BrandMark, ErrorNotice, IconButton } from "./ui";
+import { AnimatedIcon, ControlAnimation, StatusIcon } from "./animated-icons";
 import "./desk.css";
 import { Training } from "./training";
 import { Journal } from "./journal";
@@ -144,21 +145,21 @@ function App() {
         <BrandMark />
         <span className="desk-brand-name brand-wordmark" data-entrance>Runalytics</span>
       </a>
-      <SelectionGroup><nav aria-label={t("workspaces")} className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <a key={id} href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}><Icon size={21} /></motion.div><span>{label}</span></a>)}</nav></SelectionGroup>
+      <SelectionGroup><nav aria-label={t("workspaces")} className="desk-navigation">{workspaces.map(({ id, title: label, Icon }) => <ControlAnimation key={id} name={id === "training" ? "calendar" : id === "milestones" ? "milestones" : undefined} size={21}>{(activate, glyph) => <a href={`#${id}`} aria-label={label} title={label} aria-current={route.workspace === id ? "page" : undefined} onClick={activate}>{route.workspace === id && <SelectionMarker identity={compact && !reduced ? "workspace-selection" : undefined} />}<motion.div className="navigation-icon" aria-hidden="true" initial={false} animate={{ y: compact && !reduced && route.workspace === id ? -2 : 0, scale: compact && !reduced && route.workspace === id ? 1.08 : 1 }} transition={reduced ? { duration: 0 } : tempo.spring}>{glyph ?? <Icon size={21} />}</motion.div><span>{label}</span></a>}</ControlAnimation>)}</nav></SelectionGroup>
       <div className="desk-utilities">
         <IconButton label={syncing ? t("syncing") : t("sync")} disabled={syncing || command.busy || !providers.data?.some(provider => provider.connected)} onClick={() => void command.run(async () => {
           const report = await tauri.syncNow("coros");
           notifySync(t("{{value0}} new activities, {{value1}} health days synced. {{value2}}", { value0: report.activitiesNew, value1: report.healthDays, value2: report.messages.join(" ") }));
-        })}><span className="sync-icon"><IconRefresh size={20} className={syncing || command.busy ? "spinner spinner-reverse" : ""} /></span></IconButton>
-        <IconButton label={t("help")} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")}><IconHelp size={21} /></IconButton>
-        <IconButton label={t("settings")} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")}><IconSettings size={21} /></IconButton>
+        })}>{syncing || command.busy ? <StatusIcon status="pending" size={20} /> : <AnimatedIcon name="sync" size={20} reveal={false} />}</IconButton>
+        <IconButton label={t("help")} icon="help" iconSize={21} aria-pressed={route.workspace === "help"} onClick={() => navigate("help")} />
+        <IconButton label={t("settings")} icon="settings" iconSize={21} aria-pressed={route.workspace === "settings"} onClick={() => navigate("settings")} />
       </div>
     </header>
     <main id="workspace" tabIndex={-1} className={`desk-workspace workspace-${route.workspace}`}>
-      <div lang={locale} className="workspace-heading"><h1 ref={heading}>{title}</h1>{runnerName ? <span className="runner-greeting">{t("Hello, {{value0}}", { value0: runnerName })}</span> : <span className="connection-state">{providers.data?.some(provider => provider.connected) ? t("connected") : t("local")}</span>}</div>
+      <div lang={locale} className="workspace-heading"><h1 ref={heading}>{title}</h1></div>
       <ErrorNotice error={command.error} />
       <FeedbackReminder />
-      <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training /> : workspace === "journal" ? <Journal /> : workspace === "pace" ? <PaceInsightsView /> : workspace === "milestones" ? <Milestones /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
+      <Change identity={route.workspace} direction={direction}>{(compact ? visitedWorkspaces : [route.workspace]).map(workspace => <Activity key={workspace} mode={route.workspace === workspace ? "visible" : "hidden"}>{workspace === "training" ? <Training runnerName={runnerName} /> : workspace === "journal" ? <Journal /> : workspace === "pace" ? <PaceInsightsView /> : workspace === "milestones" ? <Milestones /> : workspace === "settings" ? <SettingsWorkspace /> : <Help />}</Activity>)}</Change>
     </main>
   </>;
 }

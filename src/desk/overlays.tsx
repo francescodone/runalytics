@@ -2,7 +2,7 @@ import { t } from "./i18n";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
-import { IconX } from "@tabler/icons-react";
+import { IconX } from "./icons";
 import { tempo } from "./interaction";
 import { fadeOut, slideUp } from "./motion";
 

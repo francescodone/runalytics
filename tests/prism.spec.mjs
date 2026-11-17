@@ -626,25 +626,73 @@ test.describe("calendar month touch morph", () => {
 });
 
 for (const theme of ["light", "dark"]) {
-  test(`plan cards remain inside their scroller on hover ${theme}`, async ({ page }, testInfo) => {
+  test(`list rows stay full width with single separators ${theme}`, async ({ page }, testInfo) => {
+    test.setTimeout(60000);
     await page.emulateMedia({ reducedMotion: "no-preference" });
     for (const width of [320, 1440]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(`/desk.html?theme=${theme}#training/plan`);
-      const scroller = page.getByRole("region", { name: "Plan weeks" });
-      const row = scroller.locator(".roadmap-row").first();
-      await expect(row).toBeVisible();
-      for (const edge of ["left", "right"]) {
-        const bounds = await row.boundingBox();
-        await row.hover({ position: { x: edge === "left" ? 8 : bounds.width - 8, y: bounds.height / 2 } });
+      const lists = [["training/plan", ".roadmap-row"], ["journal", ".activity-row"], ["settings", ".settings-task-list a"], ...(width <= 800 ? [["training/week", ".day-itinerary .session-tile"]] : [])];
+      for (const [route, selector] of lists) {
+        await page.goto(`/desk.html?theme=${theme}#${route}`);
+        if (route === "training/week") await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
+        await page.mouse.move(0, 0);
+        const rows = page.locator(selector).filter({ visible: true });
+        const row = rows.first();
+        await expect(row).toBeVisible();
+        await expect(row).toHaveCSS("border-radius", "0px");
+        await expect(row).toHaveCSS("margin-bottom", "0px");
+        await expect(rows.last()).toHaveCSS("border-bottom-width", "0px");
+        await expect.poll(() => row.evaluate(element => element.parentElement.clientWidth - element.offsetWidth)).toBe(0);
+        if (route !== "training/week") {
+          await expect(row).toHaveCSS("border-width", "0px 0px 1px");
+          await expect.poll(() => row.evaluate(element => Math.abs(element.nextElementSibling.getBoundingClientRect().top - element.getBoundingClientRect().bottom))).toBeLessThan(1);
+        }
+        const assertFlat = async () => {
+          await expect(row).toHaveCSS("background-image", "none");
+          await expect(row).toHaveCSS("box-shadow", "none");
+          await expect(row).toHaveCSS("backdrop-filter", "none");
+          expect(await row.evaluate(element => getComputedStyle(element, "::after").display)).toBe("none");
+        };
+        await assertFlat();
+        await expectControlContrast(page, row);
+        await row.hover({ position: { x: 8, y: 20 } });
         await expect(row).toHaveAttribute("data-aura-tracking", "true");
-        await expect.poll(() => row.evaluate(element => {
-          const card = element.getBoundingClientRect();
-          const container = element.closest(".plan-roadmap").getBoundingClientRect();
-          return Math.min(card.left - container.left, container.right - card.right);
-        })).toBeGreaterThanOrEqual(4);
+        await expect(row).toHaveCSS("transform", "none");
+        await assertFlat();
+        await page.mouse.down();
+        await expect(row).toHaveCSS("scale", "1");
+        await assertFlat();
+        await page.mouse.move(0, 0);
+        await page.mouse.up();
+        await page.keyboard.press("Tab");
+        await row.focus();
+        await expect(row).toBeFocused();
+        await expect(row).toHaveCSS("outline-style", "solid");
+        await assertFlat();
+        await page.emulateMedia({ contrast: "more" });
+        await assertFlat();
+        await expect(row).toHaveCSS("outline-style", "solid");
+        await page.emulateMedia({ contrast: "no-preference" });
+        if (route === "training/plan") {
+          const current = page.locator(".roadmap-row[aria-current]");
+          expect(await current.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(await row.evaluate(element => getComputedStyle(element).backgroundColor));
+          await current.focus();
+          await page.keyboard.press("Enter");
+          await expect(page).toHaveURL(/#training\/week$/);
+        } else if (route === "settings") {
+          await page.keyboard.press("Enter");
+          await expect(page.locator(".settings-editor")).toBeVisible();
+        } else {
+          await page.keyboard.press("Enter");
+          await expect(page.locator(".desk-inspector")).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(row).toBeFocused();
+        }
+        await page.goto(`/desk.html?theme=${theme}#${route}`);
+        if (route === "training/week") await page.locator('.mobile-date-ribbon button:has(.has-session)').first().click();
+        await expect(page.locator(selector).filter({ visible: true }).first()).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-")}-rows-${width}.png`) });
       }
-      await page.screenshot({ path: testInfo.outputPath(`plan-hover-${width}.png`) });
     }
   });
 
@@ -692,10 +740,10 @@ for (const theme of ["light", "dark"]) {
     expect(await control.evaluate(element => getComputedStyle(element, "::after").content)).toBe("none");
   });
 
-  for (const width of [320, 1440]) test(`all web button families use the training-plan glass ${theme} ${width}px`, async ({ page }, testInfo) => {
+  for (const width of [320, 1440]) test(`optical buttons retain glass outside continuous lists ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/desk.html?theme=${theme}#settings/watch`);
-    const reference = page.getByRole("link", { name: "Open your training plan", exact: true });
+    const reference = page.getByRole("button", { name: "Connection diagnostics", exact: true });
     await expect(reference).toBeVisible();
     const material = control => control.evaluate(element => {
       const style = getComputedStyle(element);
@@ -719,7 +767,7 @@ for (const theme of ["light", "dark"]) {
       context.fillStyle = style.getPropertyValue("--desk-danger").trim();
       return actual === context.fillStyle;
     })).toBe(true);
-    for (const [route, selector] of [["training/week", ".session-tile"], ["training/plan", ".roadmap-row"], ["journal", ".activity-row"], ["journal/1/execution", ".lap-pace-column"], ["settings", ".settings-task-list a"], ["settings/watch", "button.desk-button"]]) {
+    for (const [route, selector] of [...(width > 800 ? [["training/week", ".session-tile"]] : []), ["journal/1/execution", ".lap-pace-column"], ["settings/watch", "button.desk-button"]]) {
       await page.goto(`/desk.html?theme=${theme}#${route}`);
       await page.mouse.move(0, 0);
       const control = page.locator(selector).filter({ visible: true }).first();
@@ -941,7 +989,7 @@ for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: testInfo.outputPath("glass-buttons.png") });
   });
 
-  for (const width of [320, 390, 768, 1440]) test(`view controls share reference material and settings use restrained tilt ${theme} ${width}px`, async ({ page }, testInfo) => {
+  for (const width of [320, 390, 768, 1440]) test(`view controls share reference material and settings rows stay flat ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/desk.html?theme=${theme}#health/pace`);
     await page.mouse.move(0, 0);
@@ -991,18 +1039,11 @@ for (const theme of ["light", "dark"]) {
     await expect(row).toBeVisible();
     await row.hover({ position: { x: 20, y: 20 } });
     await expect(row).toHaveAttribute("data-aura-tracking", "true");
-    await expect(row).not.toHaveCSS("transform", "none");
-    const angles = await row.evaluate(element => {
-      const style = getComputedStyle(element);
-      const strength = parseFloat(style.getPropertyValue("--surface-tilt-strength"));
-      return ["--aura-tilt-x", "--aura-tilt-y"].map(name => Math.abs(parseFloat(style.getPropertyValue(name)) * strength));
-    });
-    expect(Math.max(...angles)).toBeGreaterThan(0);
-    expect(Math.max(...angles)).toBeLessThanOrEqual(1.8);
-    await expect(row).toHaveCSS("--surface-tilt-strength", "3");
-    await expect(row).toHaveCSS("--surface-perspective", "1200px");
+    await expect(row).toHaveCSS("transform", "none");
+    await expect(row).toHaveCSS("box-shadow", "none");
     await page.mouse.down();
-    await expect.poll(() => row.evaluate(element => Math.abs(new DOMMatrix(getComputedStyle(element).transform).m13))).toBeLessThan(.05);
+    await expect(row).toHaveCSS("transform", "none");
+    await expect(row).toHaveCSS("scale", "1");
     await page.mouse.move(0, 0);
     await page.mouse.up();
     await expect(row).toHaveCSS("transform", "none");
@@ -1155,6 +1196,25 @@ for (const theme of ["light", "dark"]) {
 }
 
 for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
+  test(`view toolbars share the outer background material ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    for (const route of ["training/week", "training/month", "training/plan", "journal"]) {
+      await page.goto(`/desk.html?theme=${theme}&palette=amethyst#${route}`);
+      const toolbar = page.locator(".desk-toolbar:visible");
+      await expect(toolbar).toBeVisible();
+      const material = await page.locator("body").evaluate(element => {
+        const style = getComputedStyle(element);
+        return { image: style.backgroundImage, color: style.backgroundColor };
+      });
+      await expect(toolbar).toHaveCSS("background-image", material.image);
+      await expect(toolbar).toHaveCSS("background-color", material.color);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      if (route === "training/plan") await page.screenshot({ path: testInfo.outputPath("lighter-toolbar.png") });
+    }
+    await page.emulateMedia({ contrast: "more" });
+    await expect(page.locator(".desk-toolbar:visible")).toHaveCSS("background-image", "none");
+  });
+
   test(`surface aura drifts independently without moving controls ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -1173,7 +1233,7 @@ for (const theme of ["light", "dark"]) for (const width of [320, 1440]) {
       return { first, next: getComputedStyle(element).backgroundPosition, size: getComputedStyle(element).backgroundSize, frames: animation.effect.getKeyframes(), duration: animation.effect.getTiming().duration };
     });
     expect(frames.next).not.toBe(frames.first);
-    expect(frames.size).toBe("160% 240%, 150% 220%, 100% 100%");
+    expect(frames.size.split(",")[0].trim()).toBe("160% 240%");
     expect(frames.duration).toBeGreaterThanOrEqual(16000);
     expect(frames.frames.every(frame => !("transform" in frame) && !("filter" in frame))).toBe(true);
     expect(await toolbar.boundingBox()).toEqual(bounds);
@@ -1938,10 +1998,10 @@ for (const theme of ["light", "dark"]) {
       await expect(rows).toHaveCount(9);
       await expect(page.locator(".journal-sidebar > .desk-toolbar")).not.toHaveCSS("background-image", "none");
       await expect(rows.last()).toHaveCSS("border-bottom-width", "0px");
-      await expect(rows.first()).toHaveCSS("border-bottom-width", "0px");
-      expect(await rows.first().evaluate(element => getComputedStyle(element).borderRadius)).toBe(await rows.first().evaluate(element => getComputedStyle(element).getPropertyValue("--radius-card").trim()));
-      await expect(rows.first()).toHaveCSS("margin-bottom", "8px");
-      await expect(rows.first()).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(rows.first()).toHaveCSS("border-bottom-width", "1px");
+      await expect(rows.first()).toHaveCSS("border-radius", "0px");
+      await expect(rows.first()).toHaveCSS("margin-bottom", "0px");
+      await expect(rows.first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const navigation = page.getByRole("navigation", { name: "Workspaces" });
       await expect(navigation).toHaveCSS("box-shadow", "none");
       const active = navigation.locator("a[aria-current]");
@@ -2782,12 +2842,57 @@ for (const width of [320, 820, 1440]) {
   test(`Prism enlarged text ${width}px`, async ({ page }, testInfo) => {
     test.setTimeout(60000);
     await page.setViewportSize({ width, height: 960 });
-    for (const route of ["training", "training/month", "training/plan", "health", "health/pace", "health/journal", "health/milestones", "settings/thresholds", "settings/appearance", "help"]) {
+    for (const route of ["training", "training/month", "training/plan", "health", "health/pace", "health/journal", "health/milestones", "settings/thresholds", "settings/appearance", "settings/devices", "settings/strava", "settings/training", "help"]) {
       await page.goto(`/desk.html#${route}`);
       await page.addStyleTag({ content: ":root { font-size: 200%; }" });
       await assertLayout(page, `200% text ${route} ${width}`);
       await page.screenshot({ path: testInfo.outputPath(`${route.replaceAll("/", "-")}.png`), fullPage: true });
     }
+  });
+}
+
+for (const theme of ["light", "dark"]) for (const width of [320, 800]) {
+  test(`Prism compact month uses only calendar grid lines ${theme} ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 960 });
+    await page.goto(`/desk.html?theme=${theme}#training/month`);
+    const dates = page.locator(".month-dates");
+    const buttons = dates.locator("button.month-number");
+    await expect(buttons.first()).toBeVisible();
+    const expectFlatDays = async () => {
+      const styles = await buttons.evaluateAll(elements => elements.map(element => {
+        const style = getComputedStyle(element);
+        return { borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth], radius: style.borderRadius, shadow: style.boxShadow, rim: getComputedStyle(element, "::after").display };
+      }));
+      for (const style of styles) expect(style).toEqual({ borders: ["0px", "0px", "0px", "0px"], radius: "0px", shadow: "none", rim: "none" });
+    };
+    await expectFlatDays();
+    const grid = await dates.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { top: parseFloat(style.borderTopWidth), left: parseFloat(style.borderLeftWidth), cells: [...element.children].map(day => {
+        const cell = getComputedStyle(day);
+        return { right: parseFloat(cell.borderRightWidth), bottom: parseFloat(cell.borderBottomWidth) };
+      }) };
+    });
+    expect(grid.top).toBeGreaterThan(0);
+    expect(grid.left).toBeGreaterThan(0);
+    for (const cell of grid.cells) {
+      expect(cell.right).toBeGreaterThan(0);
+      expect(cell.bottom).toBeGreaterThan(0);
+    }
+    const selectedDate = await dates.locator('button.month-number[aria-pressed="false"]').first().getAttribute("data-date");
+    const date = dates.locator(`button.month-number[data-date="${selectedDate}"]`);
+    await date.hover();
+    await expectFlatDays();
+    await date.focus();
+    await page.keyboard.press("Space");
+    await expect(date).toBeFocused();
+    await expect(date).toHaveAttribute("aria-pressed", "true");
+    const focus = await date.evaluate(element => ({ visible: element.matches(":focus-visible"), width: parseFloat(getComputedStyle(element).outlineWidth), offset: parseFloat(getComputedStyle(element).outlineOffset) }));
+    expect(focus.visible).toBe(true);
+    expect(focus.width).toBeGreaterThan(0);
+    expect(focus.offset).toBeLessThan(0);
+    await expectFlatDays();
+    await page.screenshot({ path: testInfo.outputPath("flat-month-grid.png") });
   });
 }
 
