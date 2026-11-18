@@ -1,4 +1,10 @@
 {
+  "Device sync runs automatically once your GitHub connection is saved. You can add the connection later in Settings.": "GitHub接続を保存すると、デバイス間の同期は自動的に実行されます。接続は後から設定で追加できます。",
+  "Leave empty to get it from your watch.": "空欄にするとウォッチの値を使用します。",
+  "Use a recent race result to estimate the pace you could sustain for about an hour, or use your watch's threshold estimate. This sets your tempo and interval training paces.": "最近のレース結果から約1時間維持できるペースを推定するか、ウォッチの閾値ペースの推定値を使用してください。この値でテンポ走とインターバルトレーニングのペースを設定します。",
+  "Your watch has no threshold pace yet. Sync your watch or enter a pace to continue.": "ウォッチに閾値ペースがまだありません。ウォッチを同期するか、ペースを入力して続行してください。",
+  "Your average weekly running distance sets the starting training load, so the plan builds from what you already run. If left empty, Runalytics uses your synced recent complete weeks, or a conservative baseline when no history is available.": "週間平均走行距離で初期のトレーニング負荷を設定し、現在の走行量を基にプランを作成します。空欄の場合、Runalyticsは同期済みの直近の完了した週のデータを使用します。履歴がない場合は控えめな基準値を使用します。",
+  "Enter the longest run you have comfortably completed recently, not your all-time record. This sets a realistic starting distance for your long runs so they build gradually. Leave empty to estimate it from your weekly mileage.": "自己最長記録ではなく、最近無理なく走り切れた最長距離を入力してください。ロング走を現実的な距離から始め、徐々に伸ばすために使用します。空欄にすると週間走行距離から推定します。",
   "Your profile stays saved on this device. Sign in with the same COROS account to restore your plans and settings, or use a different account for a separate profile.": "プロフィールはこのデバイスに保存されます。同じCOROSアカウントでログインするとプランと設定が復元され、別のアカウントでは別のプロフィールが開きます。",
   "Sign in to your profile": "プロフィールにログイン",
   "Each COROS login has its own plans, history and settings. Sign in with the same account to restore your saved profile.": "COROSアカウントごとにプラン、履歴、設定が保存されます。同じアカウントでログインすると保存済みのプロフィールが復元されます。",

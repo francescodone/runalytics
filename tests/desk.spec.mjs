@@ -4929,8 +4929,16 @@ test("connection transfer QR encrypts credentials and enables device sync after 
   expect(calls.some(call => call.command === "set_llm_api_key" || call.command === "clear_llm_api_key")).toBe(false);
 });
 
+async function emulateTransferCamera(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "userAgent", { get: () => "iPhone" });
+    Object.defineProperty(navigator, "mediaDevices", { value: navigator.mediaDevices });
+  });
+}
+
 test("connection transfer camera denial retains image upload fallback", async ({page}) => {
-  await page.addInitScript(() => { Object.defineProperty(navigator,"userAgent",{get:()=>"iPhone"}); navigator.mediaDevices.getUserMedia=async () => { throw new DOMException("Denied", "NotAllowedError"); }; });
+  await emulateTransferCamera(page);
+  await page.addInitScript(() => { navigator.mediaDevices.getUserMedia=async () => { throw new DOMException("Denied", "NotAllowedError"); }; });
   await page.goto("/desk.html#settings/transfer");
   await page.getByRole("button", {name:"Import transfer QR", exact:true}).click();
   const dialog=page.getByRole("dialog", {name:"Import connection transfer"});
@@ -5052,8 +5060,90 @@ test("connection transfer lives in its own searchable settings destination", asy
   await expect(page.getByRole("button",{name:"Import transfer QR",exact:true})).toBeVisible();
 });
 
+for (const orientation of ["portrait", "landscape"]) test(`connection transfer camera reads dense encrypted QR in ${orientation} and keeps replacement explicit`, async ({ page }) => {
+  await emulateTransferCamera(page);
+  await page.goto("/desk.html#settings/transfer");
+  await page.evaluate(async orientation => {
+    const { sealConnections } = await import("/src/desk/connection-transfer.tsx");
+    const { default: QRCode } = await import("/node_modules/.vite/deps/qrcode.js");
+    const source = { version: 1, created: 1, name: "Synthetic runner", calendar: { uploadUrl: "https://example.test/" + "calendar/".repeat(40) + "feed.ics", subscriptionUrl: "https://example.test/" + "subscription/".repeat(40) + "feed.ics", username: "runner", password: "synthetic-calendar-password" }, githubToken: "synthetic-github-token", identity: { corosCode: "synthetic-account-channel" }, strava: { clientId: "12345", clientSecret: "synthetic-strava-secret", athleteId: 42 } };
+    const code = await sealConnections(source, "synthetic transfer passphrase");
+    const qr = document.createElement("canvas");
+    await QRCode.toCanvas(qr, code, { width: 600, margin: 4, errorCorrectionLevel: "M", ...(orientation === "landscape" ? { color: { dark: "#f3f5f7", light: "#24262c" } } : {}) });
+    const canvas = document.createElement("canvas");
+    canvas.width = orientation === "portrait" ? 1080 : 1920;
+    canvas.height = orientation === "portrait" ? 1920 : 1080;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#bbbbbb";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(qr, (canvas.width - qr.width) / 2, (canvas.height - qr.height) / 2);
+    window.__cameraStops = 0;
+    navigator.mediaDevices.getUserMedia = async () => {
+      const stream = canvas.captureStream(5);
+      const timer = setInterval(() => context.fillRect(0, 0, 1, 1), 100);
+      for (const track of stream.getTracks()) {
+        const stop = track.stop.bind(track);
+        track.stop = () => { clearInterval(timer); window.__cameraStops++; stop(); };
+      }
+      return stream;
+    };
+  }, orientation);
+  await page.getByRole("button", { name: "Import transfer QR", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Import connection transfer" });
+  await dialog.getByLabel("Transfer passphrase", { exact: true }).fill("synthetic transfer passphrase");
+  await dialog.getByRole("button", { name: "Scan with camera", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("QR code loaded.");
+  await expect(dialog.locator("video")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__cameraStops)).toBe(1);
+  await dialog.getByRole("button", { name: "Review settings", exact: true }).click();
+  await expect(dialog.getByText("Synthetic runner", { exact: true })).toBeVisible();
+  await expect(dialog).toContainText("COROS account matches this device.");
+  await expect(dialog.getByRole("heading", { name: "Replace connection settings?" })).toBeVisible();
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => ["save_calendar_publishing", "plan_sync_configure", "strava_configure"].includes(call.command)))).toEqual([]);
+});
+
+for (const fault of ["pending playback", "transient frame"]) test(`connection transfer camera keeps scanning through ${fault}`, async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await emulateTransferCamera(page);
+  await page.goto("/desk.html#settings/transfer");
+  await page.evaluate(async fault => {
+    const { default: QRCode } = await import("/node_modules/.vite/deps/qrcode.js");
+    const canvas = document.createElement("canvas");
+    await QRCode.toCanvas(canvas, "runalytics:connections:1:synthetic-camera-code", { width: 600 });
+    window.__cameraStops = 0;
+    navigator.mediaDevices.getUserMedia = async () => {
+      const stream = canvas.captureStream(5);
+      const timer = setInterval(() => canvas.getContext("2d").fillRect(0, 0, 1, 1), 100);
+      for (const track of stream.getTracks()) {
+        const stop = track.stop.bind(track);
+        track.stop = () => { clearInterval(timer); window.__cameraStops++; stop(); };
+      }
+      return stream;
+    };
+    if (fault === "pending playback") {
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () { void play.call(this); return new Promise(() => {}); };
+    } else {
+      const getImageData = CanvasRenderingContext2D.prototype.getImageData;
+      let fail = true;
+      CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+        if (fail) { fail = false; throw new DOMException("Frame not ready", "InvalidStateError"); }
+        return getImageData.apply(this, args);
+      };
+    }
+  }, fault);
+  await page.getByRole("button", { name: "Import transfer QR", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Import connection transfer" });
+  await dialog.getByRole("button", { name: "Scan with camera", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("QR code loaded.");
+  await expect(dialog.locator("video")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__cameraStops)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test("connection transfer camera decodes locally and stops capture after scanning and close", async ({page}) => {
-  await page.addInitScript(() => { Object.defineProperty(navigator,"userAgent",{get:()=>"iPhone"}); });
+  await emulateTransferCamera(page);
   await page.goto("/desk.html#settings/transfer");
   await page.evaluate(async () => {
     const {default:QRCode}=await import("/node_modules/.vite/deps/qrcode.js");
@@ -5112,7 +5202,7 @@ for(const width of [320,390,1440]) for(const theme of ["light","dark"]) {
       return {code:jsQR(pixels.data,pixels.width,pixels.height)?.data,background:[...pixels.data.slice(0,3)]};
     });
     expect(qr.code).toMatch(/^runalytics:connections:1:/);
-    expect(qr.background).toEqual(theme === "dark" ? [36,38,44] : [255,255,255]);
+    expect(qr.background).toEqual(theme === "dark" ? [243,245,247] : [255,255,255]);
     const footerGap=await dialog.locator(".transfer-export-footer").evaluate(element=>{
       const [link,text]=[...element.children].map(child=>child.getBoundingClientRect());
       return text.top-link.bottom;

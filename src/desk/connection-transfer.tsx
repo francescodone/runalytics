@@ -44,6 +44,18 @@ async function checkIdentity(value: Connections): Promise<IdentityCheck> {
     details: [source && target ? corosMismatch ? t("COROS accounts differ. Sign in to the source account before importing.") : t("COROS account matches this device.") : t("COROS account could not be compared. Connect the same account on both devices."), ...(sourceAthlete ? [targetAthlete ? stravaMismatch ? t("Strava accounts differ: QR athlete {{value0}}, this device {{value1}}.", { value0: sourceAthlete, value1: targetAthlete }) : t("Strava athlete {{value0}} matches this device.", { value0: sourceAthlete }) : t("QR belongs to Strava athlete {{value0}}; this device is not connected to Strava.", { value0: sourceAthlete })] : [t("No Strava athlete identity is included; Strava account ownership cannot be compared.")])],
   };
 }
+function readQrImage(pixels: ImageData) {
+  const options = { inversionAttempts: "dontInvert" as const };
+  const found = jsQR(pixels.data, pixels.width, pixels.height, options);
+  if (found) return found;
+  // Invert before binarization to support QR images exported by older dark-mode builds.
+  for (let offset = 0; offset < pixels.data.length; offset += 4) {
+    pixels.data[offset] = 255 - pixels.data[offset];
+    pixels.data[offset + 1] = 255 - pixels.data[offset + 1];
+    pixels.data[offset + 2] = 255 - pixels.data[offset + 2];
+  }
+  return jsQR(pixels.data, pixels.width, pixels.height, options);
+}
 const prefix = "runalytics:connections:1:";
 const setupTransferKey = "runalytics.onboarding.encrypted-transfer";
 const encode = (bytes: Uint8Array) => btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(""));
@@ -133,9 +145,11 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
         context.fillStyle = styles.getPropertyValue(token).trim();
         context.fillRect(0, 0, 1, 1);
         const pixels = context.getImageData(0, 0, 1, 1).data;
-        return "#" + Array.from(pixels.slice(0, 3), value => value.toString(16).padStart(2, "0")).join("");
+        return { hex: "#" + Array.from(pixels.slice(0, 3), value => value.toString(16).padStart(2, "0")).join(""), luminance: pixels[0] * 299 + pixels[1] * 587 + pixels[2] * 114 };
       };
-      const png = await QRCode.toDataURL(encryptedCode, {errorCorrectionLevel:"M",width:1000,margin:4,color:{dark:color("--desk-ink"),light:color("--desk-surface")}});
+      // QR modules must stay darker than their quiet zone, including in dark appearance.
+      const [dark, light] = [color("--desk-ink"), color("--desk-surface")].sort((a, b) => a.luminance - b.luminance);
+      const png = await QRCode.toDataURL(encryptedCode, {errorCorrectionLevel:"M",width:1000,margin:4,color:{dark:dark.hex,light:light.hex}});
       if (active) setImage(png);
     };
     void render().catch(() => setCameraError(t("Could not render the QR image. Close and try again.")));
@@ -144,35 +158,61 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
     return () => { active = false; observer.disconnect(); };
   }, [encryptedCode]);
   useEffect(() => {
-    if (!camera) return;
+    const element = video.current;
+    if (!camera || !element) return;
     let stopped = false;
     let stream: MediaStream | undefined;
     let frame = 0;
     let lastScan = 0;
+    let attempt = 0;
     const canvas = document.createElement("canvas");
-    const scan = (timestamp = 0) => {
-      const element = video.current;
-      if (stopped || !element) return;
-      if (timestamp - lastScan >= 150 && element.readyState >= 2 && element.videoWidth) {
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      cancelAnimationFrame(frame);
+      stream?.getTracks().forEach(track => track.stop());
+      element.pause();
+      element.srcObject = null;
+    };
+    const fail = () => {
+      if (stopped) return;
+      stop();
+      setCameraError(t("Camera unavailable or permission denied. Upload a QR image instead."));
+      setCamera(false);
+    };
+    const scan = (timestamp: number) => {
+      if (stopped) return;
+      if (timestamp - lastScan >= 150 && element.readyState >= 2 && element.videoWidth && element.videoHeight) {
         lastScan = timestamp;
-        const scale = Math.min(1, 800 / Math.max(element.videoWidth, element.videoHeight));
-        canvas.width = Math.round(element.videoWidth * scale);
-        canvas.height = Math.round(element.videoHeight * scale);
-        const context = canvas.getContext("2d", {willReadFrequently:true})!;
-        context.drawImage(element, 0, 0, canvas.width, canvas.height);
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-        const found = jsQR(pixels.data, pixels.width, pixels.height);
-        if (found) { setCode(found.data); setPreview(null); setCamera(false); return; }
+        try {
+          // Alternate the whole frame with a detailed crop so dense transfer codes retain their modules.
+          const detailed = attempt++ % 2 === 1;
+          const side = Math.min(element.videoWidth, element.videoHeight);
+          const width = detailed ? side : element.videoWidth;
+          const height = detailed ? side : element.videoHeight;
+          const scale = Math.min(1, (detailed ? 1280 : 800) / Math.max(width, height));
+          canvas.width = Math.round(width * scale);
+          canvas.height = Math.round(height * scale);
+          const context = canvas.getContext("2d", {willReadFrequently:true})!;
+          context.drawImage(element, (element.videoWidth - width) / 2, (element.videoHeight - height) / 2, width, height, 0, 0, canvas.width, canvas.height);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+          const found = readQrImage(pixels);
+          if (found) { stop(); setCode(found.data); setPreview(null); setCamera(false); return; }
+        } catch {
+          // A camera frame can be temporarily unreadable during startup or orientation changes.
+        }
       }
       frame = requestAnimationFrame(scan);
     };
     if (!navigator.mediaDevices?.getUserMedia) { setCameraError(t("Camera unavailable. Upload a QR image instead.")); setCamera(false); return; }
-    void navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}, audio:false}).then(async source => {
-      stream = source;
+    void navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}}, audio:false}).then(source => {
       if (stopped) { source.getTracks().forEach(track => track.stop()); return; }
-      if (video.current) { video.current.srcObject = source; await video.current.play(); scan(); }
-    }).catch(() => { setCameraError(t("Camera unavailable or permission denied. Upload a QR image instead.")); setCamera(false); });
-    return () => { stopped = true; cancelAnimationFrame(frame); stream?.getTracks().forEach(track => track.stop()); };
+      stream = source;
+      element.srcObject = source;
+      frame = requestAnimationFrame(scan);
+      void element.play().catch(fail);
+    }).catch(fail);
+    return stop;
   }, [camera]);
   const loadImage = async (file: File) => {
     setCamera(false);
@@ -187,7 +227,7 @@ function TransferDialog({mode, onClose, setupWatch, watchConnected, onImported}:
       const context = canvas.getContext("2d")!;
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-      const found = jsQR(pixels.data, pixels.width, pixels.height);
+      const found = readQrImage(pixels);
       if (!found) throw new Error(t("No QR code found in this image."));
       setCode(found.data);
     } finally { bitmap.close(); }

@@ -46,13 +46,21 @@ contracts, not claims that live services or deployed native binaries were tested
   credentials/athlete ID, a COROS comparison code (`identity.corosCode`) and an
   optional runner name. It excludes OAuth sessions/access/refresh tokens, plans
   and activity history. Deprecated assistant fields are discarded on decode.
+  Exported QR images keep dark modules on a light quiet zone in both appearances,
+  using the existing theme colors without inverting the QR in dark mode. Camera
+  and image imports also accept inverted QRs from older dark-mode builds.
   [Transfer encoder/decoder](../../src/desk/connection-transfer.tsx),
   [native export](../../src-tauri/src/calendar_publish.rs).
 - Import requires account comparison, explicit acknowledgement when identity
   cannot be verified, and review before replacement; known mismatches block it.
   Setup can scan before sign-in, but applying settings still requires the watch
-  flow. Passphrases/decrypted bundles do not persist across authorization;
-  camera tracks stop on scan, close or source change. Native desktop supports
+  flow. Passphrases/decrypted bundles do not persist across authorization.
+  The camera requests rear-facing HD capture and alternates a bounded whole-frame
+  scan with a higher-detail center crop for dense encrypted codes. Scanning follows
+  readable video frames without waiting for the playback promise and retries
+  transient frame-read failures. A decoded QR closes capture immediately and loads
+  the encrypted code; passphrase review and explicit replacement remain required.
+  Camera tracks stop on scan, close or source change. Native desktop supports
   image upload rather than camera capture.
   [Transfer flow](../../src/desk/connection-transfer.tsx).
 - This documentation task did not audit secret history or access live Keychain

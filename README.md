@@ -42,6 +42,14 @@ The iPhone build is distributed unsigned for sideloading, not through the App St
 4. Use **Activities** to review runs and **Health** to track recovery and
     review proposed adjustments.
 
+During setup, leave threshold pace empty to use the watch's synced threshold
+estimate, or estimate your roughly one-hour race pace from a recent race result.
+This sets tempo and interval paces; if the watch has no estimate, enter one manually
+or sync the watch before continuing. Leave weekly mileage empty to use recent
+complete weeks of synced running history (a conservative baseline is used without
+history). Your longest comfortable recent run sets the starting long-run distance;
+leave it empty to estimate that distance from weekly mileage.
+
 ### Log out or switch COROS accounts
 
 Each **COROS login ID identifies a separate user profile**. Plans, downloaded
@@ -76,7 +84,9 @@ for an empty profile and never overwrites an existing user's plans or settings.
 
 - **Plan sync:** save a GitHub token with `gist` scope on both devices in
    Settings. Use the same COROS account and the same GitHub account's Gist channel.
-   Plans are stored in an encrypted private Gist. Update both apps before syncing.
+   Plans are stored in an encrypted private Gist. Sync runs automatically once
+   configured: setup asks for the connection, not a separate sync opt-in, and
+   credentials can be added later in Settings. Update both apps before syncing.
 - **Calendar subscription:** in **Settings → Calendar and devices**, provide
    an exact HTTPS upload-file URL and a direct, unauthenticated HTTPS read URL
    for the same ICS file, then enable automatic publishing. Use a dedicated file:
@@ -153,4 +163,4 @@ Use only one release path per version.
 - [Shared motion contracts](docs/design-system/motion.md)
 - [Localization](docs/i18n.md)
 - [Supabase foundation](docs/supabase-backend.md) — inactive; not a deployed backend.
-- [Garmin sign-in and COROS parity plan](docs/ways-of-work/plan/wearable-integrations/garmin-parity/implementation-plan.md) — proposed; Garmin integration is not implemented.
+- [Brand-agnostic users and COROS/Garmin parity plan](docs/ways-of-work/plan/wearable-integrations/garmin-parity/implementation-plan.md) — proposed shared-device user isolation and common activity, calendar, watch and Strava workflows; Garmin integration is not implemented.

@@ -122,7 +122,7 @@ for (const scenario of ["matching", "mismatch", "sync-failure", "restored-plan"]
   }
 });
 
-for (const [step, question] of [["strava", "Connect Strava?"], ["calendar", "Connect a calendar or GitHub Gist?"], ["devices", "Sync across devices?"]]) test(`setup requires a choice on ${step}`, async ({ page }) => {
+for (const [step, question] of [["strava", "Connect Strava?"], ["calendar", "Connect a calendar or GitHub Gist?"]]) test(`setup requires a choice on ${step}`, async ({ page }) => {
   await page.addInitScript(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada" })), step);
   await page.goto("/desk.html?noPlan#training");
   await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
@@ -139,6 +139,115 @@ for (const [step, query] of [["strava-config", ""], ["calendar-config", ""], ["d
   await expect(actions.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
   await actions.getByRole("button", { name: "Not now" }).click();
   await expect(page.locator('.onboarding-step[data-step-state="present"] h1')).not.toHaveText(step);
+});
+
+for (const devices of [null, false, true]) test(`saved device sync choice ${devices} resumes connection setup without an opt-in`, async ({ page }) => {
+  await page.addInitScript(devices => {
+    if (!localStorage.getItem("runalytics.onboarding.v1")) localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "devices", devices, name: "Ada", threshold: "5:10" }));
+  }, devices);
+  await page.goto("/desk.html?noPlan&syncSetup#training");
+  await expect(page.getByRole("heading", { name: "Set up device sync", exact: true })).toBeVisible();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await expect(page.getByText("Device sync runs automatically once your GitHub connection is saved. You can add the connection later in Settings.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Set up device sync", exact: true })).toBeVisible();
+  await page.locator(".onboarding-actions").getByRole("button", { name: "Not now", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "What are you training for?", exact: true })).toBeVisible();
+  const draft = await page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1")));
+  expect(draft).toMatchObject({ name: "Ada", threshold: "5:10" });
+  expect(draft).not.toHaveProperty("devices");
+  expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "plan_sync_configure"))).toBe(false);
+});
+
+for (const scenario of ["watch", "manual", "missing-watch-pace"]) test(`setup baseline guidance and ${scenario} reach preview and creation`, async ({ page }) => {
+  await page.addInitScript(scenario => {
+    if (!localStorage.getItem("runalytics.onboarding.v1")) localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "pace", name: "Ada" }));
+    if (scenario === "missing-watch-pace") {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        return command === "plan_defaults" ? { ...result, thresholdSecKm: null } : result;
+      };
+    }
+  }, scenario);
+  await page.goto("/desk.html?noPlan#training");
+  const pace = page.getByRole("textbox", { name: "Threshold pace (min/km)", exact: true });
+  const next = page.getByRole("button", { name: "Continue", exact: true });
+  await expect(pace).toHaveValue("");
+  await expect(pace).toHaveAccessibleDescription(/Leave empty to get it from your watch\..*recent race.*tempo and interval/);
+  if (scenario === "missing-watch-pace") {
+    await expect(page.getByText("Your watch has no threshold pace yet. Sync your watch or enter a pace to continue.")).toBeVisible();
+    await expect(next).toBeDisabled();
+  }
+  if (scenario !== "watch") {
+    await pace.fill("invalid");
+    await expect(next).toBeDisabled();
+    await pace.fill("5:10");
+  }
+  await expect(next).toBeEnabled();
+  await next.click();
+  const mileage = page.getByRole("spinbutton", { name: "Current weekly mileage (km)", exact: true });
+  await expect(mileage).toHaveValue("");
+  await expect(mileage).toHaveAccessibleDescription(/Leave empty to get it from your watch\..*starting training load.*recent complete weeks/);
+  if (scenario === "manual") await mileage.fill("42.5");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.reload();
+  await expect(pace).toHaveValue(scenario === "watch" ? "" : "5:10");
+  await next.click();
+  await expect(mileage).toHaveValue(scenario === "manual" ? "42.5" : "");
+  await next.click();
+  const longRun = page.getByRole("spinbutton", { name: "What is your longest recent long run (km)?", exact: true });
+  await expect(longRun).toHaveAccessibleDescription(/not your all-time record.*build gradually.*weekly mileage/);
+  for (const heading of ["Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days", "Your plan preview"]) {
+    await next.click();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+  const build = page.getByRole("button", { name: "Build plan", exact: true });
+  await expect(build).toBeEnabled();
+  const expected = { thresholdSecKm: scenario === "watch" ? 280 : 310, currentWeeklyKm: scenario === "manual" ? 42.5 : null, recentLongRunKm: null };
+  expect(await page.evaluate(() => window.__deskCalls.filter(call => call.command === "preview_plan").at(-1).args.request)).toMatchObject(expected);
+  await build.click();
+  expect(await page.evaluate(() => window.__deskCalls.find(call => call.command === "create_plan").args.request)).toMatchObject(expected);
+});
+
+for (const theme of ["light", "dark"]) for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }, { width: 667, height: 375 }, { width: 1440, height: 900 }]) test(`setup date inputs stay inside their labels ${theme} ${viewport.width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize(viewport);
+  await page.addInitScript(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "start", name: "Ada" })));
+  await page.goto(`/desk.html?noPlan&theme=${theme}#training`);
+  if (viewport.width <= 800) await page.locator(".onboarding-shell").evaluate(element => {
+    element.style.setProperty("--setup-safe-right", "44px");
+    element.style.setProperty("--setup-safe-left", "44px");
+  });
+  for (const label of ["Start date", "End date"]) {
+    const input = page.locator('input[type="date"]');
+    await expect(input).toHaveAccessibleName(label);
+    await input.fill(label === "Start date" ? "2099-11-18" : "2100-01-27");
+    for (const scale of [1, 2]) {
+      await page.evaluate(scale => { document.documentElement.style.fontSize = `${scale * 100}%`; }, scale);
+      await input.scrollIntoViewIfNeeded();
+      await input.focus();
+      await expect(input).toBeFocused();
+      const bounds = await input.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        const parent = element.parentElement.getBoundingClientRect();
+        const shell = element.closest(".onboarding-shell");
+        return { left: rect.left, right: rect.right, parentLeft: parent.left, parentRight: parent.right, width: rect.width, overflow: shell.scrollWidth - shell.clientWidth };
+      });
+      expect(bounds.left).toBeGreaterThanOrEqual(bounds.parentLeft);
+      expect(bounds.right).toBeLessThanOrEqual(bounds.parentRight + 1);
+      expect(bounds.right).toBeLessThanOrEqual(viewport.width);
+      expect(bounds.width).toBeGreaterThan(0);
+      expect(bounds.overflow).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: testInfo.outputPath(`${label.toLowerCase().replace(" ", "-")}-${scale}x.png`) });
+    }
+    await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
+    const next = page.getByRole("button", { name: "Continue", exact: true });
+    await next.scrollIntoViewIfNeeded();
+    await expect(next).toBeInViewport();
+    await next.click();
+  }
+  await expect(page.getByRole("textbox", { name: "Threshold pace (min/km)", exact: true })).toBeVisible();
 });
 
 test("Strava setup enables Continue after connecting", async ({ page }) => {
@@ -281,7 +390,7 @@ for (const width of [320, 1440]) test(`recent long run persists and reaches prev
   await page.setViewportSize({ width, height: 740 });
   await page.addInitScript(() => { if (!localStorage.getItem("runalytics.onboarding.v1")) localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "recent-long-run", name: "Ada", threshold: "4:40" })); });
   await page.goto("/desk.html?noPlan#training");
-  const field = page.getByLabel("What is your longest recent long run (km)?");
+  const field = page.getByRole("spinbutton", { name: "What is your longest recent long run (km)?", exact: true });
   await field.fill("2");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Enter a distance between 3 and 100 km");
@@ -308,9 +417,8 @@ for (const width of [320, 1440]) test(`all optional branch combinations remain n
     ["Import connections with a QR code?", "Import your connections"],
     ["Connect Strava?", "Connect with Strava"],
     ["Connect a calendar or GitHub Gist?", "Calendar apps"],
-    ["Sync across devices?", "Set up device sync"],
   ];
-  for (let combination = 0; combination < 16; combination++) {
+  for (let combination = 0; combination < 2 ** questions.length; combination++) {
     await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe(combination === 0 ? "transfer" : "goal");
     await page.evaluate(() => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step: "transfer", name: "Ada", threshold: "4:40" })));
     await page.reload();
@@ -329,6 +437,8 @@ for (const width of [320, 1440]) test(`all optional branch combinations remain n
         await page.getByRole("button", { name: "Continue", exact: true }).click();
       }
     }
+    await expect(page.getByRole("heading", { name: "Set up device sync", exact: true })).toBeVisible();
+    await page.locator(".onboarding-actions").getByRole("button", { name: "Not now", exact: true }).click();
     await expect(page.getByRole("heading", { name: "What are you training for?" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
   }
@@ -337,7 +447,7 @@ for (const width of [320, 1440]) test(`all optional branch combinations remain n
 for (const width of [320, 1440]) test(`wizard steps fit and remain reachable at ${width}px`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 640 });
   await page.goto("/desk.html?noPlan&syncSetup#training");
-  const steps = ["name", "watch", "transfer", "transfer-config", "strava", "strava-config", "publishing", "calendar", "calendar-config", "devices", "devices-config", "goal", "method", "distance", "start", "end", "pace", "mileage", "recent-long-run", "frequency", "rest-days", "long-day", "quality", "preview"];
+  const steps = ["name", "watch", "transfer", "transfer-config", "strava", "strava-config", "publishing", "calendar", "calendar-config", "devices-config", "goal", "method", "distance", "start", "end", "pace", "mileage", "recent-long-run", "frequency", "rest-days", "long-day", "quality", "preview"];
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("runalytics.onboarding.v1") || "{}").step)).toBe("transfer");
   for (const step of steps) {
     await page.evaluate(step => localStorage.setItem("runalytics.onboarding.v1", JSON.stringify({ step, name: "Ada", threshold: "4:40", transfer: true, strava: true, calendar: true, devices: true })), step);
@@ -481,7 +591,8 @@ for (const width of [320, 1440]) test(`each wizard step transitions in both dire
   await page.setViewportSize({ width, height: 740 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.goto("/desk.html?noPlan#training");
-  const expected = ["What should we call you?", "Connect your watch", "Connect Strava?", "Connect a calendar or GitHub Gist?", "Sync across devices?", "What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days", "Your plan preview"];
+  const expected = ["What should we call you?", "Connect your watch", "Connect Strava?", "Connect a calendar or GitHub Gist?", "Set up device sync", "What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days", "Your plan preview"];
+  await expect(page.getByRole("heading", { name: "Import connections with a QR code?", exact: true })).toBeVisible();
   for (const heading of expected) {
     const choice = page.getByRole("radio", { name: "Not now" });
     if (await choice.isVisible()) await choice.check();
@@ -511,7 +622,7 @@ test("configuration controls remain reachable on a short mobile viewport", async
   await expect(field).toBeInViewport();
   await expect(page.getByRole("button", { name: "Save calendar settings" })).toBeVisible();
   await page.locator(".onboarding-actions").getByRole("button", { name: "Not now" }).click();
-  await expect(page.getByRole("region", { name: "Sync across devices?", exact: true })).toBeFocused();
+  await expect(page.getByRole("region", { name: "Set up device sync", exact: true })).toBeFocused();
   expect(await page.locator(".onboarding-shell").evaluate(element => element.scrollTop)).toBe(0);
 });
 
@@ -647,12 +758,12 @@ for (const width of [320, 390, 820, 1440]) test(`onboarding resumes and previews
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("Ada");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  for (const question of ["Connect Strava?", "Connect a calendar or GitHub Gist?", "Sync across devices?"]) {
+  for (const question of ["Connect Strava?", "Connect a calendar or GitHub Gist?"]) {
     await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
     await page.locator('.onboarding-step[data-step-state="present"]').getByRole("radio", { name: "Not now" }).check();
     await page.getByRole("button", { name: "Continue", exact: true }).click();
   }
-  for (const question of ["What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days"]) {
+  for (const question of ["Set up device sync", "What are you training for?", "Training method", "Distance", "Start date", "End date", "Threshold pace (min/km)", "Current weekly mileage (km)", "What is your longest recent long run (km)?", "Runs per week", "Which days must stay free?", "Long run day", "Tempo and interval days"]) {
     await expect(page.getByRole("heading", { name: question, exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Continue", exact: true }).click();
   }

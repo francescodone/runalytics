@@ -1,4 +1,10 @@
 {
+  "Device sync runs automatically once your GitHub connection is saved. You can add the connection later in Settings.": "保存 GitHub 连接后，设备间同步会自动运行。你可以稍后在设置中添加连接。",
+  "Leave empty to get it from your watch.": "留空以使用手表提供的数值。",
+  "Use a recent race result to estimate the pace you could sustain for about an hour, or use your watch's threshold estimate. This sets your tempo and interval training paces.": "根据近期比赛成绩估算你能持续约一小时的配速，或使用手表估算的阈值配速。此数值用于设定节奏跑和间歇训练的配速。",
+  "Your watch has no threshold pace yet. Sync your watch or enter a pace to continue.": "你的手表尚未提供阈值配速。请同步手表或输入配速以继续。",
+  "Your average weekly running distance sets the starting training load, so the plan builds from what you already run. If left empty, Runalytics uses your synced recent complete weeks, or a conservative baseline when no history is available.": "平均每周跑量决定初始训练负荷，让计划以你现有的跑量为基础。留空时，Runalytics 会使用近期已同步的完整周数据；没有历史记录时则采用保守的基准值。",
+  "Enter the longest run you have comfortably completed recently, not your all-time record. This sets a realistic starting distance for your long runs so they build gradually. Leave empty to estimate it from your weekly mileage.": "请输入近期轻松完成的最长跑步距离，而非个人历史最长纪录。这能为长距离跑设定合理的起点，让距离逐步增加。留空则根据每周跑量估算。",
   "Your profile stays saved on this device. Sign in with the same COROS account to restore your plans and settings, or use a different account for a separate profile.": "你的个人资料会保留在此设备上。使用同一个COROS账号登录可恢复计划和设置，使用其他账号则会打开独立的个人资料。",
   "Sign in to your profile": "登录你的个人资料",
   "Each COROS login has its own plans, history and settings. Sign in with the same account to restore your saved profile.": "每个COROS账号都有独立的计划、历史记录和设置。使用同一个账号登录即可恢复已保存的个人资料。",
