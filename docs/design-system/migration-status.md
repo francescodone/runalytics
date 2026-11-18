@@ -1,3 +1,32 @@
+## Slower Icon Interaction Playback, 2026-11-18
+
+Shared icon replays now run for 1120ms instead of 560ms; close and outcome
+feedback runs for 360ms instead of 180ms. Dedicated icon tokens leave press,
+selection, surface, loading and result-hold timing unchanged. Library one-shots
+also stretch shorter source clips to the shared interval rather than keeping a
+native-speed floor. Custom SVG recipes and native iOS tab artwork use the same
+slower replay. Commands and navigation still execute immediately; eligibility,
+interruption, reduced-motion/forced-colour fallbacks and original artwork remain
+unchanged.
+
+Verification: production build, 64 selected synthetic-IPC Chromium checks, 14
+focused WebKit checks and seven native iOS simulator tab-icon tests passed.
+The new rendered-frame regression failed before the change and now verifies
+continued motion after 600ms and bounded settlement for custom, short catalog
+and longer catalog icons, in both development and packaged production assets.
+Existing checks cover keyboard/touch activation, immediate navigation, single
+writes, pending pace, outcomes, native fields, focus return and cancellation.
+All 40 Prism responsive cases passed: light/dark widths 320, 360, 375, 390, 414,
+430, 600, 768, 820, 1024, 1280, 1366, 1440, 1600, 1920 and 2560px; short
+viewports 537x740, 913x480 and 667x375; 820px settings/details; and 200% text at
+320/820/1440px. Plan-action screenshots at 320px light and 1440px dark were
+inspected. Initial browser attempts lost reused previews; the complete passing
+runs managed preview and runner together and cleaned up the preview afterward.
+Whitespace checks passed. Browser checks use synthetic IPC, not native integration;
+native verification covers the tab-icon package in an iOS simulator, not the full
+app, physical devices or live providers. The referenced foundations and components
+documents remain absent.
+
 ## Recorded Completion Counters, 2026-11-17
 
 Week and Month now count completed calendar activities and sum their recorded

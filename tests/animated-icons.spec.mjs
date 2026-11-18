@@ -168,8 +168,8 @@ for (const packaged of [false, true]) test(`animated interaction icons keep movi
     }));
     await control.hover();
     const frames = await playback;
-    expect(new Set(frames.filter(frame => frame.elapsed > 600 && frame.elapsed < 1000).map(frame => frame.geometry)).size).toBeGreaterThan(2);
-    expect(new Set(frames.filter(frame => frame.elapsed > 1250).map(frame => frame.geometry)).size).toBe(1);
+    expect(new Set(frames.filter(frame => frame.elapsed > 600 && frame.elapsed < 1000).map(frame => frame.geometry)).size, `${name} is still moving after 600ms`).toBeGreaterThan(2);
+    expect(new Set(frames.filter(frame => frame.elapsed > 1250).map(frame => frame.geometry)).size, `${name} settles after its one-shot replay`).toBe(1);
     expect(await control.evaluate((element, host) => element === host, host)).toBe(true);
     await expect(page).toHaveURL(/#help$/);
     expect(await page.evaluate(() => window.__deskCalls)).toEqual(calls);
