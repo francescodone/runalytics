@@ -47,6 +47,7 @@ export function Button({ children, tone = "normal", busy, icon, iconSize = 18, i
   </button>}</ControlAnimation>;
 }
 export function IconButton({ label, children, ...props }: ButtonProps & { label: string }) {
+  const tooltip = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -56,12 +57,40 @@ export function IconButton({ label, children, ...props }: ButtonProps & { label:
     document.addEventListener("keydown", dismiss);
     return () => document.removeEventListener("keydown", dismiss);
   }, [hovered, focused]);
+  useLayoutEffect(() => {
+    const element = tooltip.current;
+    const button = element?.closest("button");
+    if (!element?.showPopover || !button || props.disabled || props.busy || dismissed || !hovered && !focused) return;
+    element.showPopover();
+    const position = () => {
+      const anchor = button.getBoundingClientRect();
+      const styles = getComputedStyle(element);
+      const gap = parseFloat(styles.getPropertyValue("--tooltip-gap"));
+      const inset = parseFloat(styles.getPropertyValue("--space-2"));
+      const width = element.offsetWidth, height = element.offsetHeight;
+      let side = styles.getPropertyValue("--tooltip-side").trim();
+      if (side === "top" && anchor.top < height + gap + inset) side = "bottom";
+      else if (side === "bottom" && anchor.bottom + height + gap > innerHeight - inset) side = "top";
+      else if (side === "left" && anchor.left < width + gap + inset) side = "right";
+      const left = side === "left" ? anchor.left - width - gap : side === "right" ? anchor.right + gap : styles.getPropertyValue("--tooltip-align").trim() === "start" ? anchor.left : anchor.right - width;
+      const top = side === "top" ? anchor.top - height - gap : side === "bottom" ? anchor.bottom + gap : anchor.top + (anchor.height - height) / 2;
+      element.dataset.side = side;
+      element.style.left = `${Math.max(inset, Math.min(left, innerWidth - width - inset))}px`;
+      element.style.top = `${Math.max(inset, Math.min(top, innerHeight - height - inset))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(button); observer.observe(element);
+    window.addEventListener("resize", position);
+    document.addEventListener("scroll", position, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", position); document.removeEventListener("scroll", position, true); if (element.matches(":popover-open")) element.hidePopover(); };
+  }, [hovered, focused, dismissed, props.disabled, props.busy, label]);
   return <Button {...props} className={`icon-button ${props.className ?? ""}`} aria-label={label}
     onPointerEnter={event => { if (event.pointerType !== "touch") { setHovered(true); setDismissed(false); } props.onPointerEnter?.(event); }}
-    onPointerLeave={event => { setHovered(false); setDismissed(false); props.onPointerLeave?.(event); }}
-    onFocus={event => { setFocused(true); setDismissed(false); props.onFocus?.(event); }}
+    onPointerLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) { setHovered(false); setDismissed(false); } props.onPointerLeave?.(event); }}
+    onFocus={event => { setFocused(event.currentTarget.matches(":focus-visible")); setDismissed(false); props.onFocus?.(event); }}
     onBlur={event => { setFocused(false); setDismissed(false); props.onBlur?.(event); }}>
-    {children}<span className="control-tooltip" data-dismissed={dismissed || undefined} aria-hidden="true">{label}</span>
+    {children}<span ref={tooltip} className="control-tooltip" popover={"showPopover" in HTMLElement.prototype ? "manual" : undefined} data-dismissed={dismissed || undefined} aria-hidden="true">{label}</span>
   </Button>;
 }
 export function ErrorNotice({ error, retry }: { error: string | null; retry?: () => void }) {
@@ -86,15 +115,17 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     const element = dialog.current!;
     const unlock = lockPageScroll();
     element.showModal();
-    const initialFocus = element.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? element.querySelector<HTMLElement>(".dialog-surface > header button");
-    initialFocus?.focus({ preventScroll: true });
+    const content = element.querySelector<HTMLElement>(".dialog-surface")!;
+    const controls = [...content.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')].filter(node => node.getClientRects().length && !node.closest('[inert], [hidden], .dialog-surface > header'));
+    const initialFocus = controls.find(node => node.matches("input,select,textarea")) ?? controls[0] ?? content;
+    initialFocus.focus({ preventScroll: true });
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current(); };
     const keys = (event: KeyboardEvent) => {
       if (event.key !== "Tab" || event.target instanceof Element && event.target.closest("dialog") !== element) return;
       const focusable = [...element.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]')].filter(node => node.getClientRects().length && !node.closest('[inert], [hidden]'));
       const first = focusable[0], last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === content)) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === content)) { event.preventDefault(); first?.focus(); }
     };
     element.addEventListener("cancel", cancel);
     element.addEventListener("keydown", keys);
@@ -106,7 +137,7 @@ export function Dialog({ title, children, onClose, wide = false }: { title: stri
     onDragEnd={(_, info) => { if (info.offset.y > 96 || info.offset.y > 24 && info.velocity.y > 650) onClose(); }}
     onClick={event => { if (present && event.target === dialog.current) onClose(); }}>
     <div className="dialog-grip" aria-hidden="true" onPointerDown={event => { if (surface.compact && !surface.reduced) drag.start(event); }}><span /></div>
-    <div className="dialog-surface"><header><h2>{title}</h2><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
+    <div className="dialog-surface" tabIndex={-1}><header><h2>{title}</h2><IconButton label={t("Close {{value0}}", { value0: title })} onClick={onClose}><IconX size={20} aria-hidden="true" /></IconButton></header>{children}</div>
   </motion.dialog>;
 }
 export function InfoDialog({ title, children, wide = false, className = "" }: { title: string; children: ReactNode; wide?: boolean; className?: string }) {

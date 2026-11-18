@@ -116,6 +116,7 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .inspector-backdrop { display: none; position: fixed; inset: 0; z-index: var(--layer-inspector); background: var(--desk-scrim); }
 @media (min-width: 801px) { .inspector-backdrop { display: block; } }
 .dialog-surface { padding: var(--space-6); }
+.dialog-surface:focus { outline: none; }
 .dialog-surface > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
 .dialog-surface > header h2 { margin: var(--space-2) 0 0; }
 .dialog-action { margin-top: var(--space-3); }
@@ -378,7 +379,8 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .journal-workspace .desk-inspector { border: 0; padding: var(--space-2) 0 var(--space-6) var(--space-6); border-left: 1px solid var(--desk-line); background: transparent; }
 .journal-workspace .desk-inspector { scroll-padding-top: var(--space-2); }
 .journal-workspace .inspector-bar .icon-button { scroll-margin-top: var(--space-2); }
-.inspector-bar .icon-button:first-child .control-tooltip { left: 0; right: auto; }
+.inspector-bar .icon-button:first-child .control-tooltip { --tooltip-align: start; }
+.inspector-bar .icon-button:first-child .control-tooltip:not([popover]) { left: 0; right: auto; }
 .review-heading > span { font-size: var(--text-caption); }.review-heading h2 { font-size: var(--text-page); margin: var(--space-2) 0 0; }
 .activity-review .metrics-line { gap: var(--space-5) var(--space-7); }.activity-review .desk-metric dd { font-size: var(--text-heading); }
 .route-figure { margin: var(--space-6) 0; position: relative; }
@@ -389,8 +391,9 @@ legend { font-weight: var(--weight-semibold); margin-bottom: var(--space-3); }
 .route-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); background: var(--desk-surface); border: 1px solid var(--desk-line); border-radius: var(--radius-pill); }
 .route-controls .desk-button { box-shadow: none; }
 .route-controls .desk-button:last-child { margin-top: var(--space-1); }
-.route-controls .control-tooltip { top: 50%; right: calc(100% + var(--space-3)); translate: 0 -50%; }
-.route-controls .desk-button:is(:hover, :focus-visible) .control-tooltip { translate: 0 -50%; }
+.route-controls .control-tooltip { --tooltip-side: left; --tooltip-gap: var(--space-3); }
+.route-controls .control-tooltip:not([popover]) { top: 50%; right: calc(100% + var(--space-3)); translate: 0 -50%; }
+.route-controls .desk-button:is(:hover, :focus-visible) .control-tooltip:not([popover]) { translate: 0 -50%; }
 .route-figure figcaption { color: var(--desk-muted); font-size: var(--text-caption); margin-top: var(--space-2); }
 .route-marker { pointer-events: none; box-sizing: border-box; width: 24px; height: 24px; border-radius: 50%; box-shadow: var(--shadow-control); }
 .route-marker-start { display: grid; place-items: center; background: var(--desk-surface); color: var(--desk-action); }
@@ -814,7 +817,8 @@ meter { width: 100%; height: 10px; display: block; margin-top: var(--space-3); a
    .journal-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-3); border-left: 1px solid var(--desk-line); }
    .journal-placeholder h2, .journal-placeholder p { margin: 0; }
    .desk-appbar { overflow-y: auto; }
-   .desk-utilities .control-tooltip { top: auto; bottom: calc(100% + var(--space-2)); right: auto; left: 0; }
+   .desk-utilities .control-tooltip { --tooltip-side: top; --tooltip-align: start; }
+   .desk-utilities .control-tooltip:not([popover]) { top: auto; bottom: calc(100% + var(--space-2)); right: auto; left: 0; }
 }
 @media (min-width: 801px) and (max-width: 1180px) {
    .desk-appbar { padding: var(--space-5) var(--space-3); }

@@ -193,6 +193,59 @@ for (const theme of ["light", "dark"]) for (const width of [320, 390, 1440]) {
   });
 }
 
+for (const width of [820, 1440]) test(`sidebar tooltips escape the scroll container at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 480 });
+  for (const theme of ["light", "dark"]) {
+    await page.setViewportSize({ width, height: 480 });
+    await page.emulateMedia({ reducedMotion: theme === "light" ? "reduce" : "no-preference" });
+    await page.goto(`/desk.html?theme=${theme}#training/week`);
+    const sync = page.getByRole("button", { name: "Sync activities", exact: true });
+    const tooltip = sync.locator(".control-tooltip");
+    await sync.hover();
+    await expect(tooltip).toBeVisible();
+    await expect.poll(() => tooltip.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight
+        && [bounds.left + 8, bounds.right - 8].every(x => element.contains(document.elementFromPoint(x, bounds.top + bounds.height / 2)));
+    })).toBe(true);
+    await tooltip.hover();
+    await expect(tooltip).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`sidebar-tooltip-${theme}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(tooltip).toBeHidden();
+    await page.mouse.move(0, 0);
+    await page.keyboard.press("Tab");
+    await sync.focus();
+    await expect(tooltip).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 480 });
+    await expect.poll(() => tooltip.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight;
+    })).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(tooltip).toBeHidden();
+  }
+});
+
+test("touch opens dialogs without showing close hints or losing focus return", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+  try {
+    const page = await context.newPage();
+    await installDeskFixture(page);
+    await page.goto("/desk.html#settings/watch");
+    const opener = page.getByRole("button", { name: "Connection diagnostics", exact: true });
+    await opener.tap();
+    const dialog = page.getByRole("dialog", { name: "Connection diagnostics", exact: true });
+    const close = dialog.getByRole("button", { name: "Close Connection diagnostics", exact: true });
+    await expect(dialog.getByRole("button", { name: "Check COROS API", exact: true })).toBeFocused();
+    await expect(close.locator(".control-tooltip")).toBeHidden();
+    await close.tap();
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(page.locator(".control-tooltip:visible")).toHaveCount(0);
+  } finally { await context.close(); }
+});
+
 test("training toolbar tooltips escape clipping on hover and keyboard focus", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1464,8 +1517,11 @@ for (const width of [320, 1440]) test(`race estimate spacing and dialog focus at
   await basis.click();
   const dialog = page.getByRole("dialog", { name: "Estimate basis", exact: true });
   const close = dialog.getByRole("button", { name: "Close Estimate basis", exact: true });
-  await expect(close).toBeFocused();
+  await expect(dialog.locator(".dialog-surface")).toBeFocused();
+  await expect(close.locator(".control-tooltip")).toBeHidden();
   await expect(dialog.getByRole("heading")).not.toHaveAttribute("tabindex");
+  await page.keyboard.press("Shift+Tab");
+  await expect(close).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
@@ -1488,7 +1544,8 @@ for (const theme of ["light", "dark"]) {
       await opener.click();
       const dialog = page.getByRole("dialog", { name: "About pace insights", exact: true });
       const close = dialog.getByRole("button", { name: "Close About pace insights", exact: true });
-      await expect(close).toBeFocused();
+      await expect(dialog.locator(".dialog-surface")).toBeFocused();
+      await expect(close.locator(".control-tooltip")).toBeHidden();
       await expect(dialog.getByRole("heading", { name: "About pace insights", exact: true })).not.toHaveAttribute("tabindex");
       await page.keyboard.press("Tab");
       expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
@@ -1524,6 +1581,8 @@ for (const theme of ["light", "dark"]) {
       await page.screenshot({ path: testInfo.outputPath("dialog.png") });
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
       await expect(notice).toHaveCount(0);
+      await expect(dialog.locator(".dialog-surface")).toBeFocused();
+      await page.keyboard.press("Tab");
       await expect(close).toBeFocused();
       await close.click();
       await expect(opener).toBeFocused();

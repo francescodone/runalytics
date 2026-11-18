@@ -5418,6 +5418,47 @@ test("removing an assistant clears its key without deleting pain data", async ({
 });
 
 for (const width of [320, 1440]) {
+  test(`dialogs focus content without auto-selecting Close at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/desk.html?theme=dark#settings/watch");
+    const opener = page.getByRole("button", { name: "Connection diagnostics", exact: true });
+    await opener.click();
+    const dialog = page.getByRole("dialog", { name: "Connection diagnostics", exact: true });
+    const check = dialog.getByRole("button", { name: "Check COROS API", exact: true });
+    const close = dialog.getByRole("button", { name: "Close Connection diagnostics", exact: true });
+    await expect(check).toBeFocused();
+    await expect(close.locator(".control-tooltip")).toBeHidden();
+    await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "hidden");
+    expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+    await dialog.screenshot({ path: testInfo.outputPath("diagnostics-initial-focus.png") });
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(check).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(page.locator("#workspace")).toHaveCSS("overflow-y", "auto");
+    await page.keyboard.press("Enter");
+    await expect(check).toBeFocused();
+    await expect(close.locator(".control-tooltip")).toBeHidden();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    await page.goto("/desk.html#settings/thresholds");
+    await page.getByRole("button", { name: "Restore defaults", exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Restore training defaults?", exact: true });
+    await expect(confirmation.getByRole("button", { name: "Keep changes", exact: true })).toBeFocused();
+    expect(await page.evaluate(() => window.__deskCalls.some(call => call.command === "save_settings"))).toBe(false);
+    await page.keyboard.press("Escape");
+
+    await page.goto("/desk.html#training/week");
+    await page.getByRole("button", { name: "Schedule race or test", exact: true }).click();
+    const form = page.getByRole("dialog", { name: "Schedule race or test", exact: true });
+    await expect(form.locator('input:not([type="hidden"]),select,textarea').first()).toBeFocused();
+    await expect(form.locator("header .control-tooltip")).toBeHidden();
+  });
+
   test(`information dialogs preserve focus and scroll locks at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     for (const [route, title, content] of [

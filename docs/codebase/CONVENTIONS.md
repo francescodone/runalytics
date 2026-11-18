@@ -70,8 +70,11 @@ Follow surrounding formatting and use `git diff --check` for whitespace.
   [overlays](../../src/desk/overlays.tsx).
 - Pending/results stay in the original footprint; failed operations retain
   drafts and visible errors. Dialogs own Escape, focus containment, background
-  inertness, scroll locks and opener restoration. Focus a field/action, not a
-  heading; workspace navigation focuses the workspace. [UI](../../src/desk/ui.tsx),
+  inertness, scroll locks and opener restoration. Initial focus prefers a visible
+  field/content action, then the dialog surface, never the header Close button or
+  a heading; workspace navigation focuses the workspace. Icon-button hints escape
+  scroll clipping through the shared top-layer popover, retaining hover, keyboard
+  and Escape behavior. [UI](../../src/desk/ui.tsx),
   [overlays](../../src/desk/overlays.tsx), [shell](../../src/desk/main.tsx).
 - Shared motion uses 560ms arrivals, 500ms departures, 650ms counters, 60ms
   stagger and `cubic-bezier(.22, 1, .36, 1)`. CSS token readers must accept both

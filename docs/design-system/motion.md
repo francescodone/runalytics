@@ -211,7 +211,12 @@ begin before paint; dismissal, unmount and live reduced-motion changes cancel
 playback and restore inline transforms. Reduced motion opens directly at final
 size. Native overlay surfaces use the opaque material fallback instead of moving
 a backdrop-filtered layer; the stationary scrim retains blur. Dialogs enter the
-top layer and establish focus and scroll locks before paint.
+top layer and establish focus and scroll locks before paint. Initial focus goes
+to the first visible enabled field, otherwise the first content action (keeping
+cancel/keep actions first in confirmations), otherwise the dialog surface. The
+header close button stays in the Tab order but is not automatically selected;
+read-only surfaces hand off to it on Tab or Shift+Tab. Notification dismissal
+restores the prior dialog control, falling back to its surface rather than Close.
 For activity histories with more than 18 results, only the visible range and a
 three-row buffer are mounted; scrolling out of that range removes rows immediately
 rather than playing a departure. Shorter histories retain the existing row-presence
@@ -281,6 +286,12 @@ the first dialog opens.
 The header sync control uses the shared pending asset at its source playback
 speed while sync is active, with no additional CSS rotation. Reduced motion
 uses the same-source static artwork.
+
+Shared icon-button hints use manual top-layer popovers where supported, retaining
+the inline fallback and the existing hover delay, keyboard focus and Escape
+semantics. Placement follows the control, flips at viewport edges and stays
+within the viewport on scroll/resize, without removing sidebar scrolling or
+ancestor clipping. The hint itself remains hoverable; touch does not open hints.
 
 `prefers-reduced-motion` removes spatial entrances, layout projection, shared
 indicator travel and surface gestures. Semantic selection, color, outline and

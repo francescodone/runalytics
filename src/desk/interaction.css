@@ -51,9 +51,12 @@ button:active:not(:disabled), a:active, .desk-button:active:not(:disabled) { tra
 .desk-button.primary:active:not(:disabled) { background-color: var(--state-primary-pressed); }
 .desk-button .button-content { min-width: 0; }
 .button-content:has(.control-tooltip) { width: 100%; }
-.control-tooltip { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; max-width: 220px; padding: var(--space-2) var(--space-3); background: var(--desk-ink); color: var(--desk-surface); border-radius: var(--radius-control); font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-control); pointer-events: auto; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: var(--layer-tooltip); transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
-.control-tooltip::before { content: ""; position: absolute; inset: auto 0 100%; height: var(--space-2); }
-.route-controls .control-tooltip::before { inset: 0 auto 0 100%; width: var(--space-3); height: auto; }
+.control-tooltip { --tooltip-side: bottom; --tooltip-align: end; --tooltip-gap: var(--space-2); position: absolute; top: calc(100% + var(--tooltip-gap)); right: 0; width: max-content; max-width: min(220px, calc(100vw - 2 * var(--space-2))); padding: var(--space-2) var(--space-3); background: var(--desk-ink); color: var(--desk-surface); border-radius: var(--radius-control); font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-control); pointer-events: auto; opacity: 0; visibility: hidden; translate: 0 -3px; z-index: var(--layer-tooltip); transition: opacity var(--motion-feedback), translate var(--motion-feedback), visibility var(--motion-feedback); }
+.control-tooltip[popover] { position: fixed; inset: auto; margin: 0; border: 0; overflow: visible; }
+.control-tooltip::before { content: ""; position: absolute; inset: auto 0 100%; height: var(--tooltip-gap); }
+.control-tooltip[data-side="top"]::before { inset: 100% 0 auto; }
+.route-controls .control-tooltip:not([popover])::before, .control-tooltip[data-side="left"]::before { inset: 0 auto 0 100%; width: var(--tooltip-gap); height: auto; }
+.control-tooltip[data-side="right"]::before { inset: 0 100% 0 auto; width: var(--tooltip-gap); height: auto; }
 .desk-button:focus-visible .control-tooltip { opacity: 1; visibility: visible; translate: 0; }
 .desk-button:active .control-tooltip { opacity: 0; visibility: hidden; }
 .control-tooltip[data-dismissed="true"] { opacity: 0 !important; visibility: hidden !important; }
@@ -175,7 +178,7 @@ progress { accent-color: var(--desk-action); }
   .desk-button:not(:disabled):not(:active):hover { border-color: color-mix(in srgb, var(--button-accent, var(--desk-action)) 65%, var(--control-edge)); }
   .desk-button.primary:not(:disabled):not(:active):hover { background-color: var(--state-primary-hover); }
   .choice-row label:not(:has(:disabled)):hover, .palette-options label:not(:has(:disabled)):hover { background-color: var(--state-hover); border-color: var(--desk-action); }
-  .desk-button:not(:disabled):hover .control-tooltip { opacity: 1; visibility: visible; translate: 0; transition-delay: var(--motion-tooltip-delay); }
+  .desk-button:not(:disabled):hover .control-tooltip, .control-tooltip[popover]:hover { opacity: 1; visibility: visible; translate: 0; transition-delay: var(--motion-tooltip-delay); }
   summary:hover { color: var(--desk-action); }
 }
  :is(.desk-button:not(.primary), .desk-navigation a, .horizon-switch a, .review-tabs button, .pace-mode button, .pace-session-picker button, .mobile-date-ribbon button, .lap-row-button, .choice-row label, .palette-options label):active:not(:disabled):not([aria-disabled="true"]):not(:has(:disabled)) { background-color: var(--state-pressed); border-color: var(--button-accent, var(--desk-action)); }
