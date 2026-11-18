@@ -3,11 +3,13 @@ description: "Project Prism typography, materials and component architecture"
 applyTo: "src/desk/**,desk.html,public/appearance.js"
 ---
 
-Read `docs/design-system/foundations.md` and `components.md`. Architectural
-Spatial Glass is the locked direction: separated navigation, continuous content,
-bounded optical controls, dense evidence. Outfit is local, with zero tracking.
-Semantic tokens own type, spacing, radii, color, material and elevation. Repeated
-items have at most 8px corners; no decorative cards around page sections.
+Read `docs/codebase/CONVENTIONS.md` and `docs/design-system/motion.md`.
+Architectural Spatial Glass is the locked direction: separated navigation,
+continuous content, bounded optical controls, dense evidence. Local Inter owns
+body/control text; Young Serif owns major headings and branding, with zero
+tracking. Semantic tokens own type, spacing, radii, color, material and elevation.
+Repeated content uses continuous divider lists, not individually framed or
+rounded cards; no decorative cards around page sections.
 Never blur every row or put transforms/backdrop filters on fixed-element ancestors.
 Keep all six palette IDs and light/dark/system appearance. Opaque fallback first.
 Route production glyphs through `src/desk/animated-icons.tsx` and its `icons.tsx`

@@ -278,8 +278,9 @@ the first dialog opens.
 
 ## Accessibility And Performance
 
-The header sync icon uses mirrored refresh arrows and spins clockwise while sync
-is active. Reduced motion keeps the mirrored icon static.
+The header sync control uses the shared pending asset at its source playback
+speed while sync is active, with no additional CSS rotation. Reduced motion
+uses the same-source static artwork.
 
 `prefers-reduced-motion` removes spatial entrances, layout projection, shared
 indicator travel and surface gestures. Semantic selection, color, outline and

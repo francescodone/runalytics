@@ -146,7 +146,11 @@ Use only one release path per version.
 
 - [Training methods and plan rules](docs/runna-like-plan-model.md)
 - [Norwegian threshold model](docs/norwegian-threshold-model.md)
-- [UI migration and verification](docs/design-system/migration-status.md)
+- [Codebase context](docs/codebase/ARCHITECTURE.md) — current, source-backed reference:
+  [stack](docs/codebase/STACK.md), [structure](docs/codebase/STRUCTURE.md),
+  [conventions](docs/codebase/CONVENTIONS.md), [integrations](docs/codebase/INTEGRATIONS.md),
+  [testing](docs/codebase/TESTING.md) and [concerns](docs/codebase/CONCERNS.md).
 - [Shared motion contracts](docs/design-system/motion.md)
 - [Localization](docs/i18n.md)
 - [Supabase foundation](docs/supabase-backend.md) — inactive; not a deployed backend.
+- [Garmin sign-in and COROS parity plan](docs/ways-of-work/plan/wearable-integrations/garmin-parity/implementation-plan.md) — proposed; Garmin integration is not implemented.
